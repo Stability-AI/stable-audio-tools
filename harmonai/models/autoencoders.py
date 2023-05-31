@@ -15,8 +15,6 @@ def vae_sample(mean, scale):
 
         return latents, kl
 
-
-
 # Modified from https://github.com/wesbz/SoundStream/blob/main/net.py
 def mod_sigmoid(x):
     return 2 * torch.sigmoid(x)**2.3 + 1e-7

@@ -1,0 +1,10 @@
+{
+    "dataset_type": "audio_dir",
+    "datasets": [
+        {
+            "id": "my_audio",
+            "path": "/path/to/audio/dataset/"
+        }
+    ],
+    "random_crop": true
+}

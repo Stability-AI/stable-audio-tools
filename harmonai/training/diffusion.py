@@ -14,7 +14,7 @@ from pytorch_lightning.utilities.distributed import rank_zero_only
 from ..inference.sampling import get_alphas_sigmas, sample
 from ..models.diffusion import DiffusionAttnUnet1D
 
-class UncondDiffusionTrainingWrapper(pl.LightningModule):
+class DiffusionUncondTrainingWrapper(pl.LightningModule):
     '''
     Wrapper for training an unconditional audio diffusion model (like Dance Diffusion).
     '''
@@ -78,7 +78,7 @@ class UncondDiffusionTrainingWrapper(pl.LightningModule):
         self.diffusion_ema.update()
 
 
-class UncondDemoCallback(pl.Callback):
+class DiffusionUncondDemoCallback(pl.Callback):
     def __init__(self, 
                  demo_every=2000,
                  num_demos=8,

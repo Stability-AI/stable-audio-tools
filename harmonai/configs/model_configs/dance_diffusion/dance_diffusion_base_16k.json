@@ -1,7 +1,11 @@
 {
+    "model_type": "diffusion_uncond",
     "sample_size": 65536,
     "sample_rate": 16000,
-    "diffusion": {
-        "n_attn_layers": 4
+    "model": {
+        "type": "DAU1d",
+        "config": {
+            "n_attn_layers": 4
+        }
     }
 }

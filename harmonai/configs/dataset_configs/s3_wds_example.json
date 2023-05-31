@@ -1,0 +1,10 @@
+{
+    "dataset_type": "s3",
+    "datasets": [
+        {
+            "id": "s3-test",
+            "s3_path": "s3://my-bucket/datasets/webdatset/audio/"
+        }
+    ],
+    "random_crop": true
+}

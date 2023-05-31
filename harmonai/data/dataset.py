@@ -475,3 +475,57 @@ class S3WebDataLoader():
 
         sample["audio"] = audio
         return sample
+
+def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
+
+    dataset_type = dataset_config.get("dataset_type", None)
+
+    assert dataset_type is not None, "Dataset type must be specified in dataset config"
+
+    if dataset_type == "audio_dir":
+
+        audio_dir_configs = dataset_config.get("datasets", None)
+
+        assert audio_dir_configs is not None, "Directory configuration must be specified in model_config[\"dataset\"]"
+
+        training_dirs = []
+
+        for audio_dir_config in audio_dir_configs:
+            audio_dir_path = audio_dir_config.get("path", None)
+            assert audio_dir_path is not None, "Path must be set for local audio directory configuration"
+            training_dirs.append(audio_dir_path)
+
+        train_set = SampleDataset(
+            [training_dirs],
+            sample_rate=model_config["sample_rate"],
+            sample_size=model_config["sample_size"],
+            random_crop=dataset_config.get("random_crop", True),
+        )
+
+        return torch.utils.data.DataLoader(train_set, args.batch_size, shuffle=True,
+                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True)
+
+    elif dataset_type == "s3":
+        dataset_configs = []
+
+        for s3_config in dataset_config["datasets"]:
+
+            #TODO: Add support for metadata prompts
+
+            dataset_configs.append(
+                S3DatasetConfig(
+                    id=s3_config["id"],
+                    s3_path=s3_config["s3_path"],
+                    #metadata_prompts_fn=s3_config.get("metadata_prompts_fn", None),
+                )
+            )
+
+        return S3WebDataLoader(
+            dataset_configs,
+            sample_rate=model_config["sample_rate"],
+            sample_size=model_config["sample_size"],
+            batch_size=args.batch_size,
+            random_crop=True,
+            num_workers=args.num_workers,
+            persistent_workers=True,
+        ).data_loader

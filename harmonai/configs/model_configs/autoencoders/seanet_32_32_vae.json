@@ -1,7 +1,8 @@
 {
+    "model_type": "autoencoder",
     "sample_size": 65536,
     "sample_rate": 48000,
-    "autoencoder": {
+    "model": {
         "type": "seanet",
         "config": {
             "io_channels": 2,

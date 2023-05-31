@@ -1,12 +1,11 @@
 from prefigure.prefigure import get_all_args, push_wandb_config
 import json
 import torch
-from torch.utils import data
 import pytorch_lightning as pl
 
-from harmonai.data.dataset import SampleDataset
-from harmonai.models.autoencoders import create_autoencoder_from_config
-from harmonai.training.autoencoders import AutoencoderTrainingWrapper, AutoencoderDemoCallback
+from harmonai.data.dataset import create_dataloader_from_configs_and_args
+from harmonai.models import create_model_from_config
+from harmonai.training import create_training_wrapper_from_config_and_args, create_demo_callback_from_config_and_args
 
 class ExceptionCallback(pl.Callback):
     def on_exception(self, trainer, module, err):
@@ -24,39 +23,27 @@ def main():
     with open(args.model_config) as f:
         model_config = json.load(f)
 
-    train_set = SampleDataset(
-        [args.training_dir],
-        sample_rate=args.sample_rate,
-        sample_size=model_config["sample_size"],
-        random_crop=True,
-    )
+    with open(args.dataset_config) as f:
+        dataset_config = json.load(f)
 
-    train_dl = data.DataLoader(train_set, args.batch_size, shuffle=True,
-                               num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True)
+    train_dl = create_dataloader_from_configs_and_args(model_config, args, dataset_config)
 
-    autoencoder = create_autoencoder_from_config(model_config["autoencoder"])
+    model = create_model_from_config(model_config)
     
-    training_wrapper = AutoencoderTrainingWrapper(
-        autoencoder,
-        warmup_steps=args.warmup_steps,
-        sample_rate=model_config["sample_rate"]
-    )
+    training_wrapper = create_training_wrapper_from_config_and_args(model_config, args, model)
 
     exc_callback = ExceptionCallback()
     ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, save_top_k=-1)
-    demo_callback = AutoencoderDemoCallback(
-        train_dl,
-        demo_every=args.demo_every, 
-        sample_size=model_config["sample_size"], 
-        sample_rate=args.sample_rate
-    )
+
+    demo_callback = create_demo_callback_from_config_and_args(model_config, args, demo_dl=train_dl)
 
     wandb_logger = pl.loggers.WandbLogger(project=args.name)
     wandb_logger.watch(training_wrapper)
 
-    #Combine args and model config dicts
+    #Combine args and config dicts
     args_dict = vars(args)
     args_dict.update(model_config)
+    args_dict.update(dataset_config)
     push_wandb_config(wandb_logger, args_dict)
 
     trainer = pl.Trainer(
