@@ -1,0 +1,17 @@
+{
+    "sample_size": 65536,
+    "sample_rate": 48000,
+    "autoencoder": {
+        "type": "seanet",
+        "config": {
+            "io_channels": 2,
+            "base_channels": 64,
+            "latent_dim": 32,
+            "strides": [2, 2, 2, 4],
+            "bottleneck": "vae",
+            "n_residual_layers": 3,
+            "dilation_base": 3,
+            "norm": "none"
+        }
+    }
+}

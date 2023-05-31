@@ -1,0 +1,16 @@
+{
+    "sample_size": 65536,
+    "sample_rate": 48000,
+    "autoencoder": {
+        "type": "audio_ae",
+        "config": {
+            "in_channels": 2,
+            "out_channels": 2,
+            "channels": 64,
+            "c_mults": [2, 4, 8, 16, 32],
+            "strides": [2, 2, 2, 2, 2],
+            "latent_dim": 32,
+            "bottleneck": "tanh"
+        }
+    }
+}

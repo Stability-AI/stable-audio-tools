@@ -1,0 +1,33 @@
+from setuptools import setup, find_packages
+
+setup(
+    name='harmonai',
+    version='1.0.0',
+    url='https://github.com/Harmonai-org/harmonai.git',
+    author='Harmonai',
+    packages=find_packages(),    
+    install_requires=[
+        'aeiou',
+        'audio-diffusion-pytorch==0.0.96',
+        'audio-encoders-pytorch',
+        'audio-metadata',
+        'auraloss',
+        'einops',
+        'ema-pytorch',
+        'encodec',
+        'k-diffusion',
+        'pandas',
+        'pedalboard',
+        'prefigure',
+        'pytorch_lightning==1.7.4', 
+        'torch',
+        'torchaudio',
+        'tqdm',
+        'transformers',
+        'v-diffusion-pytorch',
+        'vector-quantize-pytorch',
+        'wandb',
+        'webdataset',
+        'cached_conv',
+    ],
+)

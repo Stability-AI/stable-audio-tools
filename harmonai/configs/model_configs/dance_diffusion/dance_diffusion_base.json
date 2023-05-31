@@ -1,0 +1,7 @@
+{
+    "sample_size": 65536,
+    "sample_rate": 48000,
+    "diffusion": {
+        "n_attn_layers": 4
+    }
+}
