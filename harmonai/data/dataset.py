@@ -496,7 +496,7 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
             training_dirs.append(audio_dir_path)
 
         train_set = SampleDataset(
-            [training_dirs],
+            training_dirs,
             sample_rate=model_config["sample_rate"],
             sample_size=model_config["sample_size"],
             random_crop=dataset_config.get("random_crop", True),
@@ -528,4 +528,5 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
             random_crop=True,
             num_workers=args.num_workers,
             persistent_workers=True,
+            epoch_steps=dataset_config.get("epoch_steps", 2000),
         ).data_loader

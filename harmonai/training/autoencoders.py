@@ -4,6 +4,7 @@ import wandb
 from einops import rearrange
 from torch import nn, optim
 from torch.nn import functional as F
+from torch.nn.parameter import Parameter
 import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
@@ -127,6 +128,10 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.log_dict(log_dict, prog_bar=True, on_step=True)
 
         return loss
+    
+    def export_model(self, path):
+        export_state_dict = {"state_dict": self.autoencoder.state_dict()}
+        torch.save(export_state_dict, path)
 
 
 class AutoencoderDemoCallback(pl.Callback):
@@ -155,6 +160,10 @@ class AutoencoderDemoCallback(pl.Callback):
         try:
             demo_reals, _ = next(self.demo_dl)
 
+            # Remove extra dimension added by WebDataset
+            if demo_reals.ndim == 4 and demo_reals.shape[0] == 1:
+                demo_reals = demo_reals[0]
+
             encoder_input = demo_reals
             
             encoder_input = encoder_input.to(module.device)
@@ -180,7 +189,6 @@ class AutoencoderDemoCallback(pl.Callback):
             demo_reals = demo_reals.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
             torchaudio.save(reals_filename, demo_reals, self.sample_rate)
 
-
             log_dict[f'recon'] = wandb.Audio(filename,
                                                 sample_rate=self.sample_rate,
                                                 caption=f'Reconstructed')
@@ -194,6 +202,6 @@ class AutoencoderDemoCallback(pl.Callback):
             log_dict[f'real_melspec_left'] = wandb.Image(audio_spectrogram_image(demo_reals))
             log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
 
-            trainer.logger.experiment.log(log_dict, step=trainer.global_step)
+            trainer.logger.experiment.log(log_dict)
         except Exception as e:
             print(f'{type(e).__name__}: {e}')

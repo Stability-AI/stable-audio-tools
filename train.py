@@ -29,7 +29,15 @@ def main():
     train_dl = create_dataloader_from_configs_and_args(model_config, args, dataset_config)
 
     model = create_model_from_config(model_config)
+
+    if args.pretrained_ckpt_path:
+        model.load_state_dict(torch.load(args.pretrained_ckpt_path)["state_dict"])
     
+    if args.pretransform_ckpt_path:
+        print("Loading pretransform from checkpoint")
+        model.pretransform.load_state_dict(torch.load(args.pretransform_ckpt_path)["state_dict"])
+        print("Done loading pretransform from checkpoint")
+
     training_wrapper = create_training_wrapper_from_config_and_args(model_config, args, model)
 
     exc_callback = ExceptionCallback()
@@ -42,8 +50,8 @@ def main():
 
     #Combine args and config dicts
     args_dict = vars(args)
-    args_dict.update(model_config)
-    args_dict.update(dataset_config)
+    args_dict.update({"model_config": model_config})
+    args_dict.update({"dataset_config": dataset_config})
     push_wandb_config(wandb_logger, args_dict)
 
     trainer = pl.Trainer(

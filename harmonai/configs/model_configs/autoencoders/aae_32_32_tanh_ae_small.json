@@ -8,8 +8,8 @@
             "config": {
                 "in_channels": 2,
                 "channels": 64,
-                "c_mults": [2, 4, 8, 16, 32],
-                "strides": [2, 2, 2, 2, 2],
+                "c_mults": [2, 4, 8],
+                "strides": [2, 4, 4],
                 "latent_dim": 32
             }
         },
@@ -18,8 +18,8 @@
             "config": {
                 "out_channels": 2,
                 "channels": 64,
-                "c_mults": [2, 4, 8, 16, 32],
-                "strides": [2, 2, 2, 2, 2],
+                "c_mults": [2, 4, 8],
+                "strides": [2, 4, 4],
                 "latent_dim": 32
             }
         },
