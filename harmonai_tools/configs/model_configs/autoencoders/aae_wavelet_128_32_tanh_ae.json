@@ -1,0 +1,42 @@
+{
+    "model_type": "autoencoder",
+    "sample_size": 65536,
+    "sample_rate": 48000,
+    "model": {
+        "pretransform":{
+            "type": "wavelet",
+            "requires_grad": true,
+            "config": {
+                "levels": 5,
+                "wavelet": "bior4.4",
+                "channels": 2
+            }
+        },
+        "encoder": {
+            "type": "audio_ae",
+            "config": {
+                "in_channels": 64,
+                "channels": 256,
+                "c_mults": [2, 4],
+                "strides": [2, 2],
+                "latent_dim": 32
+            }
+        },
+        "decoder": {
+            "type": "audio_ae",
+            "config": {
+                "out_channels": 64,
+                "channels": 256,
+                "c_mults": [2, 4],
+                "strides": [2, 2],
+                "latent_dim": 32
+            }
+        },
+        "bottleneck": {
+            "type": "tanh"
+        },
+        "latent_dim": 32,
+        "downsampling_ratio": 128,
+        "io_channels": 2
+    }
+}

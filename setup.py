@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='harmonai',
+    name='harmonai-tools',
     version='1.0.0',
-    url='https://github.com/Harmonai-org/harmonai.git',
+    url='https://github.com/Harmonai-org/harmonai-tools.git',
     author='Harmonai',
     packages=find_packages(),    
     install_requires=[
@@ -20,6 +20,7 @@ setup(
         'pedalboard',
         'prefigure',
         'pytorch_lightning==1.7.4', 
+        'PyWavelets',
         'torch',
         'torchaudio',
         'tqdm',
@@ -28,6 +29,5 @@ setup(
         'vector-quantize-pytorch',
         'wandb',
         'webdataset',
-        'cached_conv',
     ],
 )

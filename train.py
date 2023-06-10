@@ -3,9 +3,9 @@ import json
 import torch
 import pytorch_lightning as pl
 
-from harmonai.data.dataset import create_dataloader_from_configs_and_args
-from harmonai.models import create_model_from_config
-from harmonai.training import create_training_wrapper_from_config_and_args, create_demo_callback_from_config_and_args
+from harmonai_tools.data.dataset import create_dataloader_from_configs_and_args
+from harmonai_tools.models import create_model_from_config
+from harmonai_tools.training import create_training_wrapper_from_config_and_args, create_demo_callback_from_config_and_args
 
 class ExceptionCallback(pl.Callback):
     def on_exception(self, trainer, module, err):

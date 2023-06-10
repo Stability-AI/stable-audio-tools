@@ -1,7 +1,6 @@
 import argparse
 import json
-from harmonai.models import create_model_from_config
-from harmonai.training.factory import create_training_wrapper_from_config_and_args
+from harmonai_tools.models import create_model_from_config
 
 if __name__ == '__main__':
     args = argparse.ArgumentParser()
@@ -21,13 +20,13 @@ if __name__ == '__main__':
     assert model_type is not None, 'model_type must be specified in model config'
 
     if model_type == 'autoencoder':
-        from harmonai.training.autoencoders import AutoencoderTrainingWrapper
+        from harmonai_tools.training.autoencoders import AutoencoderTrainingWrapper
         training_wrapper = AutoencoderTrainingWrapper.load_from_checkpoint(args.ckpt_path, autoencoder=model)
     elif model_type == 'diffusion_uncond':
-        from harmonai.training.diffusion import DiffusionUncondTrainingWrapper
+        from harmonai_tools.training.diffusion import DiffusionUncondTrainingWrapper
         training_wrapper = DiffusionUncondTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model)
     elif model_type == 'diffusion_autoencoder':
-        from harmonai.training.diffusion import DiffusionAutoencoderTrainingWrapper
+        from harmonai_tools.training.diffusion import DiffusionAutoencoderTrainingWrapper
         training_wrapper = DiffusionAutoencoderTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model)
     
     print(f"Loaded model from {args.ckpt_path}")

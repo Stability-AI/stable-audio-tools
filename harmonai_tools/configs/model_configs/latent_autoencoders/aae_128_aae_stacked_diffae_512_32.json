@@ -1,0 +1,76 @@
+{
+    "model_type": "diffusion_autoencoder",
+    "sample_size": 131072,
+    "sample_rate": 48000,
+    "model": {
+        "pretransform": {
+            "type": "autoencoder",
+            "config": {
+                "encoder": {
+                    "type": "audio_ae",
+                    "config": {
+                        "in_channels": 2,
+                        "channels": 64,
+                        "c_mults": [2, 4, 8, 16],
+                        "strides": [2, 4, 4, 4],
+                        "latent_dim": 32
+                    }
+                },
+                "decoder": {
+                    "type": "audio_ae",
+                    "config": {
+                        "out_channels": 2,
+                        "channels": 64,
+                        "c_mults": [2, 4, 8, 16],
+                        "strides": [2, 4, 4, 4],
+                        "latent_dim": 32
+                    }
+                },
+                "bottleneck": {
+                    "type": "tanh"
+                },
+                "latent_dim": 32,
+                "downsampling_ratio": 128,
+                "io_channels": 2
+            }
+        },
+        "encoder": {
+            "type": "audio_ae",
+            "config": {
+                "in_channels": 32,
+                "channels": 128,
+                "c_mults": [2, 4, 8],
+                "strides": [2, 2, 4],
+                "latent_dim": 32
+            }
+        },
+        "decoder": {
+            "type": "audio_ae",
+            "config": {
+                "out_channels": 32,
+                "channels": 128,
+                "c_mults": [2, 4, 8],
+                "strides": [2, 2, 4],
+                "latent_dim": 32
+            }
+        },
+        "diffusion": {
+            "type": "DAU1d",
+            "config": {
+                "io_channels": 32,
+                "cond_dim": 32,
+                "n_attn_layers": 0,
+                "depth": 5,
+                "channels": [512, 512, 512, 512, 512],
+                "strides": [2, 2, 4, 4],
+                "learned_resample": true
+            }
+        },
+        "bottleneck": {
+            "type": "tanh"
+        },
+        "latent_dim": 32,
+        "downsampling_ratio": 16,
+        "io_channels": 32
+    }
+}
