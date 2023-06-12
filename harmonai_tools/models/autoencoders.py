@@ -7,7 +7,7 @@ from typing import Literal, Dict, Any, Callable, Optional
 
 from ..inference.sampling import sample
 from .bottleneck import Bottleneck
-from .diffusion import create_diffusion_from_config
+from .diffusion import create_diffusion_uncond_from_config
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform
 
@@ -346,7 +346,7 @@ def create_diffAE_from_config(model_config: Dict[str, Any]):
 
     decoder = create_decoder_from_config(model_config["decoder"])
 
-    diffusion = create_diffusion_from_config(model_config["diffusion"])
+    diffusion = create_diffusion_uncond_from_config(model_config["diffusion"])
 
     latent_dim = model_config.get("latent_dim", None)
     assert latent_dim is not None, "latent_dim must be specified in model config"

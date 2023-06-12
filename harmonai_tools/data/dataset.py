@@ -1,3 +1,4 @@
+import importlib
 import numpy as np
 import os
 import posixpath
@@ -522,13 +523,21 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
 
         for s3_config in dataset_config["datasets"]:
 
-            #TODO: Add support for metadata prompts
+            metadata_prompts_fn = None
+            prompt_module_path = s3_config.get("prompt_module_path", None)
+
+            if prompt_module_path is not None:
+                spec = importlib.util.spec_from_file_location("prompt_module", prompt_module_path)
+                prompt_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(prompt_module)                
+
+                metadata_prompts_fn = prompt_module.get_prompt_from_metadata
 
             dataset_configs.append(
                 S3DatasetConfig(
                     id=s3_config["id"],
                     s3_path=s3_config["s3_path"],
-                    #metadata_prompts_fn=s3_config.get("metadata_prompts_fn", None),
+                    metadata_prompts_fn=metadata_prompts_fn
                 )
             )
 

@@ -1,0 +1,96 @@
+{
+    "model_type": "diffusion_cond",
+    "sample_size": 960000,
+    "sample_rate": 32000,
+    "audio_channels": 1,
+    "model": {
+        "pretransform": {
+            "type": "autoencoder",
+            "config": {
+                "encoder": {
+                    "type": "seanet",
+                    "config": {
+                        "channels": 1,
+                        "dimension": 256,
+                        "n_filters": 64,
+                        "ratios": [4, 4, 5, 8],
+                        "n_residual_layers": 1,
+                        "dilation_base": 2,
+                        "lstm": 2,
+                        "norm": "weight_norm"
+                    }
+                },
+                "decoder": {
+                    "type": "seanet",
+                    "config": {
+                        "channels": 1,
+                        "dimension": 128,
+                        "n_filters": 64,
+                        "ratios": [4, 4, 5, 8],
+                        "n_residual_layers": 1,
+                        "dilation_base": 2,
+                        "lstm": 2,
+                        "norm": "weight_norm"
+                    }
+                },
+                "bottleneck": {
+                    "type": "vae"
+                },
+                "latent_dim": 128,
+                "downsampling_ratio": 640,
+                "io_channels": 1
+            }
+        },
+        "conditioning": {
+            "configs": [
+                {
+                    "id": "prompt",
+                    "type": "t5",
+                    "config": {
+                        "t5_model_name": "t5-base",
+                        "max_length": 128
+                    }
+                }
+            ],
+            "cond_dim": 768
+        },
+        "diffusion": {
+            "type": "adp_cfg_1d",
+            "cross_attention_cond_ids": ["prompt"],
+            "config": {
+                "in_channels": 128,
+                "context_embedding_features": 768,
+                "context_embedding_max_length": 128,
+                "channels": 256,
+                "resnet_groups": 16,
+                "kernel_multiplier_downsample": 2,
+                "multipliers": [2, 3, 3, 4, 4, 5],
+                "factors": [1, 2, 3, 5, 5],
+                "num_blocks": [3, 3, 3, 3, 3],
+                "attentions": [1, 1, 1, 1, 1, 1],
+                "attention_heads": 16,
+                "attention_features": 64,
+                "attention_multiplier": 4,
+                "attention_use_rel_pos": false,
+                "use_nearest_upsample": false,
+                "use_skip_scale": true,
+                "use_context_time": true
+            }
+        },
+        "io_channels": 128
+    },
+    "demo": {
+        "num_demos": 8,
+        "demo_cond": [
+            {"prompt": "Pop dance track with catchy melodies, tropical percussion, and upbeat rhythms, perfect for the beach"},
+            {"prompt": "drum and bass beat with intense percussions"},
+            {"prompt": "violins and synths that inspire awe at the finiteness of life and the universe"},
+            {"prompt": "smooth jazz, with a saxophone solo, piano chords, and snare full drums"},
+            {"prompt": "lofi slow bpm electro chill with organic samples"},
+            {"prompt": "80s electronic track with melodic synthesizers, catchy beat and groovy bass"},
+            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle."},
+            {"prompt": "drum and bass beat with intense percussions"}   
+        ],
+        "demo_cfg_scales": [2, 5, 7]
+    }
+}

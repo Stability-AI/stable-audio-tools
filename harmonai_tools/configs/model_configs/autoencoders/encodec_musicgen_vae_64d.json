@@ -21,7 +21,7 @@
             "type": "seanet",
             "config": {
                 "channels": 1,
-                "dimension": 128,
+                "dimension": 64,
                 "n_filters": 64,
                 "ratios": [4, 4, 5, 8],
                 "n_residual_layers": 1,
@@ -31,16 +31,9 @@
             }
         },
         "bottleneck": {
-            "type": "rvq",
-            "config": {
-                "num_quantizers": 4,
-                "codebook_size": 2048,
-                "dim": 128,
-                "decay": 0.99,
-                "threshold_ema_dead_code": 2
-            }
+            "type": "vae"
         },
-        "latent_dim": 128,
+        "latent_dim": 64,
         "downsampling_ratio": 640,
         "io_channels": 1
     }

@@ -3,7 +3,8 @@ from torch import nn
 from torch.nn import functional as F
 
 from einops import rearrange
-from encodec.quantization.core_vq import ResidualVectorQuantization
+from vector_quantize_pytorch import ResidualVQ
+from nwt_pytorch import Memcodes
 
 class Bottleneck(nn.Module):
     def __init__(self):
@@ -81,24 +82,18 @@ class L2Bottleneck(Bottleneck):
     def decode(self, x):
         return F.normalize(x, dim=1)
         
-class QuantizerBottleneck(Bottleneck):
-    def __init__(self, quantizer_dropout=False, **quantizer_kwargs):
+class RVQBottleneck(Bottleneck):
+    def __init__(self, **quantizer_kwargs):
         super().__init__()
-        self.quantizer = ResidualVectorQuantization(**quantizer_kwargs)
+        self.quantizer = ResidualVQ(**quantizer_kwargs)
         self.num_quantizers = quantizer_kwargs["num_quantizers"]
-        self.quantizer_dropout = quantizer_dropout
 
     def encode(self, x, return_info=False):
         info = {}
 
-        n_q = self.num_quantizers
-
-        if self.training and self.quantizer_dropout:
-            n_q = int(torch.randint(1, self.num_quantizers + 1, (1,)).item())
-
-        #x = rearrange(x, "b c n -> b n c")
-        x, indices, loss = self.quantizer(x, n_q=n_q)
-        #x = rearrange(x, "b n c -> b c n")
+        x = rearrange(x, "b c n -> b n c")
+        x, indices, loss = self.quantizer(x)
+        x = rearrange(x, "b n c -> b c n")
 
         info["quantizer_indices"] = indices
         info["quantizer_loss"] = loss.mean()
@@ -111,3 +106,24 @@ class QuantizerBottleneck(Bottleneck):
     def decode(self, x):
         return x
     
+class MemcodesBottleneck(Bottleneck):
+    def __init__(self, **memcodes_kwargs):
+        super().__init__()
+        self.quantizer = Memcodes(**memcodes_kwargs)
+
+    def encode(self, x, return_info=False):
+        info = {}
+
+        x = rearrange(x, "b c n -> b n c")
+        x, indices = self.quantizer(x)
+        x = rearrange(x, "b n c -> b c n")
+
+        info["quantizer_indices"] = indices
+
+        if return_info:
+            return x, info
+        else:
+            return x
+        
+    def decode(self, x):
+        return x

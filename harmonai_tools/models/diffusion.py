@@ -2,10 +2,97 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from functools import partial
-from typing import Dict, Any
+import typing as tp
 
 from .blocks import ResConvBlock, FourierFeatures, Upsample1d, Upsample1d_2, Downsample1d, Downsample1d_2, SelfAttention1d, SkipBlock, expand_to_planes
 from .factory import create_pretransform_from_config
+from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
+from .pretransforms import Pretransform
+
+from audio_diffusion_pytorch.modules import UNetCFG1d
+
+class DiffusionModel(nn.Module):
+    def __init__(
+                self,
+                model,
+                io_channels = 2,
+                pretransform: Pretransform = None
+    ):
+        super().__init__()
+        self.model = model
+        self.io_channels = io_channels
+
+        if pretransform is not None:
+            self.pretransform = pretransform
+
+    def forward(self, x, t, **kwargs):
+        return self.model(x, t, **kwargs)
+    
+class ConditionedDiffusionModel(nn.Module):
+    def __init__(self, 
+                *args,
+                supports_cross_attention: bool = False,
+                supports_input_concat: bool = False,
+                supports_global_cond: bool = False,
+                **kwargs):
+        super().__init__(*args, **kwargs)
+        self.supports_cross_attention = supports_cross_attention
+        self.supports_input_concat = supports_input_concat
+        self.supports_global_cond = supports_global_cond
+    
+    def forward(self, 
+                x: torch.Tensor, 
+                t: torch.Tensor,   
+                cross_attn_cond: torch.Tensor = None,
+                input_concat_cond: torch.Tensor = None,
+                global_embed: torch.Tensor = None,
+                **kwargs):
+        raise NotImplementedError()
+    
+class ConditionedDiffusionModelWrapper(nn.Module):
+    """
+    A diffusion model that takes in conditioning
+    """
+    def __init__(
+            self, 
+            model: ConditionedDiffusionModel,
+            conditioner: MultiConditioner,
+            io_channels = 2,
+            pretransform: Pretransform = None,
+            cross_attn_cond_ids: tp.List[str] = [],
+            ):
+        super().__init__()
+
+        self.model = model
+        self.conditioner = conditioner
+        self.io_channels = io_channels
+        self.pretransform = pretransform
+        self.cross_attn_cond_ids = cross_attn_cond_ids
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
+        
+        cross_attention_input = None
+
+        if len(self.cross_attn_cond_ids) > 0:
+            # Concatenate all cross-attention inputs over the sequence dimension
+            # Assumes that the cross-attention inputs are of shape (batch, seq, channels)
+            cross_attention_input = torch.cat([cond[key][0] for key in self.cross_attn_cond_ids], dim=1)
+            cross_attention_masks = torch.cat([cond[key][1] for key in self.cross_attn_cond_ids], dim=1)
+                    
+        return self.model(x, t, cross_attn_cond=cross_attention_input, **kwargs)
+
+class UNetCFG1DWrapper(ConditionedDiffusionModel):
+    def __init__(
+        self, 
+        *args,
+        **kwargs
+    ):
+        super().__init__(supports_cross_attention=True, supports_global_cond=True, supports_input_concat=False)
+
+        self.model = UNetCFG1d(*args, **kwargs)
+
+    def forward(self, x, t, cross_attn_cond=None, input_concat_cond=None, global_cond=None, **kwargs):
+        return self.model(x, t, embedding=cross_attn_cond, features=global_cond, **kwargs)
 
 class DiffusionAttnUnet1D(nn.Module):
     def __init__(
@@ -119,25 +206,8 @@ class DiffusionAttnUnet1D(nn.Module):
         outputs = self.net(torch.cat(inputs, dim=1))
 
         return outputs
-  
-class DiffusionModel(nn.Module):
-    def __init__(
-                self,
-                model,
-                io_channels = 2,
-                pretransform = None
-    ):
-        super().__init__()
-        self.model = model
-        self.io_channels = io_channels
 
-        if pretransform is not None:
-            self.pretransform = pretransform
-
-    def forward(self, x, t, **kwargs):
-        return self.model(x, t, **kwargs)
-
-def create_diffusion_from_config(model_config: Dict[str, Any]):
+def create_diffusion_uncond_from_config(model_config: tp.Dict[str, tp.Any]):
     model_type = model_config.get('type', None)
 
     diffusion_config = model_config.get('config', {})
@@ -157,3 +227,39 @@ def create_diffusion_from_config(model_config: Dict[str, Any]):
         return DiffusionModel(model, io_channels=model.io_channels, pretransform=pretransform)
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
+    
+def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
+
+    diffusion_config = model_config.get('diffusion', None)
+    assert diffusion_config is not None, "Must specify diffusion config"
+
+    diffusion_model_type = diffusion_config.get('type', None)
+    assert diffusion_model_type is not None, "Must specify diffusion model type"
+    
+    diffusion_model_config = diffusion_config.get('config', None)
+    assert diffusion_model_config is not None, "Must specify diffusion model config"
+
+    if diffusion_model_type == 'adp_cfg_1d':
+        diffusion_model = UNetCFG1DWrapper(**diffusion_model_config)
+
+    io_channels = model_config.get('io_channels', None)
+    assert io_channels is not None, "Must specify io_channels in model config"
+
+    conditioning_config = model_config.get('conditioning', None)
+    assert conditioning_config is not None, "Must specify conditioning config"
+
+    conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config)
+
+    cross_attention_ids = diffusion_config.get('cross_attention_cond_ids', [])
+
+    pretransform = model_config.get("pretransform", None)
+    if pretransform is not None:
+        pretransform = create_pretransform_from_config(pretransform)
+
+    return ConditionedDiffusionModelWrapper(
+        diffusion_model, 
+        conditioner, 
+        cross_attn_cond_ids=cross_attention_ids,
+        pretransform=pretransform, 
+        io_channels=io_channels
+    )

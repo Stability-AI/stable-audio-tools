@@ -31,13 +31,11 @@
             }
         },
         "bottleneck": {
-            "type": "rvq",
+            "type": "memcodes",
             "config": {
-                "num_quantizers": 4,
-                "codebook_size": 2048,
-                "dim": 128,
-                "decay": 0.99,
-                "threshold_ema_dead_code": 2
+                "heads": 4,
+                "num_codes": 2048,
+                "dim": 128
             }
         },
         "latent_dim": 128,

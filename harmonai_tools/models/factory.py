@@ -7,8 +7,11 @@ def create_model_from_config(model_config):
         from .autoencoders import create_autoencoder_from_config
         return create_autoencoder_from_config(model_config["model"])
     elif model_type == 'diffusion_uncond':
-        from .diffusion import create_diffusion_from_config
-        return create_diffusion_from_config(model_config["model"])
+        from .diffusion import create_diffusion_uncond_from_config
+        return create_diffusion_uncond_from_config(model_config["model"])
+    elif model_type == 'diffusion_cond':
+        from .diffusion import create_diffusion_cond_from_config
+        return create_diffusion_cond_from_config(model_config["model"])
     elif model_type == 'diffusion_autoencoder':
         from .autoencoders import create_diffAE_from_config
         return create_diffAE_from_config(model_config["model"])
@@ -56,8 +59,8 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == 'vae':
         from .bottleneck import VAEBottleneck
         return VAEBottleneck()
-    elif bottleneck_type == 'quantizer':
-        from .bottleneck import QuantizerBottleneck
+    elif bottleneck_type == 'rvq':
+        from .bottleneck import RVQBottleneck
 
         quantizer_params = {
             "dim": 128,
@@ -71,6 +74,9 @@ def create_bottleneck_from_config(bottleneck_config):
 
         quantizer_params.update(bottleneck_config["config"])
 
-        return QuantizerBottleneck(**quantizer_params)
+        return RVQBottleneck(**quantizer_params)
+    elif bottleneck_type == 'memcodes':
+        from .bottleneck import MemcodesBottleneck
+        return MemcodesBottleneck(**bottleneck_config["config"])
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')

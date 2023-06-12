@@ -17,6 +17,12 @@ def create_training_wrapper_from_config_and_args(model_config, args, model):
             model, 
             lr=args.lr
         )
+    elif model_type == 'diffusion_cond':
+        from .diffusion import DiffusionCondTrainingWrapper
+        return DiffusionCondTrainingWrapper(
+            model, 
+            lr=args.lr
+        )
     elif model_type == 'diffusion_autoencoder':
         from .diffusion import DiffusionAutoencoderTrainingWrapper
         return DiffusionAutoencoderTrainingWrapper(
@@ -54,6 +60,22 @@ def create_demo_callback_from_config_and_args(model_config, args, **kwargs):
             sample_size=model_config["sample_size"],
             sample_rate=model_config["sample_rate"],
             **kwargs
+        )
+    elif model_type == "diffusion_cond":
+        from .diffusion import DiffusionCondDemoCallback
+
+        demo_config = model_config.get("demo", None)
+
+        assert demo_config is not None, 'demo config must be specified in model config for prompted models'
+
+        return DiffusionCondDemoCallback(
+            demo_every=args.demo_every,
+            sample_size=model_config["sample_size"],
+            sample_rate=model_config["sample_rate"],
+            demo_steps=args.demo_steps,
+            num_demos=demo_config["num_demos"],
+            demo_cfg_scales=demo_config["demo_cfg_scales"],
+            demo_conditioning=demo_config["demo_cond"],
         )
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')

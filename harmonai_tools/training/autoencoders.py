@@ -9,7 +9,7 @@ import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator
-from ..models.bottleneck import VAEBottleneck, QuantizerBottleneck
+from ..models.bottleneck import VAEBottleneck, RVQBottleneck
 
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
@@ -32,7 +32,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.lr = lr
         
-        scales = [2048, 1024, 512]
+        scales = [2048, 1024, 512, 256, 128, 64]
         hop_sizes = []
         win_lengths = []
         overlap = 0.75
@@ -41,9 +41,9 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             win_lengths.append(s)
 
         if self.autoencoder.io_channels == 2:
-            self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(fft_sizes=scales, hop_sizes=hop_sizes, win_lengths=win_lengths, sample_rate=sample_rate, scale="mel", n_bins=64)
+            self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(fft_sizes=scales, hop_sizes=hop_sizes, win_lengths=win_lengths, sample_rate=sample_rate, perceptual_weighting=True)
         else:
-            self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(fft_sizes=scales, hop_sizes=hop_sizes, win_lengths=win_lengths, sample_rate=sample_rate, scale="mel", n_bins=64)
+            self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(fft_sizes=scales, hop_sizes=hop_sizes, win_lengths=win_lengths, sample_rate=sample_rate, perceptual_weighting=True)
 
         self.discriminator = EncodecDiscriminator(
             filters=32,
@@ -103,16 +103,20 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
             loss_adv = 0.1 * loss_adv
 
-            feature_matching_distance =  10 * feature_matching_distance
+            feature_matching_distance =  5 * feature_matching_distance
+
+            #mrstft_loss = 2 * mrstft_loss
+
+            l1_time_loss = 0.1 * l1_time_loss
 
             # Combine spectral loss, KL loss, time-domain loss, and adversarial loss
-            loss = mrstft_loss + loss_adv + feature_matching_distance
+            loss = mrstft_loss + loss_adv + feature_matching_distance + l1_time_loss
 
             if isinstance(self.autoencoder.bottleneck, VAEBottleneck):
                 kl = encoder_info['kl']
                 kl_loss = 1e-5 * kl 
                 loss = loss + kl_loss
-            elif isinstance(self.autoencoder.bottleneck, QuantizerBottleneck):
+            elif isinstance(self.autoencoder.bottleneck, RVQBottleneck):
                 quantizer_loss = encoder_info['quantizer_loss']
                 loss = loss + quantizer_loss
             
@@ -132,8 +136,9 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
             if isinstance(self.autoencoder.bottleneck, VAEBottleneck):
                 log_dict['train/kl_loss'] = kl_loss.detach()
-            elif isinstance(self.autoencoder.bottleneck, QuantizerBottleneck):
+            elif isinstance(self.autoencoder.bottleneck, RVQBottleneck):
                 log_dict['train/quantizer_loss'] = quantizer_loss.detach()
+                
             
         self.log_dict(log_dict, prog_bar=True, on_step=True)
 

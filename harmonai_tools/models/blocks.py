@@ -48,7 +48,7 @@ class SelfAttention1d(nn.Module):
 
         if self.use_flash:
             with sdp_kernel(enable_flash = True, enable_math=False, enable_mem_efficient= False):
-                y = F.scaled_dot_product_attention(q, k, v, is_causal=False, scale=scale).contiguous().view([n, c, s])
+                y = F.scaled_dot_product_attention(q, k, v, is_causal=False).contiguous().view([n, c, s])
         else:
             att = ((q * scale) @ (k.transpose(2, 3) * scale)).softmax(3)
             y = (att @ v).transpose(2, 3).contiguous().view([n, c, s])

@@ -18,7 +18,7 @@ class AutoencoderPretransform(Pretransform):
     def __init__(self, model):
         super().__init__()
         self.model = model
-
+        self.model.requires_grad_(False).eval()
         self.downsampling_ratio = model.downsampling_ratio
     
     def encode(self, x):
