@@ -1,0 +1,48 @@
+{
+    "model_type": "autoencoder",
+    "sample_size": 65536,
+    "sample_rate": 44100,
+    "audio_channels": 1,
+    "model": {
+        "encoder": {
+            "type": "seanet",
+            "config": {
+                "channels": 1,
+                "dimension": 1024,
+                "n_filters": 64,
+                "ratios": [2, 4, 8, 8],
+                "n_residual_layers": 3,
+                "dilation_base": 3,
+                "norm": "weight_norm"
+            }
+        },
+        "decoder": {
+            "type": "seanet",
+            "config": {
+                "channels": 1,
+                "dimension": 1024,
+                "n_filters": 192,
+                "ratios": [2, 4, 8, 8],
+                "n_residual_layers": 3,
+                "dilation_base": 3,
+                "norm": "weight_norm"
+            }
+        },
+        "bottleneck": {
+            "type": "rvq",
+            "config": {
+                "num_quantizers": 4,
+                "codebook_size": 2048,
+                "dim": 1024,
+                "codebook_dim": 16,
+                "decay": 0.99,
+                "threshold_ema_dead_code": 0,
+                "commitment_weight": 0.25,
+                "use_cosine_sim": true
+            }
+        },
+        "latent_dim": 16,
+        "downsampling_ratio": 512,
+        "io_channels": 1
+    }
+}

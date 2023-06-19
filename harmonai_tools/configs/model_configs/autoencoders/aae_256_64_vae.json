@@ -1,0 +1,33 @@
+{
+    "model_type": "autoencoder",
+    "sample_size": 65536,
+    "sample_rate": 44100,
+    "model": {
+        "encoder": {
+            "type": "audio_ae",
+            "config": {
+                "in_channels": 2,
+                "channels": 64,
+                "c_mults": [2, 4, 8, 16],
+                "strides": [2, 4, 4, 8],
+                "latent_dim": 128
+            }
+        },
+        "decoder": {
+            "type": "audio_ae",
+            "config": {
+                "out_channels": 2,
+                "channels": 64,
+                "c_mults": [2, 4, 8, 16],
+                "strides": [2, 4, 4, 8],
+                "latent_dim": 64
+            }
+        },
+        "bottleneck": {
+            "type": "vae"
+        },
+        "latent_dim": 64,
+        "downsampling_ratio": 256,
+        "io_channels": 2
+    }
+}

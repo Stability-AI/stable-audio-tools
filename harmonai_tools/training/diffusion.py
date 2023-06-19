@@ -1,5 +1,5 @@
 import pytorch_lightning as pl
-import sys
+import sys, gc
 import torch
 import torchaudio
 import typing as tp
@@ -182,13 +182,13 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         self.diffusion = model
         
-        # self.diffusion_ema = EMA(
-        #     self.diffusion.model,
-        #     beta=0.9999,
-        #     power=3/4,
-        #     update_every=1,
-        #     update_after_step=1
-        # )
+        self.diffusion_ema = EMA(
+            self.diffusion.model,
+            beta=0.9999,
+            power=3/4,
+            update_every=1,
+            update_after_step=1
+        )
 
         self.lr = lr
 
@@ -251,11 +251,12 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         #print(f"Profiler: {p}")
         return loss
     
-    # def on_before_zero_grad(self, *args, **kwargs):
-    #     self.diffusion_ema.update()
+    def on_before_zero_grad(self, *args, **kwargs):
+        self.diffusion_ema.update()
 
     def export_model(self, path):
-        export_state_dict = {"state_dict": self.diffusion_ema.ema_model.state_dict()}
+        self.diffusion.model = self.diffusion_ema.ema_model
+        export_state_dict = {"state_dict": self.diffusion.state_dict()}
         
         torch.save(export_state_dict, path)
 
@@ -304,22 +305,16 @@ class DiffusionCondDemoCallback(pl.Callback):
 
             conditioning = module.diffusion.conditioner(self.demo_conditioning, module.device)
 
-            #Move conditioning to device
-            for k, v in conditioning.items():
-                if isinstance(v, list):
-                    for i in range(len(v)):
-                        v[i] = v[i].to(module.device)
-                elif isinstance(v, torch.Tensor):
-                    conditioning[k] = v.to(module.device)
+            cond_inputs = module.diffusion.get_conditioning_inputs(conditioning)
 
             for cfg_scale in self.demo_cfg_scales:
 
                 print(f"Generating demo for cfg scale {cfg_scale}")
-                #fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0, cond=conditioning, embedding_scale=cfg_scale)
-                fakes = sample(module.diffusion, noise, self.demo_steps, 0, cond=conditioning, embedding_scale=cfg_scale)
+                fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0, **cond_inputs, embedding_scale=cfg_scale)
 
                 if module.diffusion.pretransform is not None:
-                    fakes = module.diffusion.pretransform.decode(fakes)
+                    module.diffusion.pretransform.to("cpu")
+                    fakes = module.diffusion.pretransform.decode(fakes.cpu())
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')
@@ -341,6 +336,8 @@ class DiffusionCondDemoCallback(pl.Callback):
         except Exception as e:
             raise e
         finally:
+            gc.collect()
+            torch.cuda.empty_cache()
             module.train()
 
 class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):

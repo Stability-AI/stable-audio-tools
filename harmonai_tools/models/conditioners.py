@@ -3,6 +3,7 @@
 import torch
 import logging, warnings
 import typing as tp
+import gc
 
 from torch import nn
 
@@ -24,6 +25,88 @@ class Conditioner(nn.Module):
     def forward(self, x: tp.Any) -> tp.Any:
         raise NotImplementedError()
     
+class TimingConditioner(Conditioner):
+    def __init__(self,
+                output_dim: int,
+                max_seconds: int = 512):
+        super().__init__(output_dim, output_dim, 1)
+
+        self.max_seconds = max_seconds
+        self.seconds_start_embedder = nn.Embedding(max_seconds + 1, output_dim)
+        self.seconds_total_embedder = nn.Embedding(max_seconds + 1, output_dim)
+
+    def forward(self, seconds_starts_totals: tp.List[tp.Tuple[int, int]], device=None) -> tp.Any:
+        
+        self.seconds_start_embedder.to(device)
+        self.seconds_total_embedder.to(device)
+
+        seconds_starts_totals = torch.tensor(seconds_starts_totals).to(device)
+        seconds_starts_totals = seconds_starts_totals.clamp(0, self.max_seconds)
+        seconds_starts, seconds_totals = seconds_starts_totals.transpose(0, 1)
+
+        seconds_starts_embeds = self.seconds_start_embedder(seconds_starts).unsqueeze(1)
+        seconds_totals_embeds = self.seconds_total_embedder(seconds_totals).unsqueeze(1)
+
+        return seconds_starts_embeds, seconds_totals_embeds
+
+class IntConditioner(Conditioner):
+    def __init__(self, 
+                output_dim: int,
+                min_val: int=0,
+                max_val: int=512
+                ):
+        super().__init__(output_dim, output_dim, 1)
+
+        self.min_val = min_val
+        self.max_val = max_val
+        self.int_embedder = nn.Embedding(max_val - min_val + 1, output_dim)
+
+    def forward(self, ints: tp.List[int], device=None) -> tp.Any:
+            
+            self.int_embedder.to(device)
+    
+            ints = torch.tensor(ints).to(device)
+            ints = ints.clamp(self.min_val, self.max_val)
+    
+            int_embeds = self.int_embedder(ints).unsqueeze(1)
+    
+            return [int_embeds, torch.ones(int_embeds.shape[0], 1).to(device)]
+
+class CLAPTextConditioner(Conditioner):
+    def __init__(self, 
+                 output_dim: int, 
+                 clap_ckpt_path,
+                 audio_model_type="HTSAT-base", 
+                 enable_fusion=True):
+        super().__init__(512, output_dim, 1)
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        import laion_clap
+        self.model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device=device).requires_grad_(False).eval()
+
+        self.model.load_ckpt(clap_ckpt_path)
+
+        del self.model.model.audio_branch
+
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def forward(self, texts: tp.List[str], device: tp.Any = None) -> tp.Any:
+
+        self.model.to(device)
+        self.proj_out.to(device)
+
+        # Fix for CLAP bug when only one text is passed
+        if len(texts) == 1:
+            text_embedding = self.model.get_text_embedding([texts[0], ""], use_tensor=True)[:1, ...]
+        else:
+            text_embedding = self.model.get_text_embedding(texts, use_tensor=True)
+
+        text_embedding = text_embedding.unsqueeze(1).to(device)
+
+        return [self.proj_out(text_embedding), torch.ones(text_embedding.shape[0], 1).to(device)]
+
 
 class T5Conditioner(Conditioner):
 
@@ -116,7 +199,7 @@ class MultiConditioner(nn.Module):
 
         for key, conditioner in self.conditioners.items():
             if key in batch_metadata[0]:
-                conditioner_inputs = [x[key][0] for x in batch_metadata]
+                conditioner_inputs = [x[key][0] if isinstance(x[key], list) or isinstance(x[key], tuple) else x[key] for x in batch_metadata]
                 
                 output[key] = conditioner(conditioner_inputs, device)
 
@@ -140,6 +223,10 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
 
         if conditioner_type == "t5":
             conditioners[id] = T5Conditioner(output_dim=cond_dim, **conditioner_config["config"])
+        elif conditioner_type == "clap_text":
+            conditioners[id] = CLAPTextConditioner(output_dim=cond_dim, **conditioner_config["config"])
+        elif conditioner_type == "int":
+            conditioners[id] = IntConditioner(output_dim=cond_dim, **conditioner_config["config"])
         else:
             raise ValueError(f"Unknown conditioner type: {conditioner_type}")
 

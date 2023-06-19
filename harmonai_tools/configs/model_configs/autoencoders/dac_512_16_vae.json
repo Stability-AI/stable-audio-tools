@@ -1,0 +1,30 @@
+{
+    "model_type": "autoencoder",
+    "sample_size": 65536,
+    "sample_rate": 44100,
+    "audio_channels": 1,
+    "model": {
+        "encoder": {
+            "type": "dac",
+            "config": {
+                "latent_dim": 32,
+                "d_model": 64,
+                "strides": [2, 4, 8, 8]
+            }
+        },
+        "decoder": {
+            "type": "dac",
+            "config": {
+                "latent_dim": 16,
+                "channels": 1024,
+                "rates": [8, 8, 4, 2]
+            }
+        },
+        "bottleneck": {
+            "type": "vae"
+        },
+        "latent_dim": 16,
+        "downsampling_ratio": 512,
+        "io_channels": 1
+    }
+}

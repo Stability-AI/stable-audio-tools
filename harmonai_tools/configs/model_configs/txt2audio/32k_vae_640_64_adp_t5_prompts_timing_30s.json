@@ -82,15 +82,15 @@
     "demo": {
         "num_demos": 8,
         "demo_cond": [
-            {"prompt": "This rockin guitar solo will get any rock fan to start banging their head. Great for action scenes."},
-            {"prompt": "A slow, sad piano piece that will make you cry. Perfect for a sad scene in a movie."},
-            {"prompt": "a moving and passionate violin solo that evokes feelings of love and longing"},
-            {"prompt": "death metal, with a fast tempo and heavy guitar riffs"},
-            {"prompt": "Dubstep for adults"},
-            {"prompt": "80s electronic track with melodic synthesizers, catchy beat and groovy bass"},
-            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle."},
-            {"prompt": "tech house track, four on the floor, great track to play in the club"}   
+            {"prompt": "This rockin guitar solo will get any rock fan to start banging their head. Great for action scenes.", "seconds_start": 0, "seconds_total": 60},
+            {"prompt": "A slow, sad piano piece that will make you cry. Perfect for a sad scene in a movie.", "seconds_start": 0, "seconds_total": 45},
+            {"prompt": "a moving and passionate violin solo that evokes feelings of love and longing", "seconds_start": 0, "seconds_total": 30},
+            {"prompt": "death metal, with a fast tempo and heavy guitar riffs", "seconds_start": 0, "seconds_total": 180},
+            {"prompt": "Dubstep for adults", "seconds_start": 12, "seconds_total": 231},
+            {"prompt": "80s electronic track with melodic synthesizers, catchy beat and groovy bass", "seconds_start": 0, "seconds_total": 120},
+            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 25},
+            {"prompt": "tech house track, four on the floor, great track to play in the club", "seconds_start": 0, "seconds_total": 60}   
         ],
-        "demo_cfg_scales": [2, 5, 7]
+        "demo_cfg_scales": [2, 4, 6]
     }
 }

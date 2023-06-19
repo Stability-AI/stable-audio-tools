@@ -3,6 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 import numpy as np
 from encodec.modules import SEANetEncoder, SEANetDecoder
+from dac.model.dac import Encoder as DACEncoder, Decoder as DACDecoder
 from typing import Literal, Dict, Any, Callable, Optional
 
 from ..inference.sampling import sample
@@ -166,6 +167,31 @@ class AudioDecoder(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
+class DACEncoderWrapper(nn.Module):
+    def __init__(self, latent_dim, **kwargs):
+        super().__init__()
+
+        self.encoder = DACEncoder(**kwargs)
+        self.latent_dim = latent_dim
+
+        self.proj_out = nn.Conv1d(self.encoder.enc_dim, latent_dim, kernel_size=1)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.proj_out(x)
+        return x
+
+class DACDecoderWrapper(nn.Module):
+    def __init__(self, latent_dim, **kwargs):
+        super().__init__()
+
+        self.decoder = DACDecoder(**kwargs, input_channel = latent_dim)
+
+        self.latent_dim = latent_dim
+
+    def forward(self, x):
+        return self.decoder(x)
+
 class AudioAutoencoder(nn.Module):
     def __init__(
         self,
@@ -289,7 +315,10 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
         return SEANetEncoder(
             **seanet_encoder_config
         )
-    
+    elif encoder_type == "dac":
+        dac_config = encoder_config["config"]
+
+        return DACEncoderWrapper(**dac_config)
     else:
         raise ValueError(f"Unknown encoder type {encoder_type}")
 
@@ -305,6 +334,10 @@ def create_decoder_from_config(decoder_config: Dict[str, Any]):
         return SEANetDecoder(
             **decoder_config["config"]
         )
+    elif decoder_type == "dac":
+        dac_config = decoder_config["config"]
+
+        return DACDecoderWrapper(**dac_config)
     else:
         raise ValueError(f"Unknown decoder type {decoder_type}")
 

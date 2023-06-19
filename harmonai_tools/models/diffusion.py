@@ -69,8 +69,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.pretransform = pretransform
         self.cross_attn_cond_ids = cross_attn_cond_ids
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
-        
+    def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any]):
         cross_attention_input = None
 
         if len(self.cross_attn_cond_ids) > 0:
@@ -78,8 +77,15 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             # Assumes that the cross-attention inputs are of shape (batch, seq, channels)
             cross_attention_input = torch.cat([cond[key][0] for key in self.cross_attn_cond_ids], dim=1)
             cross_attention_masks = torch.cat([cond[key][1] for key in self.cross_attn_cond_ids], dim=1)
-                    
-        return self.model(x, t, cross_attn_cond=cross_attention_input, **kwargs)
+
+        return {
+            "cross_attn_cond": cross_attention_input,
+            #"cross_attn_masks": cross_attention_masks
+        }
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
+        
+        return self.model(x, t, **self.get_conditioning_inputs(cond), **kwargs)
 
 class UNetCFG1DWrapper(ConditionedDiffusionModel):
     def __init__(

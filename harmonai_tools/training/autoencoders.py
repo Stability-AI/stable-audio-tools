@@ -8,7 +8,7 @@ from torch.nn.parameter import Parameter
 import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
-from ..models.discriminators import EncodecDiscriminator
+from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator
 from ..models.bottleneck import VAEBottleneck, RVQBottleneck
 
 from pytorch_lightning.utilities.distributed import rank_zero_only
@@ -32,7 +32,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.lr = lr
         
-        scales = [2048, 1024, 512, 256, 128, 64]
+        scales = [2048, 1024, 512, 256, 128, 64, 32]
         hop_sizes = []
         win_lengths = []
         overlap = 0.75
@@ -53,6 +53,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             hop_lengths = [512, 256, 128, 64, 32],
             win_lengths = [2048, 1024, 512, 256, 128]
         )
+
+        # self.discriminator = OobleckDiscriminator(in_channels = self.autoencoder.io_channels)
 
     def configure_optimizers(self):
         opt_gen = optim.Adam([*self.autoencoder.parameters()], lr=self.lr, betas=(.5, .9))
@@ -80,7 +82,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         l1_time_loss = F.l1_loss(reals, decoded)
 
         if self.warmed_up:
-            loss_dis, loss_adv, feature_matching_distance, _, _ = self.discriminator.loss(reals, decoded)
+            #loss_dis, loss_adv, feature_matching_distance, _, _ = self.discriminator.loss(reals, decoded)
+            loss_dis, loss_adv, feature_matching_distance = self.discriminator.loss(reals, decoded)
         else:
             loss_dis = torch.tensor(0.).to(reals)
             loss_adv = torch.tensor(0.).to(reals)
@@ -114,12 +117,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
             if isinstance(self.autoencoder.bottleneck, VAEBottleneck):
                 kl = encoder_info['kl']
-                kl_loss = 1e-5 * kl 
+                kl_loss = 1e-4 * kl 
                 loss = loss + kl_loss
             elif isinstance(self.autoencoder.bottleneck, RVQBottleneck):
                 quantizer_loss = encoder_info['quantizer_loss']
                 loss = loss + quantizer_loss
-            
 
             opt_gen.zero_grad()
             self.manual_backward(loss)
