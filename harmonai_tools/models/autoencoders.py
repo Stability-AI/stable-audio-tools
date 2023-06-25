@@ -1,10 +1,16 @@
 import torch
+import math
+import numpy as np
+
 from torch import nn
 from torch.nn import functional as F
-import numpy as np
+from functools import partial
+from torch import nn, sin, pow
+from torch.nn import Parameter
+from alias_free_torch import Activation1d
 from encodec.modules import SEANetEncoder, SEANetDecoder
 from dac.model.dac import Encoder as DACEncoder, Decoder as DACDecoder
-from dac.nn.layers import WNConv1d
+from dac.nn.layers import WNConv1d, WNConvTranspose1d
 from typing import Literal, Dict, Any, Callable, Optional
 
 from ..inference.sampling import sample
@@ -13,45 +19,56 @@ from .diffusion import create_diffusion_uncond_from_config
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform
 
+# Adapted from https://github.com/NVIDIA/BigVGAN/blob/main/activations.py under MIT license
+class SnakeBeta(nn.Module):
 
+    def __init__(self, in_features, alpha=1.0, alpha_trainable=True, alpha_logscale=True):
+        super(SnakeBeta, self).__init__()
+        self.in_features = in_features
 
-# Modified from https://github.com/wesbz/SoundStream/blob/main/net.py
-class CausalConv1d(nn.Conv1d):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.causal_padding = self.dilation[0] * (self.kernel_size[0] - 1)
+        # initialize alpha
+        self.alpha_logscale = alpha_logscale
+        if self.alpha_logscale: # log scale alphas initialized to zeros
+            self.alpha = Parameter(torch.zeros(in_features) * alpha)
+            self.beta = Parameter(torch.zeros(in_features) * alpha)
+        else: # linear scale alphas initialized to ones
+            self.alpha = Parameter(torch.ones(in_features) * alpha)
+            self.beta = Parameter(torch.ones(in_features) * alpha)
+
+        self.alpha.requires_grad = alpha_trainable
+        self.beta.requires_grad = alpha_trainable
+
+        self.no_div_by_zero = 0.000000001
 
     def forward(self, x):
-        return self._conv_forward(F.pad(x, [self.causal_padding, 0]), self.weight, self.bias)
+        alpha = self.alpha.unsqueeze(0).unsqueeze(-1) # line up with x to [B, C, T]
+        beta = self.beta.unsqueeze(0).unsqueeze(-1)
+        if self.alpha_logscale:
+            alpha = torch.exp(alpha)
+            beta = torch.exp(beta)
+        x = x + (1.0 / (beta + self.no_div_by_zero)) * pow(sin(x * alpha), 2)
 
-class CausalConvTranspose1d(nn.ConvTranspose1d):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.causal_padding = self.dilation[0] * (self.kernel_size[0] - 1) + self.output_padding[0] + 1 - self.stride[0]
-    
-    def forward(self, x, output_size=None):
-        if self.padding_mode != 'zeros':
-            raise ValueError('Only `zeros` padding mode is supported for ConvTranspose1d')
-
-        assert isinstance(self.padding, tuple)
-        output_padding = self._output_padding(
-            x, output_size, self.stride, self.padding, self.kernel_size, self.dilation)
-        return F.conv_transpose1d(
-            x, self.weight, self.bias, self.stride, self.padding,
-            output_padding, self.groups, self.dilation)[...,:-self.causal_padding]
-
+        return x
 
 class ResidualUnit(nn.Module):
-    def __init__(self, in_channels, out_channels, dilation):
+    def __init__(self, in_channels, out_channels, dilation, use_snake=False):
         super().__init__()
         
         self.dilation = dilation
 
+        if use_snake:
+            act = partial(Activation1d, activation=SnakeBeta(out_channels))
+        else:
+            act = nn.ELU
+
+        padding = (dilation * (7-1)) // 2
+
         self.layers = nn.Sequential(
-            CausalConv1d(in_channels=in_channels, out_channels=out_channels,
-                      kernel_size=7, dilation=dilation),
-            nn.ELU(),
-            nn.Conv1d(in_channels=out_channels, out_channels=out_channels,
+            act(),
+            WNConv1d(in_channels=in_channels, out_channels=out_channels,
+                      kernel_size=7, dilation=dilation, padding=padding),
+            act(),
+            WNConv1d(in_channels=out_channels, out_channels=out_channels,
                       kernel_size=1)
         )
 
@@ -59,68 +76,63 @@ class ResidualUnit(nn.Module):
         return x + self.layers(x)
 
 class EncoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
+    def __init__(self, in_channels, out_channels, stride, use_snake=False):
         super().__init__()
+
+        if use_snake:
+            act = partial(Activation1d, activation=SnakeBeta(in_channels))
+        else:
+            act = nn.ELU
 
         self.layers = nn.Sequential(
             ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=1),
-            nn.ELU(),
+                         out_channels=in_channels, dilation=1, use_snake=use_snake),
             ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=3),
-            nn.ELU(),
+                         out_channels=in_channels, dilation=3, use_snake=use_snake),
             ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=9),
-            nn.ELU(),
-            ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=1),
-            nn.ELU(),
-            ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=3),
-            nn.ELU(),
-            ResidualUnit(in_channels=in_channels,
-                         out_channels=in_channels, dilation=9),
-            nn.ELU(),
-            CausalConv1d(in_channels=in_channels, out_channels=out_channels,
-                      kernel_size=2*stride, stride=stride)
+                         out_channels=in_channels, dilation=9, use_snake=use_snake),
+            act(),
+            WNConv1d(in_channels=in_channels, out_channels=out_channels,
+                      kernel_size=2*stride, stride=stride, padding=math.ceil(stride//2)),
         )
 
     def forward(self, x):
         return self.layers(x)
 
 class DecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
+    def __init__(self, in_channels, out_channels, stride, use_snake=False):
         super().__init__()
 
+        if use_snake:
+            act = partial(Activation1d, activation=SnakeBeta(in_channels))
+        else:
+            act = nn.ELU
+
         self.layers = nn.Sequential(
-            CausalConvTranspose1d(in_channels=in_channels,
+            act(),
+            WNConvTranspose1d(in_channels=in_channels,
                                out_channels=out_channels,
-                               kernel_size=2*stride, stride=stride),
-            nn.ELU(),
+                               kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2)),
             ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=1),
-            nn.ELU(),
+                         dilation=1, use_snake=use_snake),
             ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=3),
-            nn.ELU(),
+                         dilation=3, use_snake=use_snake),
             ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=9),
-            nn.ELU(),
-            ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=1),
-            nn.ELU(),
-            ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=3),
-            nn.ELU(),
-            ResidualUnit(in_channels=out_channels, out_channels=out_channels,
-                         dilation=9),
+                         dilation=9, use_snake=use_snake),
         )
 
     def forward(self, x):
         return self.layers(x)
 
 class AudioEncoder(nn.Module):
-    def __init__(self, in_channels=2, channels=64, latent_dim=32, c_mults = [2, 4, 8, 16, 32], strides = [2, 2, 2, 2, 2]):
+    def __init__(self, 
+                 in_channels=2, 
+                 channels=128, 
+                 latent_dim=32, 
+                 c_mults = [1, 2, 4, 8], 
+                 strides = [2, 4, 8, 8],
+                 use_snake=False
+        ):
         super().__init__()
           
         c_mults = [1] + c_mults
@@ -128,15 +140,16 @@ class AudioEncoder(nn.Module):
         self.depth = len(c_mults)
 
         layers = [
-            CausalConv1d(in_channels=in_channels, out_channels=c_mults[0] * channels, kernel_size=7),
-            nn.ELU()
+            WNConv1d(in_channels=in_channels, out_channels=c_mults[0] * channels, kernel_size=7, padding=3)
         ]
         
         for i in range(self.depth-1):
-            layers.append(EncoderBlock(in_channels=c_mults[i]*channels, out_channels=c_mults[i+1]*channels, stride=strides[i]))
-            layers.append(nn.ELU())
+            layers += [EncoderBlock(in_channels=c_mults[i]*channels, out_channels=c_mults[i+1]*channels, stride=strides[i], use_snake=use_snake)]
 
-        layers.append(CausalConv1d(in_channels=c_mults[-1]*channels, out_channels=latent_dim, kernel_size=3))
+        layers += [
+            Activation1d(SnakeBeta(c_mults[-1] * channels)) if use_snake else nn.ELU(),
+            WNConv1d(in_channels=c_mults[-1]*channels, out_channels=latent_dim, kernel_size=3, padding=1)
+        ]
 
         self.layers = nn.Sequential(*layers)
 
@@ -145,7 +158,13 @@ class AudioEncoder(nn.Module):
 
 
 class AudioDecoder(nn.Module):
-    def __init__(self, out_channels=2, channels=64, latent_dim=32, c_mults = [2, 4, 8, 16, 32], strides = [2, 2, 2, 2, 2]):
+    def __init__(self, 
+                 out_channels=2, 
+                 channels=128, 
+                 latent_dim=32, 
+                 c_mults = [1, 2, 4, 8], 
+                 strides = [2, 4, 8, 8],
+                 use_snake=False):
         super().__init__()
 
         c_mults = [1] + c_mults
@@ -153,15 +172,17 @@ class AudioDecoder(nn.Module):
         self.depth = len(c_mults)
 
         layers = [
-            CausalConv1d(in_channels=latent_dim, out_channels=c_mults[-1]*channels, kernel_size=7),
-            nn.ELU()
+            WNConv1d(in_channels=latent_dim, out_channels=c_mults[-1]*channels, kernel_size=7, padding=3),
         ]
         
         for i in range(self.depth-1, 0, -1):
-            layers.append(DecoderBlock(in_channels=c_mults[i]*channels, out_channels=c_mults[i-1]*channels, stride=strides[i-1]))
-            layers.append(nn.ELU())
+            layers += [DecoderBlock(in_channels=c_mults[i]*channels, out_channels=c_mults[i-1]*channels, stride=strides[i-1], use_snake=use_snake)]
 
-        layers.append(CausalConv1d(in_channels=c_mults[0] * channels, out_channels=out_channels, kernel_size=7))
+        layers += [
+            Activation1d(SnakeBeta(c_mults[0] * channels)) if use_snake else nn.ELU(),
+            WNConv1d(in_channels=c_mults[0] * channels, out_channels=out_channels, kernel_size=7, padding=3),
+            nn.Tanh()
+        ]
 
         self.layers = nn.Sequential(*layers)
 

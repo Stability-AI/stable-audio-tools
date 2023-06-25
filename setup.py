@@ -8,6 +8,7 @@ setup(
     packages=find_packages(),  
     install_requires=[
         'aeiou',
+        'alias-free-torch',
         'audio-diffusion-pytorch @ https://github.com/Harmonai-org/audio-diffusion-pytorch/tarball/main',
         'audio-metadata',
         'auraloss',
@@ -18,7 +19,6 @@ setup(
         'gradio',
         'k-diffusion',
         'laion_clap',
-        'oobleck @ https://github.com/Harmonai-org/oobleck/tarball/main',
         'nwt-pytorch',
         'pandas',
         'pedalboard',
