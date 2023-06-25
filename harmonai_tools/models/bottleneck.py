@@ -5,6 +5,7 @@ from torch.nn import functional as F
 from einops import rearrange
 from vector_quantize_pytorch import ResidualVQ
 from nwt_pytorch import Memcodes
+from dac.nn.quantize import ResidualVectorQuantize as DACResidualVQ
 
 class Bottleneck(nn.Module):
     def __init__(self):
@@ -105,7 +106,35 @@ class RVQBottleneck(Bottleneck):
         
     def decode(self, x):
         return x
+
+class DACRVQBottleneck(Bottleneck):
+    def __init__(self, quantize_on_decode=False, **quantizer_kwargs):
+        super().__init__()
+        self.quantizer = DACResidualVQ(**quantizer_kwargs)
+        self.num_quantizers = quantizer_kwargs["n_codebooks"]
+        self.quantize_on_decode = quantize_on_decode
+
+    def encode(self, x, return_info=False):
+        info = {}
+
+        info["pre_quantizer"] = x
+
+        output = self.quantizer(x)
+
+        info.update(output)
+
+        if return_info:
+            return output["z"], info
+        
+        return output["z"]
     
+    def decode(self, x):
+
+        if self.quantize_on_decode:
+            x = self.quantizer(x)["z"]
+
+        return x
+
 class MemcodesBottleneck(Bottleneck):
     def __init__(self, **memcodes_kwargs):
         super().__init__()

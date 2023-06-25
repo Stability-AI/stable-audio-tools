@@ -6,10 +6,10 @@
         "type": "DAU1d",
         "config": {
             "depth": 6,
-            "channels": [128, 128, 256, 512, 512, 512],
+            "channels": [64, 128, 256, 512, 512, 512],
             "strides": [2, 4, 4, 4, 8, 8],
             "learned_resample": true,
-            "n_attn_layers": 3,
+            "n_attn_layers": 1,
             "use_snake": true
         }
     }

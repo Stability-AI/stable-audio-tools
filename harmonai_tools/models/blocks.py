@@ -6,6 +6,8 @@ from torch.nn import functional as F
 from torch.backends.cuda import sdp_kernel
 from packaging import version
 
+from dac.nn.layers import Snake1d
+
 class ResidualBlock(nn.Module):
     def __init__(self, main, skip=None):
         super().__init__()
@@ -16,15 +18,15 @@ class ResidualBlock(nn.Module):
         return self.main(input) + self.skip(input)
 
 class ResConvBlock(ResidualBlock):
-    def __init__(self, c_in, c_mid, c_out, is_last=False, kernel_size=5, conv_bias=True):
+    def __init__(self, c_in, c_mid, c_out, is_last=False, kernel_size=5, conv_bias=True, use_snake=False):
         skip = None if c_in == c_out else nn.Conv1d(c_in, c_out, 1, bias=False)
         super().__init__([
             nn.Conv1d(c_in, c_mid, kernel_size, padding=kernel_size//2, bias=conv_bias),
             nn.GroupNorm(1, c_mid),
-            nn.GELU(),
+            Snake1d(c_mid) if use_snake else nn.GELU(),
             nn.Conv1d(c_mid, c_out, kernel_size, padding=kernel_size//2, bias=conv_bias),
             nn.GroupNorm(1, c_out) if not is_last else nn.Identity(),
-            nn.GELU() if not is_last else nn.Identity(),
+            (Snake1d(c_out) if use_snake else nn.GELU()) if not is_last else nn.Identity(),
         ], skip)
 
 class SelfAttention1d(nn.Module):

@@ -24,6 +24,8 @@ class DiffusionModel(nn.Module):
 
         if pretransform is not None:
             self.pretransform = pretransform
+        else:
+            self.pretransform = None
 
     def forward(self, x, t, **kwargs):
         return self.model(x, t, **kwargs)
@@ -44,6 +46,7 @@ class ConditionedDiffusionModel(nn.Module):
                 x: torch.Tensor, 
                 t: torch.Tensor,   
                 cross_attn_cond: torch.Tensor = None,
+                cross_attn_masks: torch.Tensor = None,
                 input_concat_cond: torch.Tensor = None,
                 global_embed: torch.Tensor = None,
                 **kwargs):
@@ -80,7 +83,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
 
         return {
             "cross_attn_cond": cross_attention_input,
-            #"cross_attn_masks": cross_attention_masks
+            "cross_attn_masks": cross_attention_masks
         }
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
@@ -97,8 +100,8 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
 
         self.model = UNetCFG1d(*args, **kwargs)
 
-    def forward(self, x, t, cross_attn_cond=None, input_concat_cond=None, global_cond=None, **kwargs):
-        return self.model(x, t, embedding=cross_attn_cond, features=global_cond, **kwargs)
+    def forward(self, x, t, cross_attn_cond=None, cross_attn_masks=None, input_concat_cond=None, global_cond=None, **kwargs):
+        return self.model(x, t, embedding=cross_attn_cond, embedding_mask=cross_attn_masks, features=global_cond, **kwargs)
 
 class DiffusionAttnUnet1D(nn.Module):
     def __init__(
@@ -112,7 +115,8 @@ class DiffusionAttnUnet1D(nn.Module):
         kernel_size = 5,
         learned_resample = False,
         strides = [2] * 13,
-        conv_bias = True
+        conv_bias = True,
+        use_snake = False
     ):
         super().__init__()
 
@@ -131,7 +135,7 @@ class DiffusionAttnUnet1D(nn.Module):
 
         block = nn.Identity()
 
-        conv_block = partial(ResConvBlock, kernel_size=kernel_size, conv_bias = conv_bias)
+        conv_block = partial(ResConvBlock, kernel_size=kernel_size, conv_bias = conv_bias, use_snake=use_snake)
 
         for i in range(depth, 0, -1):
             c = channels[i - 1]

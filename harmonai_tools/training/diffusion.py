@@ -13,6 +13,7 @@ from torch.nn import functional as F
 from pytorch_lightning.utilities.distributed import rank_zero_only
 
 from ..inference.sampling import get_alphas_sigmas, sample
+from ..inference.generation import generate_diffusion_cond
 from ..models.diffusion import DiffusionModel, ConditionedDiffusionModelWrapper
 from ..models.autoencoders import DiffusionAutoencoder
 
@@ -215,7 +216,6 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         diffusion_input = reals
 
         p.tick("setup")
-
         
         conditioning = self.diffusion.conditioner(metadata, self.device)
 
@@ -310,11 +310,12 @@ class DiffusionCondDemoCallback(pl.Callback):
             for cfg_scale in self.demo_cfg_scales:
 
                 print(f"Generating demo for cfg scale {cfg_scale}")
-                fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0, **cond_inputs, embedding_scale=cfg_scale)
+                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, embedding_scale=cfg_scale)
 
                 if module.diffusion.pretransform is not None:
-                    module.diffusion.pretransform.to("cpu")
-                    fakes = module.diffusion.pretransform.decode(fakes.cpu())
+                    fakes = module.diffusion.pretransform.decode(fakes)
+
+                #fakes = generate_diffusion_cond(module.diffusion, self.demo_steps, cfg_scale, self.demo_conditioning, batch_size=self.num_demos, sample_size=demo_samples, device=module.device)
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')

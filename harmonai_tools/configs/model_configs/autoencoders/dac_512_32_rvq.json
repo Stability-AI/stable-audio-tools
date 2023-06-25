@@ -1,0 +1,39 @@
+{
+    "model_type": "autoencoder",
+    "sample_size": 65536,
+    "sample_rate": 44100,
+    "audio_channels": 1,
+    "model": {
+        "encoder": {
+            "type": "dac",
+            "config": {
+                "latent_dim": 32,
+                "d_model": 64,
+                "strides": [2, 4, 8, 8]
+            }
+        },
+        "decoder": {
+            "type": "dac",
+            "config": {
+                "latent_dim": 32,
+                "channels": 1536,
+                "rates": [8, 8, 4, 2]
+            }
+        },
+        "bottleneck": {
+            "type": "dac_rvq",
+            "config": {
+                "input_dim": 32,
+                "n_codebooks": 8,
+                "codebook_dim": 8,
+                "codebook_size": 2048,
+                "quantizer_dropout": 0.5,
+                "commitment_loss_weight": 0.25,
+                "codebook_loss_weight": 1.0
+            }
+        },
+        "latent_dim": 32,
+        "downsampling_ratio": 512,
+        "io_channels": 1
+    }
+}

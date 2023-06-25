@@ -341,12 +341,12 @@ class S3DatasetConfig:
         self,
         id: str,
         s3_path: str,
-        metadata_prompts_fn: Optional[Callable[[str], str]] = None,
+        custom_metadata_fn: Optional[Callable[[str], str]] = None,
         profile: Optional[str] = None,
     ):
         self.id = id
         self.s3_path = s3_path
-        self.metadata_prompts_fn = metadata_prompts_fn
+        self.custom_metadata_fn = custom_metadata_fn
         self.profile = profile
         self.urls = []
 
@@ -466,14 +466,14 @@ class S3WebDataLoader():
         if "text" in sample["json"]:
             sample["json"]["prompt"] = sample["json"]["text"]
 
-        # Check for metadata prompt funcs
+        # Check for custom metadata functions
         for dataset in self.datasets:
-            if dataset.metadata_prompts_fn is None:
+            if dataset.custom_metadata_fn is None:
                 continue
         
             if dataset.s3_path in sample["__url__"]:
-                prompt = dataset.metadata_prompts_fn(sample["json"])
-                sample["json"]["prompt"] = prompt
+                custom_metadata = dataset.custom_metadata_fn(sample["json"], audio)
+                sample["json"].update(custom_metadata)
 
         if found_key != rewrite_key:   # rename long/weird key with its simpler counterpart
             del sample[found_key]
@@ -523,21 +523,22 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
 
         for s3_config in dataset_config["datasets"]:
 
-            metadata_prompts_fn = None
-            prompt_module_path = s3_config.get("prompt_module_path", None)
+            custom_metadata_fn = None
+            custom_metadata_module_path = s3_config.get("custom_metadata_module", None)
 
-            if prompt_module_path is not None:
-                spec = importlib.util.spec_from_file_location("prompt_module", prompt_module_path)
-                prompt_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(prompt_module)                
+            if custom_metadata_module_path is not None:
+                spec = importlib.util.spec_from_file_location("metadata_module", custom_metadata_module_path)
+                metadata_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(metadata_module)                
 
-                metadata_prompts_fn = prompt_module.get_prompt_from_metadata
+                custom_metadata_fn = metadata_module.get_custom_metadata
 
             dataset_configs.append(
                 S3DatasetConfig(
                     id=s3_config["id"],
                     s3_path=s3_config["s3_path"],
-                    metadata_prompts_fn=metadata_prompts_fn
+                    custom_metadata_fn=custom_metadata_fn,
+                    profile=s3_config.get("profile", None),
                 )
             )
 

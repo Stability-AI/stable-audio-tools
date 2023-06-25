@@ -75,6 +75,10 @@ def create_bottleneck_from_config(bottleneck_config):
         quantizer_params.update(bottleneck_config["config"])
 
         return RVQBottleneck(**quantizer_params)
+    elif bottleneck_type == "dac_rvq":
+        from .bottleneck import DACRVQBottleneck
+
+        return DACRVQBottleneck(**bottleneck_config["config"])
     elif bottleneck_type == 'memcodes':
         from .bottleneck import MemcodesBottleneck
         return MemcodesBottleneck(**bottleneck_config["config"])

@@ -9,7 +9,7 @@ import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator
-from ..models.bottleneck import VAEBottleneck, RVQBottleneck
+from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck
 
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
@@ -108,12 +108,12 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
             feature_matching_distance =  5 * feature_matching_distance
 
-            #mrstft_loss = 2 * mrstft_loss
+            mrstft_loss = 1.0 * mrstft_loss
 
-            l1_time_loss = 0.1 * l1_time_loss
+            l1_time_loss = l1_time_loss #* 0.1
 
             # Combine spectral loss, KL loss, time-domain loss, and adversarial loss
-            loss = mrstft_loss + loss_adv + feature_matching_distance + l1_time_loss
+            loss = mrstft_loss + loss_adv + feature_matching_distance #+ l1_time_loss
 
             if isinstance(self.autoencoder.bottleneck, VAEBottleneck):
                 kl = encoder_info['kl']
@@ -122,6 +122,10 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             elif isinstance(self.autoencoder.bottleneck, RVQBottleneck):
                 quantizer_loss = encoder_info['quantizer_loss']
                 loss = loss + quantizer_loss
+            elif isinstance(self.autoencoder.bottleneck, DACRVQBottleneck):
+                codebook_loss = encoder_info["vq/codebook_loss"]
+                commitment_loss = 0.25 * encoder_info["vq/commitment_loss"]
+                loss = loss + codebook_loss + commitment_loss
 
             opt_gen.zero_grad()
             self.manual_backward(loss)
@@ -140,6 +144,9 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 log_dict['train/kl_loss'] = kl_loss.detach()
             elif isinstance(self.autoencoder.bottleneck, RVQBottleneck):
                 log_dict['train/quantizer_loss'] = quantizer_loss.detach()
+            elif isinstance(self.autoencoder.bottleneck, DACRVQBottleneck):
+                log_dict['train/codebook_loss'] = codebook_loss.detach()
+                log_dict['train/commitment_loss'] = commitment_loss.detach()
                 
             
         self.log_dict(log_dict, prog_bar=True, on_step=True)
@@ -173,6 +180,8 @@ class AutoencoderDemoCallback(pl.Callback):
             return
         
         self.last_demo_step = trainer.global_step
+
+        module.eval()
 
         try:
             demo_reals, _ = next(self.demo_dl)
@@ -222,3 +231,5 @@ class AutoencoderDemoCallback(pl.Callback):
             trainer.logger.experiment.log(log_dict)
         except Exception as e:
             print(f'{type(e).__name__}: {e}')
+        finally:
+            module.train()

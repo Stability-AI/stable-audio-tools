@@ -1,0 +1,44 @@
+{
+    "model_type": "diffusion_uncond",
+    "sample_size": 524288,
+    "sample_rate": 48000,
+    "audio_channels": 1,
+    "model": {
+        "pretransform": {
+            "type": "autoencoder",
+            "config": {
+                "encoder": {
+                    "type": "dac",
+                    "config": {
+                        "latent_dim": 32,
+                        "d_model": 128,
+                        "strides": [2, 4, 8, 8]
+                    }
+                },
+                "decoder": {
+                    "type": "dac",
+                    "config": {
+                        "latent_dim": 32,
+                        "channels": 1536,
+                        "rates": [8, 8, 4, 2]
+                    }
+                },
+                "bottleneck": {
+                    "type": "tanh"
+                },
+                "latent_dim": 32,
+                "downsampling_ratio": 512,
+                "io_channels": 1
+            }
+        },
+        "type": "DAU1d",
+        "config": {
+            "io_channels": 32,
+            "n_attn_layers": 2,
+            "depth": 5,
+            "channels": [512, 512, 512, 768, 768],
+            "learned_resample": true,
+            "strides": [2, 2, 2, 4, 4]
+        }
+    }
+}

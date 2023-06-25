@@ -5,6 +5,8 @@ import logging, warnings
 import typing as tp
 import gc
 
+from audio_diffusion_pytorch import NumberEmbedder
+
 from torch import nn
 
 class Conditioner(nn.Module):
@@ -20,35 +22,11 @@ class Conditioner(nn.Module):
         self.dim = dim
         self.output_dim = output_dim
         self.cond_len = cond_len
-        self.proj_out = nn.Linear(dim, output_dim)
+        self.proj_out = nn.Linear(dim, output_dim) if dim != output_dim else nn.Identity()
 
     def forward(self, x: tp.Any) -> tp.Any:
         raise NotImplementedError()
     
-class TimingConditioner(Conditioner):
-    def __init__(self,
-                output_dim: int,
-                max_seconds: int = 512):
-        super().__init__(output_dim, output_dim, 1)
-
-        self.max_seconds = max_seconds
-        self.seconds_start_embedder = nn.Embedding(max_seconds + 1, output_dim)
-        self.seconds_total_embedder = nn.Embedding(max_seconds + 1, output_dim)
-
-    def forward(self, seconds_starts_totals: tp.List[tp.Tuple[int, int]], device=None) -> tp.Any:
-        
-        self.seconds_start_embedder.to(device)
-        self.seconds_total_embedder.to(device)
-
-        seconds_starts_totals = torch.tensor(seconds_starts_totals).to(device)
-        seconds_starts_totals = seconds_starts_totals.clamp(0, self.max_seconds)
-        seconds_starts, seconds_totals = seconds_starts_totals.transpose(0, 1)
-
-        seconds_starts_embeds = self.seconds_start_embedder(seconds_starts).unsqueeze(1)
-        seconds_totals_embeds = self.seconds_total_embedder(seconds_totals).unsqueeze(1)
-
-        return seconds_starts_embeds, seconds_totals_embeds
-
 class IntConditioner(Conditioner):
     def __init__(self, 
                 output_dim: int,
@@ -59,11 +37,11 @@ class IntConditioner(Conditioner):
 
         self.min_val = min_val
         self.max_val = max_val
-        self.int_embedder = nn.Embedding(max_val - min_val + 1, output_dim)
+        self.int_embedder = nn.Embedding(max_val - min_val + 1, output_dim).requires_grad_(True)
 
     def forward(self, ints: tp.List[int], device=None) -> tp.Any:
             
-            self.int_embedder.to(device)
+            #self.int_embedder.to(device)
     
             ints = torch.tensor(ints).to(device)
             ints = ints.clamp(self.min_val, self.max_val)
@@ -71,6 +49,37 @@ class IntConditioner(Conditioner):
             int_embeds = self.int_embedder(ints).unsqueeze(1)
     
             return [int_embeds, torch.ones(int_embeds.shape[0], 1).to(device)]
+
+class NumberConditioner(Conditioner):
+    '''
+        Conditioner that takes a list of floats, normalizes them for a given range, and returns a list of embeddings
+    '''
+    def __init__(self, 
+                output_dim: int,
+                min_val: float=0,
+                max_val: float=1
+                ):
+        super().__init__(output_dim, output_dim, 1)
+
+        self.min_val = min_val
+        self.max_val = max_val
+
+        self.embedder = NumberEmbedder(features=output_dim)
+
+    def forward(self, floats: tp.List[float], device=None) -> tp.Any:
+    
+            # Cast the inputs to floats
+            floats = [float(x) for x in floats]
+
+            floats = torch.tensor(floats).to(device)
+
+            floats = floats.clamp(self.min_val, self.max_val)
+    
+            normalized_floats = (floats - self.min_val) / (self.max_val - self.min_val)
+
+            float_embeds = self.embedder(normalized_floats).unsqueeze(1)
+    
+            return [float_embeds, torch.ones(float_embeds.shape[0], 1).to(device)]
 
 class CLAPTextConditioner(Conditioner):
     def __init__(self, 
@@ -94,8 +103,8 @@ class CLAPTextConditioner(Conditioner):
 
     def forward(self, texts: tp.List[str], device: tp.Any = None) -> tp.Any:
 
-        self.model.to(device)
-        self.proj_out.to(device)
+        # self.model.to(device)
+        # self.proj_out.to(device)
 
         # Fix for CLAP bug when only one text is passed
         if len(texts) == 1:
@@ -166,8 +175,6 @@ class T5Conditioner(Conditioner):
             return_tensors="pt",
         )
 
-        self.model.to(device)
-        self.proj_out.to(device)
         input_ids = encoded["input_ids"].to(device)
         attention_mask = encoded["attention_mask"].to(device).to(torch.bool)
 
@@ -192,7 +199,7 @@ class MultiConditioner(nn.Module):
     def __init__(self, conditioners: tp.Dict[str, Conditioner]):
         super().__init__()
 
-        self.conditioners = conditioners
+        self.conditioners = nn.ModuleDict(conditioners)
 
     def forward(self, batch_metadata: tp.List[tp.Dict[str, tp.Any]], device: tp.Union[torch.device, str]) -> tp.Dict[str, tp.Any]:
         output = {}

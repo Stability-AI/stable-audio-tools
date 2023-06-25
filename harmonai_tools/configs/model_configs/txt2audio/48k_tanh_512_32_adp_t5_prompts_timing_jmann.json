@@ -1,43 +1,33 @@
 {
     "model_type": "diffusion_cond",
-    "sample_size": 960000,
-    "sample_rate": 32000,
+    "sample_size": 2097152,
+    "sample_rate": 48000,
     "audio_channels": 1,
     "model": {
         "pretransform": {
             "type": "autoencoder",
             "config": {
                 "encoder": {
-                    "type": "seanet",
+                    "type": "dac",
                     "config": {
-                        "channels": 1,
-                        "dimension": 128,
-                        "n_filters": 64,
-                        "ratios": [4, 4, 5, 8],
-                        "n_residual_layers": 1,
-                        "dilation_base": 2,
-                        "lstm": 2,
-                        "norm": "weight_norm"
+                        "latent_dim": 32,
+                        "d_model": 128,
+                        "strides": [2, 4, 8, 8]
                     }
                 },
                 "decoder": {
-                    "type": "seanet",
+                    "type": "dac",
                     "config": {
-                        "channels": 1,
-                        "dimension": 64,
-                        "n_filters": 64,
-                        "ratios": [4, 4, 5, 8],
-                        "n_residual_layers": 1,
-                        "dilation_base": 2,
-                        "lstm": 2,
-                        "norm": "weight_norm"
+                        "latent_dim": 32,
+                        "channels": 1536,
+                        "rates": [8, 8, 4, 2]
                     }
                 },
                 "bottleneck": {
-                    "type": "vae"
+                    "type": "tanh"
                 },
-                "latent_dim": 64,
-                "downsampling_ratio": 640,
+                "latent_dim": 32,
+                "downsampling_ratio": 512,
                 "io_channels": 1
             }
         },
@@ -74,17 +64,17 @@
             "type": "adp_cfg_1d",
             "cross_attention_cond_ids": ["prompt", "seconds_start", "seconds_total"],
             "config": {
-                "in_channels": 64,
+                "in_channels": 32,
                 "context_embedding_features": 768,
                 "context_embedding_max_length": 80,
                 "channels": 256,
-                "resnet_groups": 8,
+                "resnet_groups": 16,
                 "kernel_multiplier_downsample": 2,
-                "multipliers": [2, 3, 3, 4, 4, 5],
-                "factors": [1, 2, 3, 5, 5],
-                "num_blocks": [2, 2, 2, 2, 2],
-                "attentions": [1, 1, 3, 3, 3, 3],
-                "attention_heads": 16,
+                "multipliers": [2, 2, 3, 3, 3],
+                "factors": [1, 2, 2, 4],
+                "num_blocks": [3, 3, 3, 3],
+                "attentions": [0, 0, 3, 3, 3],
+                "attention_heads": 8,
                 "attention_features": 64,
                 "attention_multiplier": 4,
                 "use_nearest_upsample": false,
@@ -92,16 +82,16 @@
                 "use_context_time": true
             }
         },
-        "io_channels": 64
+        "io_channels": 32
     },
     "demo": {
         "num_demos": 4,
         "demo_cond": [
-            {"prompt": "A beautiful piano solo that inspires passion and love, intimate melodies and harmonies", "seconds_start": 0, "seconds_total": 25},
-            {"prompt": "New Orleans Jazz, jazz trumpets and upright bass, catchy happy jazz music", "seconds_start": 0, "seconds_total": 30},
-            {"prompt": "birds singing in the forest, nature sounds", "seconds_start": 0, "seconds_total": 15},
-            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 30}
+            {"prompt": "Style: Groovy|Key: G|Instruments: Acoustic Guitar|Genre: Folk|Instrument: Guitalele|Mood: Silly|Tempo: 120|Year: 2017|Beard: ShadowBeard: ", "seconds_start": 0, "seconds_total": 120},
+            {"prompt": "Date: 2012-07-15|Tempo: 70|Key: F#|Mood: Tired|Year: 2012|Beard: Shadow|Genre: Folk|Style: Rambling, Rough", "seconds_start": 0, "seconds_total": 140},
+            {"prompt": "Tempo: 100|Genre: Rock|Style: Rambling, Fun, Bouncy|Mood: Pensive|Key: E|Year: 2021|Topic: Poetic|Beard: Shadow", "seconds_start": 0, "seconds_total": 150},
+            {"prompt": "Tempo: 150|Genre: Folk|Style: Happy, Rambling", "seconds_start": 0, "seconds_total": 202}
         ],
-        "demo_cfg_scales": [3, 6, 9]
+        "demo_cfg_scales": [3, 5, 7]
     }
 }

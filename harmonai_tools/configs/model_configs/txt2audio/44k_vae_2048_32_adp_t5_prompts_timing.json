@@ -1,43 +1,33 @@
 {
     "model_type": "diffusion_cond",
-    "sample_size": 960000,
-    "sample_rate": 32000,
+    "sample_size": 1048576,
+    "sample_rate": 44100,
     "audio_channels": 1,
     "model": {
         "pretransform": {
             "type": "autoencoder",
             "config": {
                 "encoder": {
-                    "type": "seanet",
+                    "type": "dac",
                     "config": {
-                        "channels": 1,
-                        "dimension": 128,
-                        "n_filters": 64,
-                        "ratios": [4, 4, 5, 8],
-                        "n_residual_layers": 1,
-                        "dilation_base": 2,
-                        "lstm": 2,
-                        "norm": "weight_norm"
+                        "latent_dim": 64,
+                        "d_model": 128,
+                        "strides": [4, 8, 8, 8]
                     }
                 },
                 "decoder": {
-                    "type": "seanet",
+                    "type": "dac",
                     "config": {
-                        "channels": 1,
-                        "dimension": 64,
-                        "n_filters": 64,
-                        "ratios": [4, 4, 5, 8],
-                        "n_residual_layers": 1,
-                        "dilation_base": 2,
-                        "lstm": 2,
-                        "norm": "weight_norm"
+                        "latent_dim": 32,
+                        "channels": 1536,
+                        "rates": [8, 8, 8, 4]
                     }
                 },
                 "bottleneck": {
                     "type": "vae"
                 },
-                "latent_dim": 64,
-                "downsampling_ratio": 640,
+                "latent_dim": 32,
+                "downsampling_ratio": 2048,
                 "io_channels": 1
             }
         },
@@ -74,16 +64,16 @@
             "type": "adp_cfg_1d",
             "cross_attention_cond_ids": ["prompt", "seconds_start", "seconds_total"],
             "config": {
-                "in_channels": 64,
+                "in_channels": 32,
                 "context_embedding_features": 768,
                 "context_embedding_max_length": 80,
                 "channels": 256,
                 "resnet_groups": 8,
                 "kernel_multiplier_downsample": 2,
                 "multipliers": [2, 3, 3, 4, 4, 5],
-                "factors": [1, 2, 3, 5, 5],
+                "factors": [1, 2, 4, 4, 4],
                 "num_blocks": [2, 2, 2, 2, 2],
-                "attentions": [1, 1, 3, 3, 3, 3],
+                "attentions": [0, 0, 3, 3, 3, 3],
                 "attention_heads": 16,
                 "attention_features": 64,
                 "attention_multiplier": 4,
@@ -92,15 +82,15 @@
                 "use_context_time": true
             }
         },
-        "io_channels": 64
+        "io_channels": 32
     },
     "demo": {
         "num_demos": 4,
         "demo_cond": [
-            {"prompt": "A beautiful piano solo that inspires passion and love, intimate melodies and harmonies", "seconds_start": 0, "seconds_total": 25},
-            {"prompt": "New Orleans Jazz, jazz trumpets and upright bass, catchy happy jazz music", "seconds_start": 0, "seconds_total": 30},
-            {"prompt": "birds singing in the forest, nature sounds", "seconds_start": 0, "seconds_total": 15},
-            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 30}
+            {"prompt": "A slow, sad piano piece that will make you cry. Perfect for a sad scene in a movie.", "seconds_start": 0, "seconds_total": 45},
+            {"prompt": "80s electronic track with melodic synthesizers, catchy beat and groovy bass", "seconds_start": 0, "seconds_total": 120},
+            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 25},
+            {"prompt": "tech house track, four on the floor, great track to play in the club", "seconds_start": 0, "seconds_total": 60}   
         ],
         "demo_cfg_scales": [3, 6, 9]
     }
