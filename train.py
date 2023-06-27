@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 
 from harmonai_tools.data.dataset import create_dataloader_from_configs_and_args
 from harmonai_tools.models import create_model_from_config
-from harmonai_tools.training import create_training_wrapper_from_config_and_args, create_demo_callback_from_config_and_args
+from harmonai_tools.training import create_training_wrapper_from_configs, create_demo_callback_from_configs
 
 class ExceptionCallback(pl.Callback):
     def on_exception(self, trainer, module, err):
@@ -26,6 +26,9 @@ def main():
     with open(args.dataset_config) as f:
         dataset_config = json.load(f)
 
+    with open(args.training_config) as f:
+        training_config = json.load(f)
+
     train_dl = create_dataloader_from_configs_and_args(model_config, args, dataset_config)
 
     model = create_model_from_config(model_config)
@@ -38,12 +41,12 @@ def main():
         model.pretransform.load_state_dict(torch.load(args.pretransform_ckpt_path)["state_dict"])
         print("Done loading pretransform from checkpoint")
 
-    training_wrapper = create_training_wrapper_from_config_and_args(model_config, args, model)
+    training_wrapper = create_training_wrapper_from_configs(model_config, training_config, model)
 
     exc_callback = ExceptionCallback()
     ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, save_top_k=-1)
 
-    demo_callback = create_demo_callback_from_config_and_args(model_config, args, demo_dl=train_dl)
+    demo_callback = create_demo_callback_from_configs(model_config, training_config, demo_dl=train_dl)
 
     wandb_logger = pl.loggers.WandbLogger(project=args.name)
     wandb_logger.watch(training_wrapper)
