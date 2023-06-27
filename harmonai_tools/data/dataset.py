@@ -10,44 +10,13 @@ import torch
 import torchaudio
 import webdataset as wds
 
-from aeiou.core import is_silence
+from aeiou.core import is_silence, fast_scandir
 from os import path
 from pedalboard.io import AudioFile
 from torchaudio import transforms as T
 from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
-
-def fast_scandir(
-    dir: str,  # top-level directory at which to begin scanning
-    ext: list,  # list of allowed file extensions
-):
-    "very fast `glob` alternative. from https://stackoverflow.com/a/59803793/4259243"
-    subfolders, files = [], []
-    # add starting period to extensions if needed
-    ext = ['.'+x if x[0] != '.' else x for x in ext]
-    try:  # hope to avoid 'permission denied' by this try
-        for f in os.scandir(dir):
-            try:  # 'hope to avoid too many levels of symbolic links' error
-                if f.is_dir():
-                    subfolders.append(f.path)
-                elif f.is_file():
-                    file_ext = os.path.splitext(f.name)[1].lower()
-                    bad_prefix = os.path.basename(f.path).startswith("._")
-
-                    if file_ext in ext and not bad_prefix:  # and not too_large:
-                        files.append(f.path)
-            except:
-                pass
-    except:
-        pass
-
-    for dir in list(subfolders):
-        sf, f = fast_scandir(dir, ext)
-        subfolders.extend(sf)
-        files.extend(f)
-    return subfolders, files
-
 
 def keyword_scandir(
     dir: str,  # top-level directory at which to begin scanning
@@ -86,7 +55,6 @@ def keyword_scandir(
         subfolders.extend(sf)
         files.extend(f)
     return subfolders, files
-
 
 def get_audio_filenames(
     paths: list,  # directories in which to search
@@ -198,40 +166,7 @@ class SampleDataset(torch.utils.data.Dataset):
             return self[random.randrange(len(self))]
 
 
-def group_by_keys(data, keys=wds.tariterators.base_plus_ext, lcase=True, suffixes=None, handler=None):
-    """Return function over iterator that groups key, value pairs into samples.
-    :param keys: function that splits the key into key and extension (base_plus_ext)
-    :param lcase: convert suffixes to lower case (Default value = True)
-    """
-    current_sample = None
-    for filesample in data:
-        assert isinstance(filesample, dict)
-        fname, value = filesample["fname"], filesample["data"]
-        prefix, suffix = keys(fname)
-        if wds.tariterators.trace:
-            print(
-                prefix,
-                suffix,
-                current_sample.keys() if isinstance(current_sample, dict) else None,
-            )
-        if prefix is None:
-            continue
-        if lcase:
-            suffix = suffix.lower()
-        if current_sample is None or prefix != current_sample["__key__"]:
-            if wds.tariterators.valid_sample(current_sample):
-                yield current_sample
-            current_sample = dict(
-                __key__=prefix, __url__=filesample["__url__"])
-        if suffix in current_sample:
-            print(
-                f"{fname}: duplicate file name in tar file {suffix} {current_sample.keys()}")
-        if suffixes is None or suffix in suffixes:
-            current_sample[suffix] = value
-    if wds.tariterators.valid_sample(current_sample):
-        yield current_sample
-
-wds.tariterators.group_by_keys = group_by_keys
+# S3 code and WDS preprocessing code based on implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
 
 def get_s3_contents(dataset_path, s3_url_prefix=None, filter='', recursive=True, debug=False, profile='default'):
     """

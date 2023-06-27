@@ -1,1 +1,1 @@
-from .factory import create_training_wrapper_from_config_and_args, create_demo_callback_from_config_and_args
+from .factory import create_training_wrapper_from_configs, create_demo_callback_from_configs

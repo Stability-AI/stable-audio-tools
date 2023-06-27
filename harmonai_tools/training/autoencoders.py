@@ -20,7 +20,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             autoencoder: AudioAutoencoder,
             lr: float = 1e-4,
             warmup_steps: int = 150000,
-            sample_rate=48000
+            sample_rate=48000,
+            loss_config: dict = None
     ):
         super().__init__()
 
@@ -31,30 +32,70 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.warmed_up = False
         self.warmup_steps = warmup_steps
         self.lr = lr
+
+        if loss_config is None:
+            scales = [2048, 1024, 512, 256, 128, 64, 32]
+            hop_sizes = []
+            win_lengths = []
+            overlap = 0.75
+            for s in scales:
+                hop_sizes.append(int(s * (1 - overlap)))
+                win_lengths.append(s)
         
-        scales = [2048, 1024, 512, 256, 128, 64, 32]
-        hop_sizes = []
-        win_lengths = []
-        overlap = 0.75
-        for s in scales:
-            hop_sizes.append(int(s * (1 - overlap)))
-            win_lengths.append(s)
+            loss_config = {
+                "discriminator": {
+                    "type": "encodec",
+                    "config": {
+                        "n_ffts": scales,
+                        "hop_lengths": hop_sizes,
+                        "win_lengths": win_lengths,
+                        "in_channels": self.autoencoder.io_channels,
+                        "filters": 32
+                    },
+                    "weights": {
+                        "adversarial": 0.1,
+                        "feature_matching": 5.0,
+                    }
+                },
+                "spectral": {
+                    "type": "mrstft",
+                    "config": {
+                        "fft_sizes": scales,
+                        "hop_sizes": hop_sizes,
+                        "win_lengths": win_lengths,
+                        "sample_rate": sample_rate,
+                        "perceptual_weighting": True
+                    },
+                    "weights": {
+                        "mrstft": 1.0,
+                    }
+                },
+                "time": {
+                    "type": "l1",
+                    "config": {},
+                    "weights": {
+                        "l1": 0.0,
+                    }
+                }
+            }
+        
+        self.loss_config = loss_config
+       
+        # Spectral reconstruction loss
+
+        stft_loss_args = loss_config['spectral']['config']
 
         if self.autoencoder.io_channels == 2:
-            self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(fft_sizes=scales, hop_sizes=hop_sizes, win_lengths=win_lengths, sample_rate=sample_rate, perceptual_weighting=True)
+            self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
         else:
-            self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(fft_sizes=scales, hop_sizes=hop_sizes, win_lengths=win_lengths, sample_rate=sample_rate, perceptual_weighting=True)
+            self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
 
-        self.discriminator = EncodecDiscriminator(
-            filters=32,
-            in_channels = self.autoencoder.io_channels,
-            out_channels = 1,
-            n_ffts = [2048, 1024, 512, 256, 128],
-            hop_lengths = [512, 256, 128, 64, 32],
-            win_lengths = [2048, 1024, 512, 256, 128]
-        )
+        # Discriminator
 
-        # self.discriminator = OobleckDiscriminator(in_channels = self.autoencoder.io_channels)
+        if loss_config['discriminator']['type'] == 'oobleck':
+            self.discriminator = OobleckDiscriminator(**loss_config['discriminator']['config'])
+        elif loss_config['discriminator']['type'] == 'encodec':
+            self.discriminator = EncodecDiscriminator(**loss_config['discriminator']['config'])
 
     def configure_optimizers(self):
         opt_gen = optim.Adam([*self.autoencoder.parameters()], lr=self.lr, betas=(.5, .9))
@@ -104,13 +145,13 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         # Train the generator 
         else:
 
-            loss_adv = 0.1 * loss_adv
+            loss_adv = loss_adv * self.loss_config['discriminator']['weights']['adversarial']
 
-            feature_matching_distance =  5 * feature_matching_distance
+            feature_matching_distance = feature_matching_distance * self.loss_config['discriminator']['weights']['feature_matching']
 
-            mrstft_loss = 1.0 * mrstft_loss
+            mrstft_loss = mrstft_loss * self.loss_config['spectral']['weights']['mrstft']
 
-            l1_time_loss = l1_time_loss #* 0.1
+            l1_time_loss = l1_time_loss * self.loss_config['time']['weights']['l1']
 
             # Combine spectral loss, KL loss, time-domain loss, and adversarial loss
             loss = mrstft_loss + loss_adv + feature_matching_distance #+ l1_time_loss

@@ -9,15 +9,15 @@
             "config": {
                 "latent_dim": 32,
                 "d_model": 64,
-                "strides": [2, 4, 8, 8]
+                "strides": [2, 4, 4, 4]
             }
         },
         "decoder": {
             "type": "dac",
             "config": {
                 "latent_dim": 32,
-                "channels": 1536,
-                "rates": [8, 8, 4, 2]
+                "channels": 1024,
+                "rates": [4, 4, 4, 2]
             }
         },
         "bottleneck": {
@@ -31,7 +31,7 @@
             }
         },
         "latent_dim": 32,
-        "downsampling_ratio": 512,
+        "downsampling_ratio": 128,
         "io_channels": 1
     }
 }

@@ -119,7 +119,13 @@ class DACRVQBottleneck(Bottleneck):
 
         info["pre_quantizer"] = x
 
+        if self.quantize_on_decode:
+            return x, info if return_into else x
+
         output = self.quantizer(x)
+
+        output["vq/commitment_loss"] /= self.num_quantizers
+        output["vq/codebook_loss"] /= self.num_quantizers
 
         info.update(output)
 
