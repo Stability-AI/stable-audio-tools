@@ -1,6 +1,6 @@
 {
     "model_type": "diffusion_cond",
-    "sample_size": 960000,
+    "sample_size": 1310720,
     "sample_rate": 32000,
     "audio_channels": 1,
     "model": {
@@ -61,36 +61,21 @@
                 "in_channels": 64,
                 "context_embedding_features": 768,
                 "context_embedding_max_length": 77,
-                "channels": 256,
+                "channels": 320,
                 "resnet_groups": 8,
                 "kernel_multiplier_downsample": 2,
-                "multipliers": [2, 3, 3, 4, 4, 5],
-                "factors": [1, 2, 3, 5, 5],
-                "num_blocks": [2, 2, 2, 2, 2],
-                "attentions": [1, 1, 3, 3, 3, 3],
-                "attention_heads": 16,
+                "multipliers": [1, 2, 4, 4],
+                "factors": [1, 2, 2],
+                "num_blocks": [3, 3, 3],
+                "attentions": [1, 1, 1, 1],
+                "attention_heads": 8,
                 "attention_features": 64,
                 "attention_multiplier": 4,
-                "attention_use_rel_pos": false,
                 "use_nearest_upsample": false,
                 "use_skip_scale": true,
                 "use_context_time": true
             }
         },
         "io_channels": 64
-    },
-    "demo": {
-        "num_demos": 8,
-        "demo_cond": [
-            {"prompt": "This rockin guitar solo will get any rock fan to start banging their head. Great for action scenes."},
-            {"prompt": "A slow, sad piano piece that will make you cry. Perfect for a sad scene in a movie."},
-            {"prompt": "a moving and passionate violin solo that evokes feelings of love and longing"},
-            {"prompt": "death metal, with a fast tempo and heavy guitar riffs"},
-            {"prompt": "Dubstep for adults"},
-            {"prompt": "80s electronic track with melodic synthesizers, catchy beat and groovy bass"},
-            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle."},
-            {"prompt": "tech house track, four on the floor, great track to play in the club"}   
-        ],
-        "demo_cfg_scales": [2, 5, 7]
     }
 }

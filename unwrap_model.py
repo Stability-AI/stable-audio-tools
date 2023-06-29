@@ -34,6 +34,6 @@ if __name__ == '__main__':
     
     print(f"Loaded model from {args.ckpt_path}")
 
-    training_wrapper.export_model(f"{args.name}.pt")
+    training_wrapper.export_model(f"{args.name}.ckpt")
 
-    print(f"Exported model to {args.name}.pt")
+    print(f"Exported model to {args.name}.ckpt")

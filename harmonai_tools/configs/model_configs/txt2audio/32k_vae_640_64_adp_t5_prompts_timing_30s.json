@@ -76,7 +76,7 @@
             "config": {
                 "in_channels": 64,
                 "context_embedding_features": 768,
-                "context_embedding_max_length": 80,
+                "context_embedding_max_length": 79,
                 "channels": 256,
                 "resnet_groups": 8,
                 "kernel_multiplier_downsample": 2,
@@ -93,15 +93,5 @@
             }
         },
         "io_channels": 64
-    },
-    "demo": {
-        "num_demos": 4,
-        "demo_cond": [
-            {"prompt": "A beautiful piano solo that inspires passion and love, intimate melodies and harmonies", "seconds_start": 0, "seconds_total": 25},
-            {"prompt": "New Orleans Jazz, jazz trumpets and upright bass, catchy happy jazz music", "seconds_start": 0, "seconds_total": 30},
-            {"prompt": "birds singing in the forest, nature sounds", "seconds_start": 0, "seconds_total": 15},
-            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 30}
-        ],
-        "demo_cfg_scales": [3, 6, 9]
     }
 }

@@ -1,0 +1,80 @@
+{
+    "model_type": "diffusion_cond",
+    "sample_size": 262144,
+    "sample_rate": 44100,
+    "audio_channels": 1,
+    "model": {
+        "pretransform": {
+            "type": "autoencoder",
+            "scale": 3.7,
+            "config": {
+                "encoder": {
+                    "type": "dac",
+                    "config": {
+                        "latent_dim": 32,
+                        "d_model": 64,
+                        "strides": [2, 4, 4, 4]
+                    }
+                },
+                "decoder": {
+                    "type": "dac",
+                    "config": {
+                        "latent_dim": 32,
+                        "channels": 1024,
+                        "rates": [4, 4, 4, 2]
+                    }
+                },
+                "bottleneck": {
+                    "type": "dac_rvq",
+                    "config": {
+                        "input_dim": 32,
+                        "n_codebooks": 9,
+                        "codebook_dim": 8,
+                        "codebook_size": 1024,
+                        "quantizer_dropout": 0.5,
+                        "quantize_on_decode": true
+                    }
+                },
+                "latent_dim": 32,
+                "downsampling_ratio": 128,
+                "io_channels": 1
+            }
+        },
+        "conditioning": {
+            "configs": [
+                {
+                    "id": "prompt",
+                    "type": "t5",
+                    "config": {
+                        "t5_model_name": "t5-base",
+                        "max_length": 77
+                    }
+                }
+            ],
+            "cond_dim": 768
+        },
+        "diffusion": {
+            "type": "adp_cfg_1d",
+            "cross_attention_cond_ids": ["prompt"],
+            "config": {
+                "in_channels": 32,
+                "context_embedding_features": 768,
+                "context_embedding_max_length": 77,
+                "channels": 320,
+                "resnet_groups": 8,
+                "kernel_multiplier_downsample": 2,
+                "multipliers": [1, 2, 4, 4],
+                "factors": [1, 2, 2],
+                "num_blocks": [3, 3, 3],
+                "attentions": [1, 1, 1, 1],
+                "attention_heads": 8,
+                "attention_features": 64,
+                "attention_multiplier": 4,
+                "use_nearest_upsample": false,
+                "use_skip_scale": true,
+                "use_context_time": true
+            }
+        },
+        "io_channels": 32
+    }
+}

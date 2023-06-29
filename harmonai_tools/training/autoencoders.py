@@ -63,7 +63,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                         "fft_sizes": scales,
                         "hop_sizes": hop_sizes,
                         "win_lengths": win_lengths,
-                        "sample_rate": sample_rate,
                         "perceptual_weighting": True
                     },
                     "weights": {

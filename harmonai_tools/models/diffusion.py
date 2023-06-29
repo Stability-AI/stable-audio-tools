@@ -100,6 +100,10 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
 
         self.model = UNetCFG1d(*args, **kwargs)
 
+        with torch.no_grad():
+            for param in self.model.parameters():
+                param *= 0.5
+
     def forward(self, x, t, cross_attn_cond=None, cross_attn_masks=None, input_concat_cond=None, global_cond=None, **kwargs):
         return self.model(x, t, embedding=cross_attn_cond, embedding_mask=cross_attn_masks, features=global_cond, **kwargs)
 

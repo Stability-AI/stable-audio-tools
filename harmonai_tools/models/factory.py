@@ -30,7 +30,7 @@ def create_pretransform_from_config(pretransform_config):
         autoencoder_config = pretransform_config["config"]
         autoencoder = create_autoencoder_from_config(autoencoder_config)
 
-        pretransform = AutoencoderPretransform(autoencoder)
+        pretransform = AutoencoderPretransform(autoencoder, scale=pretransform_config.get("scale", 1.0))
     elif pretransform_type == 'wavelet':
         from .pretransforms import WaveletPretransform
 
