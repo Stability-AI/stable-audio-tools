@@ -1,16 +1,15 @@
 {
     "model_type": "diffusion_uncond",
-    "sample_size": 65536,
+    "sample_size": 262144,
     "sample_rate": 48000,
     "model": {
         "type": "DAU1d",
         "config": {
-            "depth": 6,
-            "channels": [128, 128, 256, 512, 512, 512],
-            "strides": [2, 4, 4, 4, 8, 8],
+            "depth": 5,
+            "channels": [128, 128, 256, 512, 512],
+            "strides": [2, 4, 8, 8, 8],
             "learned_resample": true,
-            "n_attn_layers": 3,
-            "use_snake": true
+            "n_attn_layers": 1
         }
     }
 }

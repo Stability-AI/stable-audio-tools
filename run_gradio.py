@@ -13,6 +13,7 @@ def main(args):
 
 
     interface = create_ui(model_config, args.ckpt_path)
+    interface.queue()
     interface.launch(share=True, auth=(args.username, args.password))
 
 if __name__ == "__main__":

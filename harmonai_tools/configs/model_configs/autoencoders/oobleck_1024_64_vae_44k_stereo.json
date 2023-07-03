@@ -1,27 +1,27 @@
 {
     "model_type": "autoencoder",
     "sample_size": 32768,
-    "sample_rate": 48000,
+    "sample_rate": 44100,
     "model": {
         "encoder": {
-            "type": "audio_ae",
+            "type": "oobleck",
             "config": {
                 "in_channels": 2,
                 "channels": 128,
                 "c_mults": [1, 2, 4, 8],
                 "strides": [2, 4, 8, 8],
-                "latent_dim": 64,
+                "latent_dim": 128,
                 "use_snake": true
             }
         },
         "decoder": {
-            "type": "audio_ae",
+            "type": "oobleck",
             "config": {
                 "out_channels": 2,
                 "channels": 128,
                 "c_mults": [1, 2, 4, 8],
                 "strides": [2, 4, 8, 8],
-                "latent_dim": 32,
+                "latent_dim": 64,
                 "use_snake": true
             }
         },

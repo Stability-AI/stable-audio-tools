@@ -124,7 +124,7 @@ class DecoderBlock(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
-class AudioEncoder(nn.Module):
+class OobleckEncoder(nn.Module):
     def __init__(self, 
                  in_channels=2, 
                  channels=128, 
@@ -157,7 +157,7 @@ class AudioEncoder(nn.Module):
         return self.layers(x)
 
 
-class AudioDecoder(nn.Module):
+class OobleckDecoder(nn.Module):
     def __init__(self, 
                  out_channels=2, 
                  channels=128, 
@@ -327,8 +327,8 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
     encoder_type = encoder_config.get("type", None)
     assert encoder_type is not None, "Encoder type must be specified"
 
-    if encoder_type == "audio_ae":
-        return AudioEncoder(
+    if encoder_type == "oobleck":
+        return OobleckEncoder(
             **encoder_config["config"]
         )
     
@@ -351,8 +351,8 @@ def create_decoder_from_config(decoder_config: Dict[str, Any]):
     decoder_type = decoder_config.get("type", None)
     assert decoder_type is not None, "Decoder type must be specified"
 
-    if decoder_type == "audio_ae":
-        return AudioDecoder(
+    if decoder_type == "oobleck":
+        return OobleckDecoder(
             **decoder_config["config"]
         )
     elif decoder_type == "seanet":

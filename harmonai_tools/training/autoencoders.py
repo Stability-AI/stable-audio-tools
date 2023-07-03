@@ -49,7 +49,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                         "n_ffts": scales,
                         "hop_lengths": hop_sizes,
                         "win_lengths": win_lengths,
-                        "in_channels": self.autoencoder.io_channels,
                         "filters": 32
                     },
                     "weights": {
@@ -94,7 +93,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         if loss_config['discriminator']['type'] == 'oobleck':
             self.discriminator = OobleckDiscriminator(**loss_config['discriminator']['config'])
         elif loss_config['discriminator']['type'] == 'encodec':
-            self.discriminator = EncodecDiscriminator(**loss_config['discriminator']['config'])
+            self.discriminator = EncodecDiscriminator(in_channels=self.autoencoder.io_channels, **loss_config['discriminator']['config'])
 
     def configure_optimizers(self):
         opt_gen = optim.Adam([*self.autoencoder.parameters()], lr=self.lr, betas=(.5, .9))

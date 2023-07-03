@@ -35,11 +35,23 @@ def generate(
         seconds_total=30,
         cfg_scale=6.0,
         steps=250,
+        seed=-1,
+        sampler_type="dpmpp-2m-sde",
+        sigma_min=0.5,
+        sigma_max=50,
+        use_init=False,
+        init_audio=None,
+        init_noise_level=1.0,
         batch_size=1,
         ):
     # Return fake stereo audio
 
     conditioning = [{"prompt": prompt, "seconds_start": seconds_start, "seconds_total": seconds_total}] * batch_size
+
+    seed = int(seed)
+
+    if not use_init:
+        init_audio = None
 
     audio = generate_diffusion_cond(
         model, 
@@ -48,7 +60,13 @@ def generate(
         cfg_scale=cfg_scale,
         batch_size=batch_size,
         sample_size=sample_size,
-        device="cuda"
+        seed=seed,
+        device="cuda",
+        sampler_type=sampler_type,
+        sigma_min=sigma_min,
+        sigma_max=sigma_max,
+        init_audio=init_audio,
+        init_noise_level=init_noise_level,
     )
 
     audio = rearrange(audio, "b d n -> d (b n)")
@@ -59,11 +77,10 @@ def generate(
 
     return "output.wav" 
 
-def create_ui(model_config, ckpt_path):
-    load_model(model_config, ckpt_path)
-    with gr.Blocks() as ui:
-        prompt = gr.Textbox(label="Prompt")
-        
+def create_sampling_ui():
+    prompt = gr.Textbox(label="Prompt")
+    
+    with gr.Row():
         # Timing controls
         seconds_start_slider = gr.Slider(minimum=0, maximum=512, step=1, value=0, label="Seconds start")
         seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=60, label="Seconds total")
@@ -72,11 +89,47 @@ def create_ui(model_config, ckpt_path):
         steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=250, label="Steps")
 
         # CFG scale 
-        cfg_scale_slider = gr.Slider(minimum=0.0, maximum=10.0, step=0.1, value=6.0, label="CFG scale")
+        cfg_scale_slider = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=6.0, label="CFG scale")
 
-        audio_output = gr.Audio(label="Output audio")
+    with gr.Accordion("Sampler params", open=False):
+    
+        # Seed
+        seed_textbox = gr.Textbox(label="Seed (set to -1 for random seed)", value="-1")
+
+    # Sampler params
+        with gr.Row():
+            sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-2m-sde")
+            sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.5, label="Sigma min")
+            sigma_max_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=50.0, label="Sigma max")
+
+    with gr.Accordion("Init audio", open=False):
+        init_audio_checkbox = gr.Checkbox(label="Use init audio")
+        init_audio_input = gr.Audio(label="Init audio")
+        init_noise_level_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=0.1, label="Init noise level")
+
+    audio_output = gr.Audio(label="Output audio")
+    
+    generate_button = gr.Button("Generate")
+    generate_button.click(fn=generate, inputs=[
+        prompt, 
+        seconds_start_slider, 
+        seconds_total_slider, 
+        cfg_scale_slider, 
+        steps_slider, 
+        seed_textbox, 
+        sampler_type_dropdown, 
+        sigma_min_slider, 
+        sigma_max_slider,
+        init_audio_checkbox,
+        init_audio_input,
+        init_noise_level_slider,
+        ], outputs=audio_output, api_name="generate")
+
+
+def create_ui(model_config, ckpt_path):
+    load_model(model_config, ckpt_path)
+    with gr.Blocks() as ui:
+        with gr.Tab("Generation"):
+            create_sampling_ui()
         
-        generate_button = gr.Button("Generate")
-        generate_button.click(fn=generate, inputs=[prompt, seconds_start_slider, seconds_total_slider, cfg_scale_slider, steps_slider], outputs=audio_output, api_name="generate")
-
     return ui
