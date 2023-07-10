@@ -34,7 +34,7 @@ def main():
     model = create_model_from_config(model_config)
 
     if args.pretrained_ckpt_path:
-        model.load_state_dict(torch.load(args.pretrained_ckpt_path)["state_dict"])
+        model.load_state_dict(torch.load(args.pretrained_ckpt_path)["state_dict"], strict=False)
     
     if args.pretransform_ckpt_path:
         print("Loading pretransform from checkpoint")

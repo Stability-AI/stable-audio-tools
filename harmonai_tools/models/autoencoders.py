@@ -328,7 +328,7 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
     assert encoder_type is not None, "Encoder type must be specified"
 
     if encoder_type == "oobleck":
-        return OobleckEncoder(
+        encoder = OobleckEncoder(
             **encoder_config["config"]
         )
     
@@ -337,15 +337,22 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
 
         #SEANet encoder expects strides in reverse order
         seanet_encoder_config["ratios"] = list(reversed(seanet_encoder_config.get("ratios", [2, 2, 2, 2, 2])))
-        return SEANetEncoder(
+        encoder = SEANetEncoder(
             **seanet_encoder_config
         )
     elif encoder_type == "dac":
         dac_config = encoder_config["config"]
 
-        return DACEncoderWrapper(**dac_config)
+        encoder = DACEncoderWrapper(**dac_config)
     else:
         raise ValueError(f"Unknown encoder type {encoder_type}")
+    
+    requires_grad = encoder_config.get("requires_grad", True)
+    if not requires_grad:
+        for param in encoder.parameters():
+            param.requires_grad = False
+
+    return encoder
 
 def create_decoder_from_config(decoder_config: Dict[str, Any]):
     decoder_type = decoder_config.get("type", None)

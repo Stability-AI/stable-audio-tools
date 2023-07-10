@@ -1,9 +1,10 @@
 from torch import nn
 
 class Pretransform(nn.Module):
-    def __init__(self, enable_grad=False):
+    def __init__(self, enable_grad=False, io_channels=2):
         super().__init__()
 
+        self.io_channels = io_channels
         self.downsampling_ratio = None
 
         self.enable_grad = enable_grad
@@ -21,6 +22,7 @@ class AutoencoderPretransform(Pretransform):
         self.model.requires_grad_(False).eval()
         self.scale=scale
         self.downsampling_ratio = model.downsampling_ratio
+        self.io_channels = model.io_channels
     
     def encode(self, x):
         encoded = self.model.encode(x)
@@ -43,6 +45,7 @@ class WaveletPretransform(Pretransform):
         self.decoder = WaveletDecode1d(channels, levels, wavelet)
 
         self.downsampling_ratio = 2 ** levels
+        self.io_channels = channels
     
     def encode(self, x):
         return self.encoder(x)

@@ -1,7 +1,7 @@
 {
     "model_type": "diffusion_cond",
-    "sample_size": 1048576,
-    "sample_rate": 44100,
+    "sample_size": 2097152,
+    "sample_rate": 48000,
     "audio_channels": 1,
     "model": {
         "pretransform": {
@@ -10,24 +10,26 @@
                 "encoder": {
                     "type": "dac",
                     "config": {
-                        "latent_dim": 64,
+                        "in_channels": 1,
+                        "latent_dim": 128,
                         "d_model": 128,
-                        "strides": [4, 8, 8, 8]
+                        "strides": [4, 4, 8, 8]
                     }
                 },
                 "decoder": {
                     "type": "dac",
                     "config": {
-                        "latent_dim": 32,
+                        "out_channels": 1,
+                        "latent_dim": 64,
                         "channels": 1536,
-                        "rates": [8, 8, 8, 4]
+                        "rates": [8, 8, 4, 4]
                     }
                 },
                 "bottleneck": {
                     "type": "vae"
                 },
-                "latent_dim": 32,
-                "downsampling_ratio": 2048,
+                "latent_dim": 64,
+                "downsampling_ratio": 1024,
                 "io_channels": 1
             }
         },
@@ -64,16 +66,16 @@
             "type": "adp_cfg_1d",
             "cross_attention_cond_ids": ["prompt", "seconds_start", "seconds_total"],
             "config": {
-                "in_channels": 32,
+                "in_channels": 64,
                 "context_embedding_features": 768,
-                "context_embedding_max_length": 80,
+                "context_embedding_max_length":79,
                 "channels": 256,
-                "resnet_groups": 8,
+                "resnet_groups": 16,
                 "kernel_multiplier_downsample": 2,
                 "multipliers": [2, 3, 3, 4, 4, 5],
                 "factors": [1, 2, 4, 4, 4],
                 "num_blocks": [2, 2, 2, 2, 2],
-                "attentions": [1, 1, 3, 3, 3, 3],
+                "attentions": [1, 1, 1, 3, 3, 3],
                 "attention_heads": 16,
                 "attention_features": 64,
                 "attention_multiplier": 4,
@@ -82,16 +84,6 @@
                 "use_context_time": true
             }
         },
-        "io_channels": 32
-    },
-    "demo": {
-        "num_demos": 4,
-        "demo_cond": [
-            {"prompt": "174 bpm amen break", "seconds_start": 0, "seconds_total": 45},
-            {"prompt": "80s electronic track with melodic synthesizers, catchy beat and groovy bass", "seconds_start": 0, "seconds_total": 120},
-            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 25},
-            {"prompt": "tech house track, four on the floor, great track to play in the club", "seconds_start": 0, "seconds_total": 60}   
-        ],
-        "demo_cfg_scales": [3, 6, 9]
+        "io_channels": 64
     }
 }

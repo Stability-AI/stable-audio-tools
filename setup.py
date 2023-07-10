@@ -35,5 +35,6 @@ setup(
         'vector-quantize-pytorch',
         'wandb',
         'webdataset',
+        'x-transformers'
     ],
 )

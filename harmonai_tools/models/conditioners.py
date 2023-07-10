@@ -91,10 +91,18 @@ class CLAPTextConditioner(Conditioner):
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        import laion_clap
-        self.model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device=device).requires_grad_(False).eval()
-
-        self.model.load_ckpt(clap_ckpt_path)
+        # Suppress logging from transformers
+        previous_level = logging.root.manager.disable
+        logging.disable(logging.ERROR)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                import laion_clap
+                
+                self.__dict__["model"] = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device=device).requires_grad_(False).eval()
+                self.model.load_ckpt(clap_ckpt_path)
+            finally:
+                logging.disable(previous_level)
 
         del self.model.model.audio_branch
 
@@ -102,9 +110,6 @@ class CLAPTextConditioner(Conditioner):
         torch.cuda.empty_cache()
 
     def forward(self, texts: tp.List[str], device: tp.Any = None) -> tp.Any:
-
-        # self.model.to(device)
-        # self.proj_out.to(device)
 
         # Fix for CLAP bug when only one text is passed
         if len(texts) == 1:
@@ -146,7 +151,7 @@ class T5Conditioner(Conditioner):
         assert t5_model_name in self.T5_MODELS, f"Unknown T5 model name: {t5_model_name}"
         super().__init__(self.T5_MODEL_DIMS[t5_model_name], output_dim, max_length)
         
-        from transformers import T5EncoderModel, T5Tokenizer
+        from transformers import T5EncoderModel, AutoTokenizer
 
         self.max_length = max_length
         self.enable_grad = enable_grad
@@ -157,12 +162,17 @@ class T5Conditioner(Conditioner):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             try:
-                self.tokenizer = T5Tokenizer.from_pretrained(t5_model_name, model_max_length = max_length)
-                model = T5EncoderModel.from_pretrained(t5_model_name, max_length=max_length).train(enable_grad).requires_grad_(enable_grad)
+                # self.tokenizer = T5Tokenizer.from_pretrained(t5_model_name, model_max_length = max_length)
+                # model = T5EncoderModel.from_pretrained(t5_model_name, max_length=max_length).train(enable_grad).requires_grad_(enable_grad)
+                self.tokenizer = AutoTokenizer.from_pretrained(t5_model_name)
+                model = T5EncoderModel.from_pretrained(t5_model_name).train(enable_grad).requires_grad_(enable_grad)
             finally:
                 logging.disable(previous_level)
             
+        #if self.enable_grad:
         self.model = model
+        # else: 
+        #     self.__dict__["model"] = model
 
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
@@ -178,15 +188,24 @@ class T5Conditioner(Conditioner):
         input_ids = encoded["input_ids"].to(device)
         attention_mask = encoded["attention_mask"].to(device).to(torch.bool)
 
-        with torch.set_grad_enabled(self.enable_grad):
+        #with torch.set_grad_enabled(self.enable_grad):
+
+        self.model.eval()
             
-            embeddings = self.model(
-                input_ids=input_ids, attention_mask=attention_mask
-            )["last_hidden_state"]    
+        embeddings = self.model(
+            input_ids=input_ids, attention_mask=attention_mask
+        )["last_hidden_state"]    
 
-        #embeddings = self.proj_out(embeddings)
+        # Check for NaN Embeddings
+        if torch.isnan(embeddings).any():
+            print(f"Texts: {texts}")
+            print(f"Embeddings: {embeddings}")
 
-        return [embeddings, attention_mask]
+        embeddings = self.proj_out(embeddings)
+
+        embeddings = embeddings * attention_mask.unsqueeze(-1).float()
+
+        return embeddings, attention_mask
 
 
 class MultiConditioner(nn.Module):

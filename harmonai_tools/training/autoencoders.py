@@ -5,6 +5,7 @@ from einops import rearrange
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.nn.parameter import Parameter
+from ema_pytorch import EMA
 import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
@@ -21,7 +22,9 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             lr: float = 1e-4,
             warmup_steps: int = 150000,
             sample_rate=48000,
-            loss_config: dict = None
+            loss_config: dict = None,
+            use_ema: bool = False,
+            ema_copy = None
     ):
         super().__init__()
 
@@ -95,6 +98,23 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         elif loss_config['discriminator']['type'] == 'encodec':
             self.discriminator = EncodecDiscriminator(in_channels=self.autoencoder.io_channels, **loss_config['discriminator']['config'])
 
+        self.autoencoder_ema = None
+        
+        self.use_ema = use_ema
+
+        if self.use_ema:
+            self.autoencoder_ema = EMA(
+                self.autoencoder,
+                ema_model=ema_copy,
+                beta=0.9999,
+                power=3/4,
+                update_every=1,
+                update_after_step=1
+            )
+
+            # Ensure same params without deepcopy
+            #self.autoencoder_ema.copy_params_from_model_to_ema()
+
     def configure_optimizers(self):
         opt_gen = optim.Adam([*self.autoencoder.parameters()], lr=self.lr, betas=(.5, .9))
         opt_disc = optim.Adam([*self.discriminator.parameters()], lr=self.lr, betas=(.5, .9))
@@ -166,6 +186,9 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 commitment_loss = 0.25 * encoder_info["vq/commitment_loss"]
                 loss = loss + codebook_loss + commitment_loss
 
+            if self.use_ema:
+                self.autoencoder_ema.update()
+
             opt_gen.zero_grad()
             self.manual_backward(loss)
             opt_gen.step()
@@ -195,7 +218,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
     def export_model(self, path):
         export_state_dict = {"state_dict": self.autoencoder.state_dict()}
         torch.save(export_state_dict, path)
-
+        
 
 class AutoencoderDemoCallback(pl.Callback):
     def __init__(
@@ -236,9 +259,15 @@ class AutoencoderDemoCallback(pl.Callback):
             demo_reals = demo_reals.to(module.device)
 
             with torch.no_grad():
-                latents = module.autoencoder.encode(encoder_input)
+                if module.use_ema:
 
-                fakes = module.autoencoder.decode(latents)
+                    latents = module.autoencoder_ema.ema_model.encode(encoder_input)
+
+                    fakes = module.autoencoder_ema.ema_model.decode(latents)
+                else:
+                    latents = module.autoencoder.encode(encoder_input)
+
+                    fakes = module.autoencoder.decode(latents)
 
             # Put the demos together
             fakes = rearrange(fakes, 'b d n -> d (b n)')

@@ -203,7 +203,6 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         p = Profiler()
 
-
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
@@ -217,7 +216,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         p.tick("setup")
         
-        conditioning = self.diffusion.conditioner(metadata, self.device)
+        with torch.cuda.amp.autocast():
+            conditioning = self.diffusion.conditioner(metadata, self.device)
 
         p.tick("conditioning")
 
@@ -234,10 +234,25 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         noised_inputs = diffusion_input * alphas + noise * sigmas
         targets = noise * alphas - diffusion_input * sigmas
 
+        p.tick("noise")
+
         with torch.cuda.amp.autocast():
-            v = self.diffusion(noised_inputs, t, cond=conditioning, embedding_mask_proba = 0.1)
+            p.tick("amp")
+            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1)
             p.tick("diffusion")
             mse_loss = F.mse_loss(v, targets)
+            
+            # Check if mse_loss is NaN
+            if torch.isnan(mse_loss).any():
+                torch.set_printoptions(threshold=10000)
+                print("NaN")
+                md_string = [f"{md['prompt'], md['seconds_start'], md['seconds_total']}" for md in metadata]
+                print(f"Conditioning: {conditioning}")
+                print('\n\n'.join(md_string))
+                #print(f"t: {t}")
+                #print(f"v: {v}")
+
+
             loss = mse_loss
 
         log_dict = {
@@ -310,7 +325,7 @@ class DiffusionCondDemoCallback(pl.Callback):
             for cfg_scale in self.demo_cfg_scales:
 
                 print(f"Generating demo for cfg scale {cfg_scale}")
-                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, embedding_scale=cfg_scale)
+                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
 
                 if module.diffusion.pretransform is not None:
                     fakes = module.diffusion.pretransform.decode(fakes)

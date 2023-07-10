@@ -1,3 +1,5 @@
+from torch.nn import Parameter
+
 def create_training_wrapper_from_configs(model_config, training_config, model):
     model_type = model_config.get('model_type', None)
 
@@ -5,12 +7,32 @@ def create_training_wrapper_from_configs(model_config, training_config, model):
 
     if model_type == 'autoencoder':
         from .autoencoders import AutoencoderTrainingWrapper
+
+        ema_copy = None
+
+        if training_config.get("use_ema", False):
+            from ..models.factory import create_model_from_config
+            ema_copy = create_model_from_config(model_config)
+            ema_copy = create_model_from_config(model_config)
+            # Copy each weight to the ema copy
+            for name, param in model.state_dict().items():
+                print(name)
+                print(param.shape)
+                if isinstance(param, Parameter):
+                    # backwards compatibility for serialized parameters
+                    param = param.data
+                ema_copy.state_dict()[name].copy_(param)
+
+        use_ema = training_config.get("use_ema", False)
+
         return AutoencoderTrainingWrapper(
             model, 
             lr=training_config["learning_rate"],
             warmup_steps=training_config["warmup_steps"], 
             sample_rate=model_config["sample_rate"],
-            loss_config=training_config["loss_configs"]
+            loss_config=training_config["loss_configs"],
+            use_ema=use_ema,
+            ema_copy=ema_copy if use_ema else None
         )
     elif model_type == 'diffusion_uncond':
         from .diffusion import DiffusionUncondTrainingWrapper

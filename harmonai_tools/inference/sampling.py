@@ -82,12 +82,14 @@ def sample_k(model_fn, noise, steps=100, sampler_type="dpmpp-2m-sde", sigma_min=
             return K.sampling.sample_dpmpp_2m_sde(denoiser, noise, sigmas, disable=False, extra_args=extra_args)
         
 
-def variation_k(model_fn, init_audio, init_noise_level=0.1, steps=100, sampler_type="dpmpp-2m-sde", sigma_min=0.5, rho=1.0, device="cuda", **extra_args):
+def variation_k(model_fn, init_audio, init_noise_level=0.1, steps=100, sampler_type="dpmpp-2m-sde", sigma_max=80, sigma_min=0.5, rho=1.0, device="cuda", **extra_args):
 
     denoiser = K.external.VDenoiser(model_fn)
     sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, init_noise_level, rho, device=device)
 
-    init_audio = init_audio + torch.randn_like(init_audio) * sigmas[0]
+    init_audio = init_audio + torch.randn_like(init_audio) * init_noise_level #sigmas[0]
+
+    print(f"sigmas[0]: {sigmas[0]}")
 
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":

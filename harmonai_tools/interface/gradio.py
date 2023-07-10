@@ -26,7 +26,7 @@ def load_model(model_config, model_ckpt_path, device="cuda"):
 
     print(f"Loading model checkpoint from {model_ckpt_path}")
     # Load checkpoint
-    model.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
+    model.load_state_dict(torch.load(model_ckpt_path)["state_dict"], strict=False)
     print(f"Done loading model")
 
 def generate(
@@ -52,6 +52,14 @@ def generate(
 
     if not use_init:
         init_audio = None
+    
+    if init_audio is not None:
+        in_sr, init_audio = init_audio
+
+        # Turn into torch tensor, converting from int16 to float32
+        init_audio = torch.from_numpy(init_audio).float().div(32767).transpose(0, 1)
+
+        init_audio = (in_sr, init_audio)
 
     audio = generate_diffusion_cond(
         model, 
@@ -60,6 +68,7 @@ def generate(
         cfg_scale=cfg_scale,
         batch_size=batch_size,
         sample_size=sample_size,
+        sample_rate=sample_rate,
         seed=seed,
         device="cuda",
         sampler_type=sampler_type,
@@ -105,7 +114,7 @@ def create_sampling_ui():
     with gr.Accordion("Init audio", open=False):
         init_audio_checkbox = gr.Checkbox(label="Use init audio")
         init_audio_input = gr.Audio(label="Init audio")
-        init_noise_level_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=0.1, label="Init noise level")
+        init_noise_level_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.01, value=0.1, label="Init noise level")
 
     audio_output = gr.Audio(label="Output audio")
     

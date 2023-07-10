@@ -4,12 +4,34 @@ from torch.nn import functional as F
 from functools import partial
 import typing as tp
 
+from x_transformers import ContinuousTransformerWrapper, Encoder
+from einops import rearrange
+
 from .blocks import ResConvBlock, FourierFeatures, Upsample1d, Upsample1d_2, Downsample1d, Downsample1d_2, SelfAttention1d, SkipBlock, expand_to_planes
 from .factory import create_pretransform_from_config
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .pretransforms import Pretransform
 
 from audio_diffusion_pytorch.modules import UNetCFG1d
+
+from time import time
+
+class Profiler:
+
+    def __init__(self):
+        self.ticks = [[time(), None]]
+
+    def tick(self, msg):
+        self.ticks.append([time(), msg])
+
+    def __repr__(self):
+        rep = 80 * "=" + "\n"
+        for i in range(1, len(self.ticks)):
+            msg = self.ticks[i][1]
+            ellapsed = self.ticks[i][0] - self.ticks[i - 1][0]
+            rep += msg + f": {ellapsed*1000:.2f}ms\n"
+        rep += 80 * "=" + "\n\n\n"
+        return rep
 
 class DiffusionModel(nn.Module):
     def __init__(
@@ -49,6 +71,10 @@ class ConditionedDiffusionModel(nn.Module):
                 cross_attn_masks: torch.Tensor = None,
                 input_concat_cond: torch.Tensor = None,
                 global_embed: torch.Tensor = None,
+                cfg_scale: float = 6.0,
+                cfg_dropout_prob: float = 0.1,
+                batch_cfg: bool = False,
+                scale_cfg: bool = False,
                 **kwargs):
         raise NotImplementedError()
     
@@ -87,8 +113,12 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         }
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
-        
-        return self.model(x, t, **self.get_conditioning_inputs(cond), **kwargs)
+        p = Profiler()
+        p.tick("start")
+        outputs = self.model(x, t, **self.get_conditioning_inputs(cond), **kwargs)
+        p.tick("Model forward with conditioning")
+        #print(f"ConditionedDiffusionModelWrapper forward: {p}")
+        return outputs
 
 class UNetCFG1DWrapper(ConditionedDiffusionModel):
     def __init__(
@@ -104,8 +134,38 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
             for param in self.model.parameters():
                 param *= 0.5
 
-    def forward(self, x, t, cross_attn_cond=None, cross_attn_masks=None, input_concat_cond=None, global_cond=None, **kwargs):
-        return self.model(x, t, embedding=cross_attn_cond, embedding_mask=cross_attn_masks, features=global_cond, **kwargs)
+    def forward(self, 
+                x, 
+                t, 
+                cross_attn_cond=None, 
+                cross_attn_masks=None, 
+                input_concat_cond=None, 
+                global_cond=None, 
+                cfg_scale=1.0,
+                cfg_dropout_prob: float = 0.0,
+                batch_cfg: bool = False,
+                scale_cfg: bool = False,
+                **kwargs):
+        p = Profiler()
+
+        p.tick("start")
+
+        outputs = self.model(
+            x, 
+            t, 
+            embedding=cross_attn_cond, 
+            embedding_mask=cross_attn_masks, 
+            features=global_cond, 
+            embedding_scale=cfg_scale, 
+            embedding_mask_proba=cfg_dropout_prob, 
+            batch_cfg=batch_cfg,
+            scale_cfg=scale_cfg,
+            **kwargs)
+        
+        p.tick("UNetCFG1D forward")
+
+        #print(f"Profiler: {p}")
+        return outputs
 
 class DiffusionAttnUnet1D(nn.Module):
     def __init__(
@@ -220,6 +280,157 @@ class DiffusionAttnUnet1D(nn.Module):
         outputs = self.net(torch.cat(inputs, dim=1))
 
         return outputs
+        
+class DiTWrapper(ConditionedDiffusionModel):
+    def __init__(
+        self, 
+        *args,
+        **kwargs
+    ):
+        super().__init__(supports_cross_attention=True, supports_global_cond=False, supports_input_concat=False)
+
+        self.model = DiffusionTransformer(*args, **kwargs)
+
+        with torch.no_grad():
+            for param in self.model.parameters():
+                param *= 0.5
+
+    def forward(self, 
+                x, 
+                t, 
+                cross_attn_cond=None, 
+                cross_attn_masks=None, 
+                input_concat_cond=None, 
+                global_cond=None, 
+                cfg_scale=6.0,
+                cfg_dropout_prob: float = 0.1,
+                scale_cfg: bool = False,
+                **kwargs):
+        return self.model(
+            x, 
+            t, 
+            cond=cross_attn_cond, 
+            cond_mask=cross_attn_masks, 
+            cfg_scale=cfg_scale, 
+            cfg_dropout_prob=cfg_dropout_prob,
+            **kwargs)    
+
+class DiffusionTransformer(nn.Module):
+    def __init__(self, 
+        io_channels=32, 
+        input_length=512,
+        cond_token_dim=0,
+        embed_dim=768,
+        depth=12,
+        num_heads=8):
+
+        super().__init__()
+        
+        self.cond_token_dim = cond_token_dim
+
+        # Timestep embeddings
+        timestep_features_dim = 256
+
+        self.timestep_features = FourierFeatures(1, timestep_features_dim)
+
+        self.to_timestep_embed = nn.Sequential(
+            nn.Linear(timestep_features_dim, embed_dim, bias=True),
+            nn.SiLU(),
+            nn.Linear(embed_dim, embed_dim, bias=True),
+        )
+
+        if cond_token_dim > 0:
+            # Conditioning tokens
+            self.to_cond_embed = nn.Sequential(
+                nn.Linear(cond_token_dim, embed_dim, bias=False),
+                nn.SiLU(),
+                nn.Linear(embed_dim, embed_dim, bias=False)
+            )
+
+        # Transformer
+
+        self.transformer = ContinuousTransformerWrapper(
+            dim_in=io_channels,
+            dim_out=io_channels,
+            max_seq_len=input_length + 1, #1 for time conditioning
+            attn_layers = Encoder(
+                dim=embed_dim,
+                depth=depth,
+                heads=num_heads,
+                attn_flash = True,
+                cross_attend = True,
+                zero_init_branch_output=True,
+                rotary_pos_emb =True,
+                ff_swish = True, # set this to True
+                ff_glu = True 
+            )
+        )
+
+        self.preprocess_conv = nn.Conv1d(io_channels, io_channels, 3, padding=1, bias=False)
+        nn.init.zeros_(self.preprocess_conv.weight)
+        self.postprocess_conv = nn.Conv1d(io_channels, io_channels, 3, padding=1, bias=False)
+        nn.init.zeros_(self.postprocess_conv.weight)
+
+    def forward(
+        self, 
+        x, 
+        t, 
+        cond=None,
+        cond_mask=None,
+        cfg_scale=1.0,
+        cfg_dropout_prob=0.0):
+
+        if cond_mask is not None:
+            cond_mask = cond_mask.bool()
+
+            cond_mask = None # Temporarily disabling conditioning masks due to kernel issue for flash attention
+
+        # Get the batch of timestep embeddings
+        timestep_embed = self.to_timestep_embed(self.timestep_features(t[:, None])) # (b, embed_dim)
+
+        timestep_embed = timestep_embed.unsqueeze(1)
+
+        if cond is not None:
+
+            cond = self.to_cond_embed(cond)
+
+            # CFG dropout
+            if cfg_dropout_prob > 0.0:
+                null_embed = torch.zeros_like(cond, device=cond.device)
+                dropout_mask = torch.bernoulli(torch.full((cond.shape[0], 1, 1), cfg_dropout_prob, device=cond.device)).to(torch.bool)
+                cond = torch.where(dropout_mask, null_embed, cond)
+
+        x = self.preprocess_conv(x) + x
+
+        x = rearrange(x, "b c t -> b t c")
+
+        if cond is not None and cfg_scale != 1.0:
+            # Classifier-free guidance
+            # Concatenate conditioned and unconditioned inputs on the batch dimension            
+            batch_inputs = torch.cat([x, x], dim=0)
+            
+            null_embed = torch.zeros_like(cond, device=cond.device)
+
+            batch_timestep = torch.cat([timestep_embed, timestep_embed], dim=0)
+            batch_cond = torch.cat([cond, null_embed], dim=0)
+            if cond_mask is not None:
+                batch_masks = torch.cat([cond_mask, cond_mask], dim=0)
+            else:
+                batch_masks = None
+            
+            output = self.transformer(batch_inputs, prepend_embeds=batch_timestep, context=batch_cond, context_mask=batch_masks)
+
+            cond_output, uncond_output = torch.chunk(output, 2, dim=0)
+            output = uncond_output + (cond_output - uncond_output) * cfg_scale
+            
+        else:
+            output = self.transformer(x, prepend_embeds=timestep_embed, context=cond, context_mask=cond_mask)
+
+        output = rearrange(output, "b t c -> b c t")[:,:,1:]
+
+        output = self.postprocess_conv(output) + output
+
+        return output
 
 def create_diffusion_uncond_from_config(model_config: tp.Dict[str, tp.Any]):
     model_type = model_config.get('type', None)
@@ -255,6 +466,8 @@ def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
 
     if diffusion_model_type == 'adp_cfg_1d':
         diffusion_model = UNetCFG1DWrapper(**diffusion_model_config)
+    elif diffusion_model_type == 'dit':
+        diffusion_model = DiTWrapper(**diffusion_model_config)
 
     io_channels = model_config.get('io_channels', None)
     assert io_channels is not None, "Must specify io_channels in model config"
