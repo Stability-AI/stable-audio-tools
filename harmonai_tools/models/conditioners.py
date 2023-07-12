@@ -85,9 +85,14 @@ class CLAPTextConditioner(Conditioner):
     def __init__(self, 
                  output_dim: int, 
                  clap_ckpt_path,
+                 use_text_features = False,
+                 feature_layer_ix: int = -1,
                  audio_model_type="HTSAT-base", 
                  enable_fusion=True):
-        super().__init__(512, output_dim, 1)
+        super().__init__(768 if use_text_features else 512, output_dim, 1)
+
+        self.use_text_features = use_text_features
+        self.feature_layer_ix = feature_layer_ix
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -109,7 +114,24 @@ class CLAPTextConditioner(Conditioner):
         gc.collect()
         torch.cuda.empty_cache()
 
-    def forward(self, texts: tp.List[str], device: tp.Any = None) -> tp.Any:
+    def get_clap_features(self, prompts, layer_ix=-2, device: tp.Any = "cuda"):
+        prompt_tokens = self.model.tokenizer(prompts)
+        attention_mask = prompt_tokens["attention_mask"].to(device=device, non_blocking=True)
+        prompt_features = self.model.model.text_branch(
+            input_ids=prompt_tokens["input_ids"].to(device=device, non_blocking=True),
+            attention_mask=attention_mask,
+            output_hidden_states=True
+        )["hidden_states"][layer_ix]
+
+        return prompt_features, attention_mask
+
+    def forward(self, texts: tp.List[str], device: tp.Any = "cuda") -> tp.Any:
+
+        self.model.to(device)
+
+        if self.use_text_features:
+            text_features, text_attention_mask = self.get_clap_features(texts, layer_ix=self.feature_layer_ix, device=device)
+            return [self.proj_out(text_features), text_attention_mask]
 
         # Fix for CLAP bug when only one text is passed
         if len(texts) == 1:
@@ -121,6 +143,46 @@ class CLAPTextConditioner(Conditioner):
 
         return [self.proj_out(text_embedding), torch.ones(text_embedding.shape[0], 1).to(device)]
 
+class CLAPAudioConditioner(Conditioner):
+    def __init__(self, 
+                 output_dim: int, 
+                 clap_ckpt_path,
+                 audio_model_type="HTSAT-base", 
+                 enable_fusion=True):
+        super().__init__(512, output_dim, 1)
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Suppress logging from transformers
+        previous_level = logging.root.manager.disable
+        logging.disable(logging.ERROR)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                import laion_clap
+                
+                self.__dict__["model"] = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device=device).requires_grad_(False).eval()
+                self.model.load_ckpt(clap_ckpt_path)
+            finally:
+                logging.disable(previous_level)
+
+        del self.model.model.text_branch
+
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def forward(self, audios: torch.Tensor, device: tp.Any = "cuda") -> tp.Any:
+
+        self.model.to(device)
+
+        # Convert to mono
+        mono_audios = audios.mean(dim=1)
+
+        audio_embedding = self.model.get_audio_embedding_from_data(mono_audios, use_tensor=True)
+
+        audio_embedding = audio_embedding.unsqueeze(1).to(device)
+
+        return [self.proj_out(audio_embedding), torch.ones(audio_embedding.shape[0], 1).to(device)]
 
 class T5Conditioner(Conditioner):
 
@@ -251,6 +313,8 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
             conditioners[id] = T5Conditioner(output_dim=cond_dim, **conditioner_config["config"])
         elif conditioner_type == "clap_text":
             conditioners[id] = CLAPTextConditioner(output_dim=cond_dim, **conditioner_config["config"])
+        elif conditioner_type == "clap_audio":
+            conditioners[id] = CLAPAudioConditioner(output_dim=cond_dim, **conditioner_config["config"])
         elif conditioner_type == "int":
             conditioners[id] = IntConditioner(output_dim=cond_dim, **conditioner_config["config"])
         else:

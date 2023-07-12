@@ -10,7 +10,7 @@ import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator
-from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck
+from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck
 
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
@@ -174,14 +174,16 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             # Combine spectral loss, KL loss, time-domain loss, and adversarial loss
             loss = mrstft_loss + loss_adv + feature_matching_distance #+ l1_time_loss
 
-            if isinstance(self.autoencoder.bottleneck, VAEBottleneck):
+            if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
                 kl = encoder_info['kl']
                 kl_loss = 1e-4 * kl 
                 loss = loss + kl_loss
-            elif isinstance(self.autoencoder.bottleneck, RVQBottleneck):
+
+            if isinstance(self.autoencoder.bottleneck, RVQBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
                 quantizer_loss = encoder_info['quantizer_loss']
                 loss = loss + quantizer_loss
-            elif isinstance(self.autoencoder.bottleneck, DACRVQBottleneck):
+                
+            if isinstance(self.autoencoder.bottleneck, DACRVQBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck):
                 codebook_loss = encoder_info["vq/codebook_loss"]
                 commitment_loss = 0.25 * encoder_info["vq/commitment_loss"]
                 loss = loss + codebook_loss + commitment_loss
@@ -202,11 +204,13 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 'train/latent_std': latents.std().detach(),
             }
 
-            if isinstance(self.autoencoder.bottleneck, VAEBottleneck):
+            if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck):
                 log_dict['train/kl_loss'] = kl_loss.detach()
-            elif isinstance(self.autoencoder.bottleneck, RVQBottleneck):
+            
+            if isinstance(self.autoencoder.bottleneck, RVQBottleneck):
                 log_dict['train/quantizer_loss'] = quantizer_loss.detach()
-            elif isinstance(self.autoencoder.bottleneck, DACRVQBottleneck):
+            
+            if isinstance(self.autoencoder.bottleneck, DACRVQBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck):
                 log_dict['train/codebook_loss'] = codebook_loss.detach()
                 log_dict['train/commitment_loss'] = commitment_loss.detach()
                 

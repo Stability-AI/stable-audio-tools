@@ -84,14 +84,19 @@
         },
         "io_channels": 16
     },
-    "demo": {
-        "num_demos": 4,
-        "demo_cond": [
-            {"prompt": "A beautiful piano solo that inspires passion and love, intimate melodies and harmonies", "seconds_start": 0, "seconds_total": 25},
-            {"prompt": "New Orleans Jazz, jazz trumpets and upright bass, catchy happy jazz music", "seconds_start": 0, "seconds_total": 30},
-            {"prompt": "birds singing in the forest, nature sounds", "seconds_start": 0, "seconds_total": 15},
-            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 20}
-        ],
-        "demo_cfg_scales": [3, 5, 7]
+    "training": {
+        "learning_rate": 1e-4,
+        "demo": {
+            "demo_every": 2000,
+            "demo_steps": 250,
+            "num_demos": 4,
+            "demo_cond": [
+                {"prompt": "Keywords: Atmospheres, Orchestral Drone, Bass, Sci-Fi Ambient Soundscape, Synthesiser, Middle Eastern Vocal, dramatic piano", "seconds_start": 0, "seconds_total": 47},
+                {"prompt": "Genre: Corporate|Instruments: Ukulele, Drums, Clapping, Glockenspiel", "seconds_start": 0, "seconds_total": 30},
+                {"prompt": "Description: 116 BPM rock drums, drum track for a rock song", "seconds_start": 0, "seconds_total": 45},
+                {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 30}
+            ],
+            "demo_cfg_scales": [3, 6, 9]
+        }
     }
 }

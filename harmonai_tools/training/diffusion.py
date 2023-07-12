@@ -252,7 +252,6 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
                 #print(f"t: {t}")
                 #print(f"v: {v}")
 
-
             loss = mse_loss
 
         log_dict = {

@@ -24,7 +24,14 @@
             }
         },
         "bottleneck": {
-            "type": "vae"
+            "type": "rvq_vae",
+            "config": {
+                "num_quantizers": 16,
+                "codebook_size": 1024,
+                "dim": 64,
+                "decay": 0.99,
+                "threshold_ema_dead_code": 2
+            }
         },
         "latent_dim": 64,
         "downsampling_ratio": 1024,

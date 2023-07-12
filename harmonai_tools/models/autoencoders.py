@@ -359,19 +359,26 @@ def create_decoder_from_config(decoder_config: Dict[str, Any]):
     assert decoder_type is not None, "Decoder type must be specified"
 
     if decoder_type == "oobleck":
-        return OobleckDecoder(
+        decoder = OobleckDecoder(
             **decoder_config["config"]
         )
     elif decoder_type == "seanet":
-        return SEANetDecoder(
+        decoder = SEANetDecoder(
             **decoder_config["config"]
         )
     elif decoder_type == "dac":
         dac_config = decoder_config["config"]
 
-        return DACDecoderWrapper(**dac_config)
+        decoder = DACDecoderWrapper(**dac_config)
     else:
         raise ValueError(f"Unknown decoder type {decoder_type}")
+    
+    requires_grad = decoder_config.get("requires_grad", True)
+    if not requires_grad:
+        for param in decoder.parameters():
+            param.requires_grad = False
+
+    return decoder
 
 def create_autoencoder_from_config(model_config: Dict[str, Any]):
     

@@ -21,10 +21,18 @@
                 "latent_dim": 64,
                 "channels": 1536,
                 "rates": [8, 8, 4, 4]
-            }
+            },
+            "requires_grad": false
         },
         "bottleneck": {
-            "type": "vae"
+            "type": "dac_rvq_vae",
+            "config": {
+                "input_dim": 64,
+                "n_codebooks": 9,
+                "codebook_dim": 32,
+                "codebook_size": 1024,
+                "quantizer_dropout": 0.5
+            }
         },
         "latent_dim": 64,
         "downsampling_ratio": 1024,

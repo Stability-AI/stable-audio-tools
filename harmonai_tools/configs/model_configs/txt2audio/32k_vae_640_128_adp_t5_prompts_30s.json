@@ -79,18 +79,19 @@
         },
         "io_channels": 128
     },
-    "demo": {
-        "num_demos": 8,
-        "demo_cond": [
-            {"prompt": "Pop dance track with catchy melodies, tropical percussion, and upbeat rhythms, perfect for the beach"},
-            {"prompt": "drum and bass beat with intense percussions"},
-            {"prompt": "violins and synths that inspire awe at the finiteness of life and the universe"},
-            {"prompt": "smooth jazz, with a saxophone solo, piano chords, and snare full drums"},
-            {"prompt": "lofi slow bpm electro chill with organic samples"},
-            {"prompt": "80s electronic track with melodic synthesizers, catchy beat and groovy bass"},
-            {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle."},
-            {"prompt": "drum and bass beat with intense percussions"}   
-        ],
-        "demo_cfg_scales": [2, 5, 7]
+    "training": {
+        "learning_rate": 1e-4,
+        "demo": {
+            "demo_every": 2000,
+            "demo_steps": 250,
+            "num_demos": 4,
+            "demo_cond": [
+                {"prompt": "Keywords: Atmospheres, Orchestral Drone, Bass, Sci-Fi Ambient Soundscape, Synthesiser, Middle Eastern Vocal, dramatic piano", "seconds_start": 0, "seconds_total": 47},
+                {"prompt": "Genre: Corporate|Instruments: Ukulele, Drums, Clapping, Glockenspiel", "seconds_start": 0, "seconds_total": 30},
+                {"prompt": "Description: 116 BPM rock drums, drum track for a rock song", "seconds_start": 0, "seconds_total": 45},
+                {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 30}
+            ],
+            "demo_cfg_scales": [3, 6, 9]
+        }
     }
 }

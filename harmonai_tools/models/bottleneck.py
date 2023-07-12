@@ -34,12 +34,8 @@ class TanhBottleneck(Bottleneck):
 
     def decode(self, x):
         return x
-    
-class VAEBottleneck(Bottleneck):
-    def __init__(self):
-        super().__init__()
 
-    def vae_sample(self, mean, scale):
+def vae_sample(mean, scale):
         stdev = nn.functional.softplus(scale) + 1e-4
         var = stdev * stdev
         logvar = torch.log(var)
@@ -49,12 +45,16 @@ class VAEBottleneck(Bottleneck):
 
         return latents, kl
 
+class VAEBottleneck(Bottleneck):
+    def __init__(self):
+        super().__init__()
+
     def encode(self, x, return_info=False):
         info = {}
 
         mean, scale = x.chunk(2, dim=1)
 
-        x, kl = self.vae_sample(mean, scale)
+        x, kl = vae_sample(mean, scale)
 
         info["kl"] = kl
 
@@ -106,6 +106,34 @@ class RVQBottleneck(Bottleneck):
         
     def decode(self, x):
         return x
+    
+class RVQVAEBottleneck(Bottleneck):
+    def __init__(self, **quantizer_kwargs):
+        super().__init__()
+        self.quantizer = ResidualVQ(**quantizer_kwargs)
+        self.num_quantizers = quantizer_kwargs["num_quantizers"]
+
+    def encode(self, x, return_info=False):
+        info = {}
+
+        x, kl = vae_sample(*x.chunk(2, dim=1))
+
+        info["kl"] = kl
+
+        x = rearrange(x, "b c n -> b n c")
+        x, indices, loss = self.quantizer(x)
+        x = rearrange(x, "b n c -> b c n")
+
+        info["quantizer_indices"] = indices
+        info["quantizer_loss"] = loss.mean()
+
+        if return_info:
+            return x, info
+        else:
+            return x
+        
+    def decode(self, x):
+        return x
 
 class DACRVQBottleneck(Bottleneck):
     def __init__(self, quantize_on_decode=False, **quantizer_kwargs):
@@ -118,6 +146,45 @@ class DACRVQBottleneck(Bottleneck):
         info = {}
 
         info["pre_quantizer"] = x
+
+        if self.quantize_on_decode:
+            return x, info if return_info else x
+
+        output = self.quantizer(x)
+
+        output["vq/commitment_loss"] /= self.num_quantizers
+        output["vq/codebook_loss"] /= self.num_quantizers
+
+        info.update(output)
+
+        if return_info:
+            return output["z"], info
+        
+        return output["z"]
+    
+    def decode(self, x):
+
+        if self.quantize_on_decode:
+            x = self.quantizer(x)["z"]
+
+        return x
+
+class DACRVQVAEBottleneck(Bottleneck):
+    def __init__(self, quantize_on_decode=False, **quantizer_kwargs):
+        super().__init__()
+        self.quantizer = DACResidualVQ(**quantizer_kwargs)
+        self.num_quantizers = quantizer_kwargs["n_codebooks"]
+        self.quantize_on_decode = quantize_on_decode
+
+    def encode(self, x, return_info=False):
+        info = {}
+
+        mean, scale = x.chunk(2, dim=1)
+
+        x, kl = vae_sample(mean, scale)
+
+        info["pre_quantizer"] = x
+        info["kl"] = kl
 
         if self.quantize_on_decode:
             return x, info if return_info else x

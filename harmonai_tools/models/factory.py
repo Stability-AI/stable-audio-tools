@@ -79,6 +79,28 @@ def create_bottleneck_from_config(bottleneck_config):
         from .bottleneck import DACRVQBottleneck
 
         return DACRVQBottleneck(**bottleneck_config["config"])
+    
+    elif bottleneck_type == 'rvq_vae':
+        from .bottleneck import RVQVAEBottleneck
+
+        quantizer_params = {
+            "dim": 128,
+            "codebook_size": 1024,
+            "num_quantizers": 8,
+            "decay": 0.99,
+            "kmeans_init": True,
+            "kmeans_iters": 50,
+            "threshold_ema_dead_code": 2,
+        }
+
+        quantizer_params.update(bottleneck_config["config"])
+
+        return RVQVAEBottleneck(**quantizer_params)
+        
+    elif bottleneck_type == 'dac_rvq_vae':
+        from .bottleneck import DACRVQVAEBottleneck
+
+        return DACRVQVAEBottleneck(**bottleneck_config["config"])
     elif bottleneck_type == 'memcodes':
         from .bottleneck import MemcodesBottleneck
         return MemcodesBottleneck(**bottleneck_config["config"])
