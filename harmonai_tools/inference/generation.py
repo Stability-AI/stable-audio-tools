@@ -6,13 +6,13 @@ from torchaudio import transforms as T
 
 from einops import rearrange
 
-from ..models.diffusion import ConditionedDiffusionModelWrapper
+#from ..models.diffusion import ConditionedDiffusionModelWrapper
 from .sampling import sample, sample_k, variation_k
 from ..data.utils import PadCrop
 
 
 def generate_diffusion_cond(
-        model: ConditionedDiffusionModelWrapper,
+        model,
         steps: int = 250,
         cfg_scale=6,
         conditioning: dict = None,

@@ -11,6 +11,7 @@ from .blocks import ResConvBlock, FourierFeatures, Upsample1d, Upsample1d_2, Dow
 from .factory import create_pretransform_from_config
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .pretransforms import Pretransform
+from ..inference.generation import generate_diffusion_cond
 
 from audio_diffusion_pytorch.modules import UNetCFG1d
 
@@ -71,8 +72,8 @@ class ConditionedDiffusionModel(nn.Module):
                 cross_attn_masks: torch.Tensor = None,
                 input_concat_cond: torch.Tensor = None,
                 global_embed: torch.Tensor = None,
-                cfg_scale: float = 6.0,
-                cfg_dropout_prob: float = 0.1,
+                cfg_scale: float = 1.0,
+                cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = False,
                 scale_cfg: bool = False,
                 **kwargs):
@@ -113,12 +114,11 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         }
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
-        p = Profiler()
-        p.tick("start")
         outputs = self.model(x, t, **self.get_conditioning_inputs(cond), **kwargs)
-        p.tick("Model forward with conditioning")
-        #print(f"ConditionedDiffusionModelWrapper forward: {p}")
         return outputs
+    
+    def generate(self, *args, **kwargs):
+        return generate_diffusion_cond(self, *args, **kwargs)
 
 class UNetCFG1DWrapper(ConditionedDiffusionModel):
     def __init__(

@@ -2,9 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name='harmonai-tools',
-    version='1.0.0',
+    version='0.0.1',
     url='https://github.com/Harmonai-org/harmonai-tools.git',
     author='Harmonai',
+    description='Training and inference tools for generative audio models from Harmonai',
     packages=find_packages(),  
     install_requires=[
         'aeiou',
