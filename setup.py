@@ -10,7 +10,7 @@ setup(
     install_requires=[
         'aeiou',
         'alias-free-torch',
-        'audio-diffusion-pytorch @ https://github.com/Harmonai-org/audio-diffusion-pytorch/tarball/main',
+        'audio-diffusion-pytorch-fork==0.0.101',
         'audio-metadata',
         'auraloss',
         'descript-audio-codec',
