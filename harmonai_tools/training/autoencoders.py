@@ -176,7 +176,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
             if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
                 kl = encoder_info['kl']
-                kl_loss = 1e-4 * kl 
+                kl_loss = 1e-6 * kl 
                 loss = loss + kl_loss
 
             if isinstance(self.autoencoder.bottleneck, RVQBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
@@ -220,7 +220,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         return loss
     
     def export_model(self, path):
-        export_state_dict = {"state_dict": self.autoencoder.state_dict()}
+        if self.autoencoder_ema is not None:
+            export_state_dict = {"state_dict": self.autoencoder_ema.ema_model.state_dict()}
+        else:
+            export_state_dict = {"state_dict": self.autoencoder.state_dict()}
+            
         torch.save(export_state_dict, path)
         
 

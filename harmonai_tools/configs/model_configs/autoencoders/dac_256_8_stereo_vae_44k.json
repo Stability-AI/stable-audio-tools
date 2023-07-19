@@ -8,30 +8,29 @@
             "type": "dac",
             "config": {
                 "in_channels": 2,
-                "latent_dim": 128,
+                "latent_dim": 16,
                 "d_model": 128,
-                "strides": [4, 4, 8, 8]
-            },
-            "requires_grad": false
+                "strides": [2, 4, 4, 8]
+            }
         },
         "decoder": {
             "type": "dac",
             "config": {
                 "out_channels": 2,
-                "latent_dim": 64,
-                "channels": 1536,
-                "rates": [8, 8, 4, 4]
+                "latent_dim": 8,
+                "channels": 1024,
+                "rates": [8, 4, 4, 2]
             }
         },
         "bottleneck": {
             "type": "vae"
         },
-        "latent_dim": 64,
-        "downsampling_ratio": 1024,
+        "latent_dim": 8,
+        "downsampling_ratio": 256,
         "io_channels": 2
     },
     "training": {
-        "learning_rate": 4e-5,
+        "learning_rate": 1e-4,
         "warmup_steps": 0,
         "use_ema": true,
         "loss_configs": {
@@ -39,9 +38,9 @@
                 "type": "encodec",
                 "config": {
                     "filters": 32,
-                    "n_ffts": [2048, 1024, 512, 256, 128],
-                    "hop_lengths": [512, 256, 128, 64, 32],
-                    "win_lengths": [2048, 1024, 512, 256, 128]
+                    "n_ffts": [2048, 1024, 512, 256, 128, 64, 32],
+                    "hop_lengths": [512, 256, 128, 64, 32, 16, 8],
+                    "win_lengths": [2048, 1024, 512, 256, 128, 64, 32]
                 },
                 "weights": {
                     "adversarial": 0.1,

@@ -95,10 +95,10 @@ def create_sampling_ui():
         seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=60, label="Seconds total")
         
         # Steps slider
-        steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=250, label="Steps")
+        steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=200, label="Steps")
 
         # CFG scale 
-        cfg_scale_slider = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=6.0, label="CFG scale")
+        cfg_scale_slider = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=7.0, label="CFG scale")
 
     with gr.Accordion("Sampler params", open=False):
     
@@ -108,8 +108,8 @@ def create_sampling_ui():
     # Sampler params
         with gr.Row():
             sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-2m-sde")
-            sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.5, label="Sigma min")
-            sigma_max_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=50.0, label="Sigma max")
+            sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.95, label="Sigma min")
+            sigma_max_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=77, label="Sigma max")
 
     with gr.Accordion("Init audio", open=False):
         init_audio_checkbox = gr.Checkbox(label="Use init audio")

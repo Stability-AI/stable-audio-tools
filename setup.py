@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='harmonai-tools',
-    version='0.0.1',
+    version='0.0.2',
     url='https://github.com/Harmonai-org/harmonai-tools.git',
     author='Harmonai',
     description='Training and inference tools for generative audio models from Harmonai',
@@ -10,7 +10,7 @@ setup(
     install_requires=[
         'aeiou',
         'alias-free-torch',
-        'audio-diffusion-pytorch-fork==0.0.101',
+        'audio-diffusion-pytorch-fork',
         'audio-metadata',
         'auraloss',
         'descript-audio-codec',

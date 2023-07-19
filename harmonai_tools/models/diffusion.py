@@ -13,7 +13,7 @@ from .conditioners import MultiConditioner, create_multi_conditioner_from_condit
 from .pretransforms import Pretransform
 from ..inference.generation import generate_diffusion_cond
 
-from audio_diffusion_pytorch.modules import UNetCFG1d
+from audio_diffusion_pytorch_fork.modules import UNetCFG1d
 
 from time import time
 
@@ -90,6 +90,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             io_channels = 2,
             pretransform: Pretransform = None,
             cross_attn_cond_ids: tp.List[str] = [],
+            global_cond_ids: tp.List[str] = [],
             ):
         super().__init__()
 
@@ -98,9 +99,12 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.io_channels = io_channels
         self.pretransform = pretransform
         self.cross_attn_cond_ids = cross_attn_cond_ids
+        self.global_cond_ids = global_cond_ids
 
     def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any]):
         cross_attention_input = None
+        cross_attention_masks = None
+        global_cond = None
 
         if len(self.cross_attn_cond_ids) > 0:
             # Concatenate all cross-attention inputs over the sequence dimension
@@ -108,9 +112,18 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             cross_attention_input = torch.cat([cond[key][0] for key in self.cross_attn_cond_ids], dim=1)
             cross_attention_masks = torch.cat([cond[key][1] for key in self.cross_attn_cond_ids], dim=1)
 
+        if len(self.global_cond_ids) > 0:
+            # Concatenate all global conditioning inputs over the channel dimension
+            # Assumes that the global conditioning inputs are of shape (batch, channels)
+            global_cond = torch.cat([cond[key][0] for key in self.global_cond_ids], dim=-1)
+            if len(global_cond.shape) == 3:
+                global_cond = global_cond.squeeze(1)
+        
+
         return {
             "cross_attn_cond": cross_attention_input,
-            "cross_attn_masks": cross_attention_masks
+            "cross_attn_masks": cross_attention_masks,
+            "global_cond": global_cond
         }
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
@@ -478,6 +491,7 @@ def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
     conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config)
 
     cross_attention_ids = diffusion_config.get('cross_attention_cond_ids', [])
+    global_cond_ids = diffusion_config.get('global_cond_ids', [])
 
     pretransform = model_config.get("pretransform", None)
     if pretransform is not None:
@@ -487,6 +501,7 @@ def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
         diffusion_model, 
         conditioner, 
         cross_attn_cond_ids=cross_attention_ids,
+        global_cond_ids=global_cond_ids,
         pretransform=pretransform, 
         io_channels=io_channels
     )

@@ -5,7 +5,7 @@ import logging, warnings
 import typing as tp
 import gc
 
-from audio_diffusion_pytorch import NumberEmbedder
+from audio_diffusion_pytorch_fork import NumberEmbedder
 
 from torch import nn
 
@@ -130,7 +130,12 @@ class CLAPTextConditioner(Conditioner):
         self.model.to(device)
 
         if self.use_text_features:
-            text_features, text_attention_mask = self.get_clap_features(texts, layer_ix=self.feature_layer_ix, device=device)
+            if len(texts) == 1:
+                text_features, text_attention_mask = self.get_clap_features([texts[0], ""], layer_ix=self.feature_layer_ix, device=device)
+                text_features = text_features[:1, ...]
+                text_attention_mask = text_attention_mask[:1, ...]
+            else:
+                text_features, text_attention_mask = self.get_clap_features(texts, layer_ix=self.feature_layer_ix, device=device)
             return [self.proj_out(text_features), text_attention_mask]
 
         # Fix for CLAP bug when only one text is passed
@@ -304,19 +309,25 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
     conditioners = {}
     cond_dim = config["cond_dim"]
 
-    for conditioner_config in config["configs"]:
-        id = conditioner_config["id"]
+    for conditioner_info in config["configs"]:
+        id = conditioner_info["id"]
 
-        conditioner_type = conditioner_config["type"]
+        conditioner_type = conditioner_info["type"]
+
+        conditioner_config = {"output_dim": cond_dim}
+        
+        conditioner_config.update(conditioner_info["config"])
 
         if conditioner_type == "t5":
-            conditioners[id] = T5Conditioner(output_dim=cond_dim, **conditioner_config["config"])
+            conditioners[id] = T5Conditioner(**conditioner_config)
         elif conditioner_type == "clap_text":
-            conditioners[id] = CLAPTextConditioner(output_dim=cond_dim, **conditioner_config["config"])
+            conditioners[id] = CLAPTextConditioner(**conditioner_config)
         elif conditioner_type == "clap_audio":
-            conditioners[id] = CLAPAudioConditioner(output_dim=cond_dim, **conditioner_config["config"])
+            conditioners[id] = CLAPAudioConditioner(**conditioner_config)
         elif conditioner_type == "int":
-            conditioners[id] = IntConditioner(output_dim=cond_dim, **conditioner_config["config"])
+            conditioners[id] = IntConditioner(**conditioner_config)
+        elif conditioner_type == "number":
+            conditioners[id] = NumberConditioner(**conditioner_config)
         else:
             raise ValueError(f"Unknown conditioner type: {conditioner_type}")
 
