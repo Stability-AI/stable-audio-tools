@@ -33,7 +33,7 @@ setup(
         'torchaudio',
         'torchmetrics==0.11.4',
         'tqdm',
-        'transformers',
+        'transformers==4.30.2',
         'v-diffusion-pytorch',
         'vector-quantize-pytorch',
         'wandb',

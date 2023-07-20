@@ -48,6 +48,9 @@ def generate(
 
     conditioning = [{"prompt": prompt, "seconds_start": seconds_start, "seconds_total": seconds_total}] * batch_size
 
+    #Get the device from the model
+    device = next(model.parameters()).device
+
     seed = int(seed)
 
     if not use_init:
@@ -70,7 +73,7 @@ def generate(
         sample_size=sample_size,
         sample_rate=sample_rate,
         seed=seed,
-        device="cuda",
+        device=device,
         sampler_type=sampler_type,
         sigma_min=sigma_min,
         sigma_max=sigma_max,
@@ -136,7 +139,8 @@ def create_sampling_ui():
 
 
 def create_ui(model_config, ckpt_path):
-    load_model(model_config, ckpt_path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    load_model(model_config, ckpt_path, device=device)
     with gr.Blocks() as ui:
         with gr.Tab("Generation"):
             create_sampling_ui()

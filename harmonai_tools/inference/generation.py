@@ -72,13 +72,13 @@ def generate_diffusion_cond(
         if model.pretransform is not None:
             init_audio = model.pretransform.encode(init_audio)
 
-        sampled = variation_k(model.model, init_audio, init_noise_level, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True)
+        sampled = variation_k(model.model, init_audio, init_noise_level, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
     else:
         if model.pretransform is not None:
             sample_size = sample_size // model.pretransform.downsampling_ratio
 
         noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
-        sampled = sample_k(model.model, noise, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True)
+        sampled = sample_k(model.model, noise, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
 
 
     if model.pretransform is not None:
