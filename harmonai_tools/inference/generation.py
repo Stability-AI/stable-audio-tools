@@ -48,8 +48,6 @@ def generate_diffusion_cond(
 
         init_audio = init_audio.to(device)
 
-        print(f"Init audio: {init_audio}")
-
         if in_sr != sample_rate:
             resample_tf = T.Resample(in_sr, sample_rate).to(device)
             init_audio = resample_tf(init_audio)
@@ -58,7 +56,7 @@ def generate_diffusion_cond(
 
         # Add batch dimension if needed
         if len(init_audio.shape) == 2:
-            init_audio = init_audio.unsqueeze(0)       
+            init_audio = init_audio.unsqueeze(0)
 
         io_channels = model.io_channels
 
@@ -68,6 +66,12 @@ def generate_diffusion_cond(
         if io_channels == 1:
             # Convert to mono
             init_audio = init_audio.mean(1, keepdim=True)
+        elif io_channels == 2:
+            # Convert to stereo
+            if init_audio.shape[1] == 1:
+                init_audio = init_audio.repeat(1, 2, 1)
+            elif init_audio.shape[1] > 2:
+                init_audio = init_audio[:, :2, :]
 
         if model.pretransform is not None:
             init_audio = model.pretransform.encode(init_audio)

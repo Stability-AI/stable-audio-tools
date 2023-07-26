@@ -9,7 +9,7 @@ def create_model_from_config(model_config):
     elif model_type == 'diffusion_uncond':
         from .diffusion import create_diffusion_uncond_from_config
         return create_diffusion_uncond_from_config(model_config["model"])
-    elif model_type == 'diffusion_cond':
+    elif model_type == 'diffusion_cond' or model_type == 'diffusion_cond_inpaint':
         from .diffusion import create_diffusion_cond_from_config
         return create_diffusion_cond_from_config(model_config["model"])
     elif model_type == 'diffusion_autoencoder':
@@ -43,8 +43,8 @@ def create_pretransform_from_config(pretransform_config):
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     
-    requires_grad = pretransform_config.get('requires_grad', False)
-    pretransform.requires_grad = requires_grad
+    enable_grad = pretransform_config.get('enable_grad', False)
+    pretransform.enable_grad = enable_grad
 
     return pretransform
 

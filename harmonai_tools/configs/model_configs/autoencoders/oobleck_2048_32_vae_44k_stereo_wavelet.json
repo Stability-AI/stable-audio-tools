@@ -1,0 +1,86 @@
+{
+    "model_type": "autoencoder",
+    "sample_size": 65536,
+    "sample_rate": 44100,
+    "model": {
+        "pretransform":{
+            "type": "wavelet",
+            "enable_grad": true,
+            "config": {
+                "levels": 4,
+                "wavelet": "bior4.4",
+                "channels": 2
+            }
+        },
+        "encoder": {
+            "type": "oobleck",
+            "config": {
+                "in_channels": 32,
+                "channels": 256,
+                "c_mults": [1, 2, 4],
+                "strides": [2, 4, 8],
+                "latent_dim": 64,
+                "use_snake": true
+            }
+        },
+        "decoder": {
+            "type": "oobleck",
+            "config": {
+                "out_channels": 32,
+                "channels": 256,
+                "c_mults": [1, 2, 4],
+                "strides": [2, 4, 8],
+                "latent_dim": 32,
+                "use_snake": true,
+                "final_tanh": false
+            }
+        },
+        "bottleneck": {
+            "type": "vae"
+        },
+        "latent_dim": 32,
+        "downsampling_ratio": 2048,
+        "io_channels": 2
+    },
+    "training": {
+        "learning_rate": 1e-4,
+        "warmup_steps": 0,
+        "use_ema": true,
+        "loss_configs": {
+            "discriminator": {
+                "type": "encodec",
+                "config": {
+                    "filters": 64,
+                    "n_ffts": [2048, 1024, 512, 256, 128, 64, 32],
+                    "hop_lengths": [512, 256, 128, 64, 32, 16, 8],
+                    "win_lengths": [2048, 1024, 512, 256, 128, 64, 32]
+                },
+                "weights": {
+                    "adversarial": 0.1,
+                    "feature_matching": 5.0
+                }
+            },
+            "spectral": {
+                "type": "mrstft",
+                "config": {
+                    "fft_sizes": [2048, 1024, 512, 256, 128, 64, 32],
+                    "hop_sizes": [512, 256, 128, 64, 32, 16, 8],
+                    "win_lengths": [2048, 1024, 512, 256, 128, 64, 32],
+                    "perceptual_weighting": true
+                },
+                "weights": {
+                    "mrstft": 1.0
+                }
+            },
+            "time": {
+                "type": "l1",
+                "weights": {
+                    "l1": 0.0
+                }
+            }
+        },
+        "demo": {
+            "demo_every": 2000
+        }
+    }
+}

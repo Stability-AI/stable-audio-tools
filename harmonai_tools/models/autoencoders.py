@@ -164,7 +164,8 @@ class OobleckDecoder(nn.Module):
                  latent_dim=32, 
                  c_mults = [1, 2, 4, 8], 
                  strides = [2, 4, 8, 8],
-                 use_snake=False):
+                 use_snake=False,
+                 final_tanh=True):
         super().__init__()
 
         c_mults = [1] + c_mults
@@ -181,7 +182,7 @@ class OobleckDecoder(nn.Module):
         layers += [
             Activation1d(SnakeBeta(c_mults[0] * channels)) if use_snake else nn.ELU(),
             WNConv1d(in_channels=c_mults[0] * channels, out_channels=out_channels, kernel_size=7, padding=3),
-            nn.Tanh()
+            nn.Tanh() if final_tanh else nn.Identity()
         ]
 
         self.layers = nn.Sequential(*layers)

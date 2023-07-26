@@ -1,5 +1,6 @@
 import pytorch_lightning as pl
 import sys, gc
+import random
 import torch
 import torchaudio
 import typing as tp
@@ -354,6 +355,239 @@ class DiffusionCondDemoCallback(pl.Callback):
             gc.collect()
             torch.cuda.empty_cache()
             module.train()
+
+class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
+    '''
+    Wrapper for training a conditional audio diffusion model.
+    '''
+    def __init__(
+            self,
+            model: ConditionedDiffusionModelWrapper,
+            lr: float = 1e-4,
+    ):
+        super().__init__()
+
+        self.diffusion = model
+        
+        self.diffusion_ema = EMA(
+            self.diffusion.model,
+            beta=0.9999,
+            power=3/4,
+            update_every=1,
+            update_after_step=1
+        )
+
+        self.lr = lr
+
+        self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
+
+    def configure_optimizers(self):
+        return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
+
+    def random_mask(self, sequence, max_mask_length):
+
+        b, _, sequence_length = sequence.size()
+
+        # Create a mask tensor for each batch element
+        masks = []
+        for i in range(b):
+            # Randomly choose the length and starting index of the mask
+            mask_length = random.randint(1, max_mask_length)
+            mask_start = random.randint(0, sequence_length-mask_length)
+
+            # Create the mask tensor
+            mask = torch.ones((1, 1, sequence_length))
+            mask[:, :, mask_start:mask_start+mask_length] = 0
+            mask = mask.to(sequence.device)
+
+            masks.append(mask)
+
+        # Concatenate the mask tensors into a single tensor
+        mask = torch.cat(masks, dim=0).to(sequence.device)
+
+        # Apply the mask to the sequence tensor for each batch element
+        masked_sequence = sequence * mask
+
+        return masked_sequence, mask
+
+    def training_step(self, batch, batch_idx):
+        reals, metadata = batch
+
+        p = Profiler()
+
+        if reals.ndim == 4 and reals.shape[0] == 1:
+            reals = reals[0]
+
+        # Draw uniformly distributed continuous timesteps
+        t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
+
+        # Calculate the noise schedule parameters for those timesteps
+        alphas, sigmas = get_alphas_sigmas(t)
+
+        diffusion_input = reals
+
+        p.tick("setup")
+        
+        with torch.cuda.amp.autocast():
+            conditioning = self.diffusion.conditioner(metadata, self.device)
+
+        p.tick("conditioning")
+
+        if self.diffusion.pretransform is not None:
+            self.diffusion.pretransform.to(self.device)
+            with torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+                diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
+                p.tick("pretransform")
+
+        max_mask_length = diffusion_input.shape[2] // 2
+
+        # Create a mask of random length for a random slice of the input
+        masked_input, mask = self.random_mask(diffusion_input, max_mask_length)
+
+        conditioning['inpaint_mask'] = [mask]
+        conditioning['inpaint_masked_input'] = [masked_input]
+
+        # Combine the ground truth images and the noise
+        alphas = alphas[:, None, None]
+        sigmas = sigmas[:, None, None]
+        noise = torch.randn_like(diffusion_input)
+        noised_inputs = diffusion_input * alphas + noise * sigmas
+        targets = noise * alphas - diffusion_input * sigmas
+
+        p.tick("noise")
+
+        with torch.cuda.amp.autocast():
+            p.tick("amp")
+            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1)
+            p.tick("diffusion")
+            mse_loss = F.mse_loss(v, targets)
+            
+            # Check if mse_loss is NaN
+            if torch.isnan(mse_loss).any():
+                torch.set_printoptions(threshold=10000)
+                print("NaN")
+                md_string = [f"{md['prompt'], md['seconds_start'], md['seconds_total']}" for md in metadata]
+                print(f"Conditioning: {conditioning}")
+                print('\n\n'.join(md_string))
+                #print(f"t: {t}")
+                #print(f"v: {v}")
+
+            loss = mse_loss
+
+        log_dict = {
+            'train/loss': loss.detach(),
+            'train/mse_loss': mse_loss.detach(),
+            'train/std_data': diffusion_input.std(),
+        }
+
+        self.log_dict(log_dict, prog_bar=True, on_step=True)
+        p.tick("log")
+        #print(f"Profiler: {p}")
+        return loss
+    
+    def on_before_zero_grad(self, *args, **kwargs):
+        self.diffusion_ema.update()
+
+    def export_model(self, path):
+        self.diffusion.model = self.diffusion_ema.ema_model
+        export_state_dict = {"state_dict": self.diffusion.state_dict()}
+        
+        torch.save(export_state_dict, path)
+
+class DiffusionCondInpaintDemoCallback(pl.Callback):
+    def __init__(
+        self, 
+        demo_dl, 
+        demo_every=2000,
+        demo_steps=250,
+        sample_size=65536,
+        sample_rate=48000,
+        demo_cfg_scales: tp.Optional[tp.List[int]] = [3, 5, 7]
+    ):
+        super().__init__()
+        self.demo_every = demo_every
+        self.demo_steps = demo_steps
+        self.demo_samples = sample_size
+        self.demo_dl = iter(demo_dl)
+        self.sample_rate = sample_rate
+        self.demo_cfg_scales = demo_cfg_scales
+        self.last_demo_step = -1
+
+    @rank_zero_only
+    @torch.no_grad()
+    def on_train_batch_end(self, trainer, module: DiffusionCondTrainingWrapper, outputs, batch, batch_idx): 
+        if (trainer.global_step - 1) % self.demo_every != 0 or self.last_demo_step == trainer.global_step:
+            return
+        
+        self.last_demo_step = trainer.global_step
+
+        try:
+            log_dict = {}
+
+            demo_reals, metadata = next(self.demo_dl)
+
+            # Remove extra dimension added by WebDataset
+            if demo_reals.ndim == 4 and demo_reals.shape[0] == 1:
+                demo_reals = demo_reals[0]
+
+            demo_reals = demo_reals.to(module.device)
+
+
+            # Log the real audio
+            log_dict[f'demo_reals_melspec_left'] = wandb.Image(audio_spectrogram_image(rearrange(demo_reals, "b d n -> d (b n)").mul(32767).to(torch.int16).cpu()))
+            # log_dict[f'demo_reals'] = wandb.Audio(rearrange(demo_reals, "b d n -> d (b n)").mul(32767).to(torch.int16).cpu(), sample_rate=self.sample_rate, caption="demo reals")
+
+            if module.diffusion.pretransform is not None:
+                    demo_reals = module.diffusion.pretransform.encode(demo_reals)
+
+            demo_samples = demo_reals.shape[2]
+
+            # Get conditioning
+            conditioning = module.diffusion.conditioner(metadata, module.device)
+
+            masked_input, mask = module.random_mask(demo_reals, demo_reals.shape[2] // 2)
+
+            conditioning['inpaint_mask'] = [mask]
+            conditioning['inpaint_masked_input'] = [masked_input]
+
+            if module.diffusion.pretransform is not None:
+                log_dict[f'demo_masked_input'] = wandb.Image(tokens_spectrogram_image(masked_input.cpu()))
+            else:
+                log_dict[f'demo_masked_input'] = wandb.Image(audio_spectrogram_image(rearrange(masked_input, "b c t -> c (b t)").mul(32767).to(torch.int16).cpu()))
+
+            cond_inputs = module.diffusion.get_conditioning_inputs(conditioning)
+
+            noise = torch.randn([demo_reals.shape[0], module.diffusion.io_channels, demo_samples]).to(module.device)
+
+            trainer.logger.experiment.log(log_dict)
+
+            for cfg_scale in self.demo_cfg_scales:
+                
+                print(f"Generating demo for cfg scale {cfg_scale}")
+                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+
+                if module.diffusion.pretransform is not None:
+                    fakes = module.diffusion.pretransform.decode(fakes)
+
+                # Put the demos together
+                fakes = rearrange(fakes, 'b d n -> d (b n)')
+
+                log_dict = {}
+                
+                filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
+                fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+                torchaudio.save(filename, fakes, self.sample_rate)
+
+                log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,
+                                                    sample_rate=self.sample_rate,
+                                                    caption=f'Reconstructed')
+            
+                log_dict[f'demo_melspec_left_cfg_{cfg_scale}'] = wandb.Image(audio_spectrogram_image(fakes))
+
+                trainer.logger.experiment.log(log_dict)
+        except Exception as e:
+            print(f'{type(e).__name__}: {e}')
+            raise e
 
 class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
     '''

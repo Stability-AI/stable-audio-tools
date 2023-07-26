@@ -176,7 +176,13 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
             if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
                 kl = encoder_info['kl']
-                kl_loss = 1e-6 * kl 
+
+                try:
+                    kl_weight = self.loss_config['bottleneck']['weights']['kl']
+                except:
+                    kl_weight = 1e-6
+
+                kl_loss = kl_weight * kl 
                 loss = loss + kl_loss
 
             if isinstance(self.autoencoder.bottleneck, RVQBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):

@@ -87,9 +87,7 @@ def variation_k(model_fn, init_audio, init_noise_level=0.1, steps=100, sampler_t
     denoiser = K.external.VDenoiser(model_fn)
     sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, init_noise_level, rho, device=device)
 
-    init_audio = init_audio + torch.randn_like(init_audio) * init_noise_level #sigmas[0]
-
-    print(f"sigmas[0]: {sigmas[0]}")
+    init_audio = init_audio + torch.randn_like(init_audio) * init_noise_level
 
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":

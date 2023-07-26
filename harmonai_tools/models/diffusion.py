@@ -91,6 +91,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             pretransform: Pretransform = None,
             cross_attn_cond_ids: tp.List[str] = [],
             global_cond_ids: tp.List[str] = [],
+            input_concat_ids: tp.List[str] = []
             ):
         super().__init__()
 
@@ -100,11 +101,13 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.pretransform = pretransform
         self.cross_attn_cond_ids = cross_attn_cond_ids
         self.global_cond_ids = global_cond_ids
+        self.input_concat_ids = input_concat_ids
 
     def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any]):
         cross_attention_input = None
         cross_attention_masks = None
         global_cond = None
+        input_concat_cond = None
 
         if len(self.cross_attn_cond_ids) > 0:
             # Concatenate all cross-attention inputs over the sequence dimension
@@ -119,11 +122,16 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             if len(global_cond.shape) == 3:
                 global_cond = global_cond.squeeze(1)
         
+        if len(self.input_concat_ids) > 0:
+            # Concatenate all input concat conditioning inputs over the channel dimension
+            # Assumes that the input concat conditioning inputs are of shape (batch, channels, seq)
+            input_concat_cond = torch.cat([cond[key][0] for key in self.input_concat_ids], dim=1)
 
         return {
             "cross_attn_cond": cross_attention_input,
             "cross_attn_masks": cross_attention_masks,
-            "global_cond": global_cond
+            "global_cond": global_cond,
+            "input_concat_cond": input_concat_cond
         }
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
@@ -139,7 +147,7 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
         *args,
         **kwargs
     ):
-        super().__init__(supports_cross_attention=True, supports_global_cond=True, supports_input_concat=False)
+        super().__init__(supports_cross_attention=True, supports_global_cond=True, supports_input_concat=True)
 
         self.model = UNetCFG1d(*args, **kwargs)
 
@@ -163,12 +171,17 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
 
         p.tick("start")
 
+        channels_list = None
+        if input_concat_cond is not None:
+            channels_list = [input_concat_cond]
+
         outputs = self.model(
             x, 
             t, 
             embedding=cross_attn_cond, 
             embedding_mask=cross_attn_masks, 
             features=global_cond, 
+            channels_list=channels_list,
             embedding_scale=cfg_scale, 
             embedding_mask_proba=cfg_dropout_prob, 
             batch_cfg=batch_cfg,
@@ -217,14 +230,14 @@ class DiffusionAttnUnet1D(nn.Module):
         for i in range(depth, 0, -1):
             c = channels[i - 1]
             stride = strides[i-1]
-            if stride != 2 and not learned_resample:
+            if stride > 2 and not learned_resample:
                 raise ValueError("Must have stride 2 without learned resampling")
             
             if i > 1:
                 c_prev = channels[i - 2]
                 add_attn = i >= attn_layer and n_attn_layers > 0
                 block = SkipBlock(
-                    Downsample1d_2(c_prev, c_prev, stride) if learned_resample else Downsample1d("cubic"),
+                    Downsample1d_2(c_prev, c_prev, stride) if (learned_resample or stride == 1) else Downsample1d("cubic"),
                     conv_block(c_prev, c, c),
                     SelfAttention1d(
                         c, c // 32) if add_attn else nn.Identity(),
@@ -492,6 +505,7 @@ def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
 
     cross_attention_ids = diffusion_config.get('cross_attention_cond_ids', [])
     global_cond_ids = diffusion_config.get('global_cond_ids', [])
+    input_concat_ids = diffusion_config.get('input_concat_ids', [])
 
     pretransform = model_config.get("pretransform", None)
     if pretransform is not None:
@@ -502,6 +516,7 @@ def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
         conditioner, 
         cross_attn_cond_ids=cross_attention_ids,
         global_cond_ids=global_cond_ids,
+        input_concat_ids=input_concat_ids,
         pretransform=pretransform, 
         io_channels=io_channels
     )

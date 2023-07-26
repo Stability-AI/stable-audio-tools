@@ -1,7 +1,7 @@
 {
     "model_type": "diffusion_uncond",
     "sample_size": 65536,
-    "sample_rate": 48000,
+    "sample_rate": 44100,
     "model": {
         "type": "DAU1d",
         "config": {
@@ -9,7 +9,7 @@
         }
     },
     "training": {
-        "learning_rate": 1e-4,
+        "learning_rate": 4e-5,
         "demo": {
             "demo_every": 2000,
             "demo_steps": 250

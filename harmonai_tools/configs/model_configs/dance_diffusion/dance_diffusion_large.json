@@ -7,5 +7,12 @@
         "config": {
             "n_attn_layers": 4
         }
+    },
+    "training": {
+        "learning_rate": 1e-4,
+        "demo": {
+            "demo_every": 2000,
+            "demo_steps": 250
+        }
     }
 }
