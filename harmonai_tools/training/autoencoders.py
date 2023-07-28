@@ -23,7 +23,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             warmup_steps: int = 150000,
             sample_rate=48000,
             loss_config: dict = None,
-            use_ema: bool = False,
+            use_ema: bool = True,
             ema_copy = None
     ):
         super().__init__()

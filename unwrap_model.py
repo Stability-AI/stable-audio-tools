@@ -19,9 +19,18 @@ if __name__ == '__main__':
 
     assert model_type is not None, 'model_type must be specified in model config'
 
+    training_config = model_config.get('training', None)
+
     if model_type == 'autoencoder':
         from harmonai_tools.training.autoencoders import AutoencoderTrainingWrapper
-        training_wrapper = AutoencoderTrainingWrapper.load_from_checkpoint(args.ckpt_path, autoencoder=model, strict=False)
+        
+        training_wrapper = AutoencoderTrainingWrapper.load_from_checkpoint(
+            args.ckpt_path, 
+            autoencoder=model, 
+            strict=False,
+            loss_config=training_config["loss_configs"],
+            use_ema=training_config["use_ema"]
+        )
     elif model_type == 'diffusion_uncond':
         from harmonai_tools.training.diffusion import DiffusionUncondTrainingWrapper
         training_wrapper = DiffusionUncondTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)

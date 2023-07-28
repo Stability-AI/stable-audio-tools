@@ -1,37 +1,45 @@
 {
     "model_type": "autoencoder",
-    "sample_size": 32768,
-    "sample_rate": 44100,
+    "sample_size": 65536,
+    "sample_rate": 48000,
     "audio_channels": 2,
     "model": {
         "encoder": {
-            "type": "dac",
+            "type": "seanet",
             "config": {
-                "in_channels": 2,
-                "latent_dim": 128,
-                "d_model": 128,
-                "strides": [4, 4, 8, 8]
+                "channels": 2,
+                "dimension": 32,
+                "n_filters": 128,
+                "ratios": [2, 2, 2, 4],
+                "n_residual_layers": 3,
+                "dilation_base": 3,
+                "norm": "none",
+                "lstm": 0
             }
         },
         "decoder": {
-            "type": "dac",
+            "type": "seanet",
             "config": {
-                "out_channels": 2,
-                "latent_dim": 64,
-                "channels": 1536,
-                "rates": [8, 8, 4, 4]
+                "channels": 2,
+                "dimension": 32,
+                "n_filters": 128,
+                "ratios": [2, 2, 2, 4],
+                "n_residual_layers": 3,
+                "dilation_base": 3,
+                "norm": "none",
+                "lstm": 0
             }
         },
         "bottleneck": {
-            "type": "vae"
+            "type": "l2_norm"
         },
-        "latent_dim": 64,
-        "downsampling_ratio": 1024,
+        "latent_dim": 32,
+        "downsampling_ratio": 32,
         "io_channels": 2
     },
     "training": {
-        "learning_rate": 2e-5,
-        "warmup_steps": 0,
+        "learning_rate": 4e-5,
+        "warmup_steps": 100000,
         "use_ema": true,
         "loss_configs": {
             "discriminator": {
@@ -44,7 +52,7 @@
                 },
                 "weights": {
                     "adversarial": 0.1,
-                    "feature_matching": 5.0
+                    "feature_matching": 2.0
                 }
             },
             "spectral": {

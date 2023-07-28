@@ -4,6 +4,8 @@ import json
 import torch
 import torchaudio
 
+from aeiou.viz import audio_spectrogram_image
+
 from torch.nn import functional as F
 
 from einops import rearrange
@@ -46,7 +48,13 @@ def generate(
         init_audio=None,
         init_noise_level=1.0,
         batch_size=1,
+        preview_every=None
         ):
+
+    global preview_images
+
+    preview_images = []
+
     # Return fake stereo audio
 
     conditioning = [{"prompt": prompt, "seconds_start": seconds_start, "seconds_total": seconds_total}] * batch_size
@@ -67,6 +75,25 @@ def generate(
 
         init_audio = (in_sr, init_audio)
 
+    def progress_callback(callback_info):
+        global preview_images
+        denoised = callback_info["denoised"]
+        current_step = callback_info["i"]
+        sigma = callback_info["sigma"]
+
+        if (current_step - 1) % preview_every == 0:
+
+            if model.pretransform is not None:
+                denoised = model.pretransform.decode(denoised)
+
+            denoised = rearrange(denoised, "b d n -> d (b n)")
+
+            denoised = denoised.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+
+            audio_spectrogram = audio_spectrogram_image(denoised, sample_rate=sample_rate)
+
+            preview_images.append((audio_spectrogram, f"Step {current_step} sigma={sigma:.3f})"))
+
     audio = generate_diffusion_cond(
         model, 
         conditioning=conditioning,
@@ -82,6 +109,7 @@ def generate(
         sigma_max=sigma_max,
         init_audio=init_audio,
         init_noise_level=init_noise_level,
+        callback = progress_callback if preview_every is not None else None
     )
 
     audio = rearrange(audio, "b d n -> d (b n)")
@@ -90,7 +118,9 @@ def generate(
 
     torchaudio.save("output.wav", audio, sample_rate)
 
-    return "output.wav" 
+    audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
+
+    return ("output.wav", [audio_spectrogram, *preview_images])
 
 def create_sampling_ui():
     with gr.Row():
@@ -119,8 +149,8 @@ def create_sampling_ui():
             # Sampler params
                 with gr.Row():
                     sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-2m-sde")
-                    sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.95, label="Sigma min")
-                    sigma_max_slider = gr.Slider(minimum=0.0, maximum=200.0, step=0.1, value=77, label="Sigma max")
+                    sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
+                    sigma_max_slider = gr.Slider(minimum=0.0, maximum=200.0, step=0.1, value=80, label="Sigma max")
 
             with gr.Accordion("Init audio", open=False):
                 init_audio_checkbox = gr.Checkbox(label="Use init audio")
@@ -128,25 +158,31 @@ def create_sampling_ui():
                 init_noise_level_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.01, value=0.1, label="Init noise level")
 
         with gr.Column():
-            audio_output = gr.Audio(label="Output audio", scale=6, interactive=False)
-            # audio_spectrogram_output = gr.Image(label="Output spectrogram", scale=6, interactive=False)
+            audio_output = gr.Audio(label="Output audio", interactive=False)
+            audio_spectrogram_output = gr.Gallery(label="Output spectrogram", show_label=False)
             send_to_init_button = gr.Button("Send to init audio", scale=1)
             send_to_init_button.click(fn=lambda audio: audio, inputs=[audio_output], outputs=[init_audio_input])
     
-    generate_button.click(fn=generate, inputs=[
-        prompt, 
-        seconds_start_slider, 
-        seconds_total_slider, 
-        cfg_scale_slider, 
-        steps_slider, 
-        seed_textbox, 
-        sampler_type_dropdown, 
-        sigma_min_slider, 
-        sigma_max_slider,
-        init_audio_checkbox,
-        init_audio_input,
-        init_noise_level_slider,
-        ], outputs=audio_output, api_name="generate")
+    generate_button.click(fn=generate, 
+        inputs=[
+            prompt, 
+            seconds_start_slider, 
+            seconds_total_slider, 
+            cfg_scale_slider, 
+            steps_slider, 
+            seed_textbox, 
+            sampler_type_dropdown, 
+            sigma_min_slider, 
+            sigma_max_slider,
+            init_audio_checkbox,
+            init_audio_input,
+            init_noise_level_slider,
+        ], 
+        outputs=[
+            audio_output, 
+            audio_spectrogram_output
+        ], 
+        api_name="generate")
 
 
 def create_txt2audio_ui():

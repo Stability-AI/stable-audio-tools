@@ -1,36 +1,51 @@
 {
     "model_type": "autoencoder",
     "sample_size": 32768,
-    "sample_rate": 44100,
+    "sample_rate": 48000,
     "audio_channels": 2,
     "model": {
-        "encoder": {
-            "type": "dac",
+        "pretransform":{
+            "type": "wavelet",
+            "enable_grad": true,
             "config": {
-                "in_channels": 2,
-                "latent_dim": 128,
-                "d_model": 128,
-                "strides": [4, 4, 8, 8]
+                "levels": 3,
+                "wavelet": "bior4.4",
+                "channels": 2
+            }
+        },
+        "encoder": {
+            "type": "seanet",
+            "config": {
+                "channels": 16,
+                "dimension": 64,
+                "n_filters": 128,
+                "ratios": [2, 2, 4],
+                "n_residual_layers": 3,
+                "dilation_base": 3,
+                "norm": "weight_norm"
             }
         },
         "decoder": {
-            "type": "dac",
+            "type": "seanet",
             "config": {
-                "out_channels": 2,
-                "latent_dim": 64,
-                "channels": 1536,
-                "rates": [8, 8, 4, 4]
+                "channels": 16,
+                "dimension": 32,
+                "n_filters": 128,
+                "ratios": [2, 2, 4],
+                "n_residual_layers": 3,
+                "dilation_base": 3,
+                "norm": "weight_norm"
             }
         },
         "bottleneck": {
             "type": "vae"
         },
-        "latent_dim": 64,
-        "downsampling_ratio": 1024,
+        "latent_dim": 32,
+        "downsampling_ratio": 128,
         "io_channels": 2
     },
     "training": {
-        "learning_rate": 2e-5,
+        "learning_rate": 4e-5,
         "warmup_steps": 0,
         "use_ema": true,
         "loss_configs": {
@@ -63,6 +78,12 @@
                 "type": "l1",
                 "weights": {
                     "l1": 0.0
+                }
+            },
+            "bottleneck": {
+                "type": "kl",
+                "weights": {
+                    "kl": 1e-4
                 }
             }
         },

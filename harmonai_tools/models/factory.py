@@ -104,5 +104,8 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == 'memcodes':
         from .bottleneck import MemcodesBottleneck
         return MemcodesBottleneck(**bottleneck_config["config"])
+    elif bottleneck_type == 'l2_norm':
+        from .bottleneck import L2Bottleneck
+        return L2Bottleneck()
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')
