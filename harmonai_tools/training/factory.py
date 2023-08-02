@@ -32,7 +32,8 @@ def create_training_wrapper_from_config(model_config, model):
             sample_rate=model_config["sample_rate"],
             loss_config=training_config["loss_configs"],
             use_ema=use_ema,
-            ema_copy=ema_copy if use_ema else None
+            ema_copy=ema_copy if use_ema else None,
+            force_input_mono=training_config.get("force_input_mono", False),
         )
     elif model_type == 'diffusion_uncond':
         from .diffusion import DiffusionUncondTrainingWrapper

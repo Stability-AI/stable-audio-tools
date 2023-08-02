@@ -1,36 +1,38 @@
 {
     "model_type": "autoencoder",
-    "sample_size": 65536,
-    "sample_rate": 44100,
-    "audio_channels": 1,
+    "sample_size": 32768,
+    "sample_rate": 48000,
+    "audio_channels": 2,
     "model": {
         "encoder": {
             "type": "dac",
             "config": {
-                "latent_dim": 64,
+                "in_channels": 2,
+                "latent_dim": 32,
                 "d_model": 128,
-                "strides": [4, 8, 8, 8]
+                "strides": [2, 4, 4, 4]
             }
         },
         "decoder": {
             "type": "dac",
             "config": {
+                "out_channels": 2,
                 "latent_dim": 32,
                 "channels": 1536,
-                "rates": [8, 8, 8, 4]
+                "rates": [4, 4, 4, 2]
             }
         },
         "bottleneck": {
-            "type": "vae"
+            "type": "wasserstein"
         },
         "latent_dim": 32,
-        "downsampling_ratio": 2048,
-        "io_channels": 1
+        "downsampling_ratio": 512,
+        "io_channels": 2
     },
     "training": {
         "learning_rate": 1e-4,
         "warmup_steps": 0,
-        "use_ema": false,
+        "use_ema": true,
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",
@@ -61,6 +63,12 @@
                 "type": "l1",
                 "weights": {
                     "l1": 0.0
+                }
+            },
+            "bottleneck": {
+                "type": "mmd",
+                "weights": {
+                    "mmd": 100
                 }
             }
         },

@@ -61,6 +61,7 @@ def sample(model, x, steps, eta, **extra_args):
 def sample_k(model_fn, noise, steps=100, sampler_type="dpmpp-2m-sde", sigma_min=0.5, sigma_max=50, rho=1.0, device="cuda", callback=None, **extra_args):
 
     denoiser = K.external.VDenoiser(model_fn)
+
     sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)
 
     noise = noise * sigmas[0]

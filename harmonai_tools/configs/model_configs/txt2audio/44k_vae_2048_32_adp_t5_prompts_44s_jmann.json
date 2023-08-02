@@ -1,6 +1,6 @@
 {
     "model_type": "diffusion_cond",
-    "sample_size": 524288,
+    "sample_size": 2097152,
     "sample_rate": 44100,
     "audio_channels": 1,
     "model": {
@@ -51,16 +51,15 @@
                 "in_channels": 32,
                 "context_embedding_features": 768,
                 "context_embedding_max_length": 77,
-                "channels": 320,
+                "channels": 256,
                 "resnet_groups": 8,
                 "kernel_multiplier_downsample": 2,
-                "multipliers": [1, 2, 4, 4],
-                "factors": [1, 2, 2],
-                "num_blocks": [3, 3, 3],
-                "attentions": [1, 1, 1, 1],
-                "attention_heads": 8,
-                "attention_features": 64,
-                "attention_multiplier": 4,
+                "multipliers": [2, 3, 3, 4, 4],
+                "factors": [1, 2, 2, 2],
+                "num_blocks": [2, 2, 2, 2],
+                "attentions": [0, 3, 3, 3, 3],
+                "attention_heads": 16,
+                "attention_multiplier": 2,
                 "use_nearest_upsample": false,
                 "use_skip_scale": true,
                 "use_context_time": true
@@ -75,10 +74,10 @@
             "demo_steps": 250,
             "num_demos": 4,
             "demo_cond": [
-                {"prompt": "Keywords: Atmospheres, Orchestral Drone, Bass, Sci-Fi Ambient Soundscape, Synthesiser, Middle Eastern Vocal, dramatic piano", "seconds_start": 0, "seconds_total": 47},
-                {"prompt": "Genre: Corporate|Instruments: Ukulele, Drums, Clapping, Glockenspiel", "seconds_start": 0, "seconds_total": 30},
-                {"prompt": "Description: 116 BPM rock drums, drum track for a rock song", "seconds_start": 0, "seconds_total": 45},
-                {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 30}
+                {"prompt": "Style: Groovy|Key: G|Instruments: Acoustic Guitar|Genre: Folk|Instrument: Guitalele|Mood: Silly|Tempo: 120|Year: 2017|Beard: Shadow"},
+                {"prompt": "Date: 2012-07-15|Tempo: 70|Key: F#|Mood: Tired|Year: 2012|Beard: Shadow|Genre: Folk|Style: Rambling, Rough"},
+                {"prompt": "Tempo: 100|Genre: Rock|Style: Rambling, Fun, Bouncy|Mood: Pensive|Key: E|Year: 2021|Topic: Poetic|Beard: Shadow"},
+                {"prompt": "Tempo: 150|Genre: Folk|Style: Happy, Rambling"}
             ],
             "demo_cfg_scales": [3, 6, 9]
         }

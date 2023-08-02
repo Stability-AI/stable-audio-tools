@@ -10,7 +10,7 @@ import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator
-from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck
+from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
 
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
@@ -24,7 +24,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             sample_rate=48000,
             loss_config: dict = None,
             use_ema: bool = True,
-            ema_copy = None
+            ema_copy = None,
+            force_input_mono = False
     ):
         super().__init__()
 
@@ -35,6 +36,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.warmed_up = False
         self.warmup_steps = warmup_steps
         self.lr = lr
+
+        self.force_input_mono = force_input_mono
 
         if loss_config is None:
             scales = [2048, 1024, 512, 256, 128, 64, 32]
@@ -86,7 +89,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         stft_loss_args = loss_config['spectral']['config']
 
-        if self.autoencoder.io_channels == 2:
+        if self.autoencoder.out_channels == 2:
             self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
         else:
             self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
@@ -96,7 +99,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         if loss_config['discriminator']['type'] == 'oobleck':
             self.discriminator = OobleckDiscriminator(**loss_config['discriminator']['config'])
         elif loss_config['discriminator']['type'] == 'encodec':
-            self.discriminator = EncodecDiscriminator(in_channels=self.autoencoder.io_channels, **loss_config['discriminator']['config'])
+            self.discriminator = EncodecDiscriminator(in_channels=self.autoencoder.out_channels, **loss_config['discriminator']['config'])
 
         self.autoencoder_ema = None
         
@@ -111,9 +114,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 update_every=1,
                 update_after_step=1
             )
-
-            # Ensure same params without deepcopy
-            #self.autoencoder_ema.copy_params_from_model_to_ema()
 
     def configure_optimizers(self):
         opt_gen = optim.Adam([*self.autoencoder.parameters()], lr=self.lr, betas=(.5, .9))
@@ -132,7 +132,12 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         opt_gen, opt_disc = self.optimizers()
 
-        latents, encoder_info = self.autoencoder.encode(reals, return_info=True)
+        encoder_input = reals
+
+        if self.force_input_mono and encoder_input.shape[1] > 1:
+            encoder_input = encoder_input.mean(dim=1, keepdim=True)
+
+        latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
 
         decoded = self.autoencoder.decode(latents)
 
@@ -141,7 +146,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         l1_time_loss = F.l1_loss(reals, decoded)
 
         if self.warmed_up:
-            #loss_dis, loss_adv, feature_matching_distance, _, _ = self.discriminator.loss(reals, decoded)
             loss_dis, loss_adv, feature_matching_distance = self.discriminator.loss(reals, decoded)
         else:
             loss_dis = torch.tensor(0.).to(reals)
@@ -185,6 +189,16 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 kl_loss = kl_weight * kl 
                 loss = loss + kl_loss
 
+            if isinstance(self.autoencoder.bottleneck, WassersteinBottleneck):
+                mmd_loss = encoder_info['mmd']            
+
+                try:
+                    mmd_weight = self.loss_config['bottleneck']['weights']['mmd']
+                except:
+                    mmd_weight = 100
+
+                loss = loss + mmd_weight * mmd_loss
+
             if isinstance(self.autoencoder.bottleneck, RVQBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
                 quantizer_loss = encoder_info['quantizer_loss']
                 loss = loss + quantizer_loss
@@ -220,6 +234,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 log_dict['train/codebook_loss'] = codebook_loss.detach()
                 log_dict['train/commitment_loss'] = commitment_loss.detach()
                 
+            if isinstance(self.autoencoder.bottleneck, WassersteinBottleneck):
+                log_dict['train/mmd_loss'] = mmd_loss.detach()
             
         self.log_dict(log_dict, prog_bar=True, on_step=True)
 
@@ -269,6 +285,9 @@ class AutoencoderDemoCallback(pl.Callback):
             encoder_input = demo_reals
             
             encoder_input = encoder_input.to(module.device)
+
+            if module.force_input_mono:
+                encoder_input = encoder_input.mean(dim=1, keepdim=True)
 
             demo_reals = demo_reals.to(module.device)
 

@@ -263,11 +263,6 @@ class T5Conditioner(Conditioner):
             input_ids=input_ids, attention_mask=attention_mask
         )["last_hidden_state"]    
 
-        # Check for NaN Embeddings
-        if torch.isnan(embeddings).any():
-            print(f"Texts: {texts}")
-            print(f"Embeddings: {embeddings}")
-
         embeddings = self.proj_out(embeddings)
 
         embeddings = embeddings * attention_mask.unsqueeze(-1).float()

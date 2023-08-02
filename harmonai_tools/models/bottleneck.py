@@ -65,7 +65,41 @@ class VAEBottleneck(Bottleneck):
 
     def decode(self, x):
         return x
+
+def compute_mean_kernel(x, y):
+        kernel_input = (x[:, None] - y[None]).pow(2).mean(2) / x.shape[-1]
+        return torch.exp(-kernel_input).mean()
+
+def compute_mmd(latents):
+    latents_reshaped = latents.permute(0, 2, 1).reshape(-1, latents.shape[1])
+    noise = torch.randn_like(latents_reshaped)
+
+    latents_kernel = compute_mean_kernel(latents_reshaped, latents_reshaped)
+    noise_kernel = compute_mean_kernel(noise, noise)
+    latents_noise_kernel = compute_mean_kernel(latents_reshaped, noise)
     
+    mmd = latents_kernel + noise_kernel - 2 * latents_noise_kernel
+    return mmd.mean()
+
+class WassersteinBottleneck(Bottleneck):
+    def __init__(self):
+        super().__init__()
+    
+    def encode(self, x, return_info=False):
+        info = {}
+
+        if self.training and return_info:
+            mmd = compute_mmd(x)
+            info["mmd"] = mmd
+        
+        if return_info:
+            return x, info
+        
+        return x
+
+    def decode(self, x):
+        return x
+
 class L2Bottleneck(Bottleneck):
     def __init__(self):
         super().__init__()

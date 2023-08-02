@@ -99,7 +99,6 @@ def create_bottleneck_from_config(bottleneck_config):
         
     elif bottleneck_type == 'dac_rvq_vae':
         from .bottleneck import DACRVQVAEBottleneck
-
         return DACRVQVAEBottleneck(**bottleneck_config["config"])
     elif bottleneck_type == 'memcodes':
         from .bottleneck import MemcodesBottleneck
@@ -107,5 +106,8 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == 'l2_norm':
         from .bottleneck import L2Bottleneck
         return L2Bottleneck()
+    elif bottleneck_type == "wasserstein":
+        from .bottleneck import WassersteinBottleneck
+        return WassersteinBottleneck()
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')

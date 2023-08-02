@@ -54,9 +54,11 @@ def generate_diffusion_cond(
 
         init_audio = PadCrop(sample_size, randomize=False)(init_audio)
 
-        # Add batch dimension if needed
+        # Add batch and channel dimension if needed
         if len(init_audio.shape) == 2:
             init_audio = init_audio.unsqueeze(0)
+        elif len(init_audio.shape) == 1:
+            init_audio = init_audio.unsqueeze(0).unsqueeze(0)
 
         io_channels = model.io_channels
 

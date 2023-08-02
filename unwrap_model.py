@@ -1,5 +1,6 @@
 import argparse
 import json
+from torch.nn.parameter import Parameter
 from harmonai_tools.models import create_model_from_config
 
 if __name__ == '__main__':
@@ -24,12 +25,29 @@ if __name__ == '__main__':
     if model_type == 'autoencoder':
         from harmonai_tools.training.autoencoders import AutoencoderTrainingWrapper
         
+        ema_copy = None
+
+        if training_config.get("use_ema", False):
+            from harmonai_tools.models.factory import create_model_from_config
+            ema_copy = create_model_from_config(model_config)
+            ema_copy = create_model_from_config(model_config) # I don't know why this needs to be called twice but it broke when I called it once
+        
+            # Copy each weight to the ema copy
+            for name, param in model.state_dict().items():
+                if isinstance(param, Parameter):
+                    # backwards compatibility for serialized parameters
+                    param = param.data
+                ema_copy.state_dict()[name].copy_(param)
+
+        use_ema = training_config.get("use_ema", False)
+
         training_wrapper = AutoencoderTrainingWrapper.load_from_checkpoint(
             args.ckpt_path, 
             autoencoder=model, 
             strict=False,
             loss_config=training_config["loss_configs"],
-            use_ema=training_config["use_ema"]
+            use_ema=training_config["use_ema"],
+            ema_copy=ema_copy if use_ema else None
         )
     elif model_type == 'diffusion_uncond':
         from harmonai_tools.training.diffusion import DiffusionUncondTrainingWrapper

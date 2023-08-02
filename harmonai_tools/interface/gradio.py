@@ -71,7 +71,12 @@ def generate(
         in_sr, init_audio = init_audio
 
         # Turn into torch tensor, converting from int16 to float32
-        init_audio = torch.from_numpy(init_audio).float().div(32767).transpose(0, 1)
+        init_audio = torch.from_numpy(init_audio).float().div(32767)
+        
+        if init_audio.dim() == 1:
+            init_audio = init_audio.unsqueeze(0) # [1, n]
+        elif init_audio.dim() == 2:
+            init_audio = init_audio.transpose(0, 1) # [n, 2] -> [2, n]
 
         init_audio = (in_sr, init_audio)
 

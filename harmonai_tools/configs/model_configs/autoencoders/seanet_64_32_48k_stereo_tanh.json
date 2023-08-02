@@ -1,48 +1,58 @@
 {
     "model_type": "autoencoder",
     "sample_size": 65536,
-    "sample_rate": 44100,
-    "audio_channels": 1,
+    "sample_rate": 48000,
+    "audio_channels": 2,
     "model": {
         "encoder": {
-            "type": "dac",
+            "type": "seanet",
             "config": {
-                "latent_dim": 64,
-                "d_model": 128,
-                "strides": [4, 8, 8, 8]
+                "channels": 2,
+                "dimension": 32,
+                "n_filters": 128,
+                "ratios": [2, 2, 4, 4],
+                "n_residual_layers": 3,
+                "dilation_base": 3,
+                "norm": "weight_norm",
+                "lstm": 0
             }
         },
         "decoder": {
-            "type": "dac",
+            "type": "seanet",
             "config": {
-                "latent_dim": 32,
-                "channels": 1536,
-                "rates": [8, 8, 8, 4]
+                "channels": 2,
+                "dimension": 32,
+                "n_filters": 128,
+                "ratios": [2, 2, 2, 4],
+                "n_residual_layers": 3,
+                "dilation_base": 3,
+                "norm": "weight_norm",
+                "lstm": 0
             }
         },
         "bottleneck": {
-            "type": "vae"
+            "type": "tanh"
         },
         "latent_dim": 32,
-        "downsampling_ratio": 2048,
-        "io_channels": 1
+        "downsampling_ratio": 32,
+        "io_channels": 2
     },
     "training": {
-        "learning_rate": 1e-4,
-        "warmup_steps": 0,
-        "use_ema": false,
+        "learning_rate": 1e-5,
+        "warmup_steps": 100000,
+        "use_ema": true,
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",
                 "config": {
                     "filters": 32,
-                    "n_ffts": [2048, 1024, 512, 256, 128, 64, 32],
-                    "hop_lengths": [512, 256, 128, 64, 32, 16, 8],
-                    "win_lengths": [2048, 1024, 512, 256, 128, 64, 32]
+                    "n_ffts": [2048, 1024, 512, 256, 128],
+                    "hop_lengths": [512, 256, 128, 64, 32],
+                    "win_lengths": [2048, 1024, 512, 256, 128]
                 },
                 "weights": {
                     "adversarial": 0.1,
-                    "feature_matching": 5.0
+                    "feature_matching": 2.0
                 }
             },
             "spectral": {

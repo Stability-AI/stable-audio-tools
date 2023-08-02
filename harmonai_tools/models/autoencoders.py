@@ -229,7 +229,9 @@ class AudioAutoencoder(nn.Module):
         bottleneck: Bottleneck = None,
         encode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, encoder: encoder(x),
         decode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, decoder: decoder(x),
-        pretransform: Pretransform = None
+        pretransform: Pretransform = None,
+        in_channels = None,
+        out_channels = None
     ):
         super().__init__()
 
@@ -237,6 +239,14 @@ class AudioAutoencoder(nn.Module):
 
         self.latent_dim = latent_dim
         self.io_channels = io_channels
+        self.in_channels = io_channels
+        self.out_channels = io_channels
+
+        if in_channels is not None:
+            self.in_channels = in_channels
+
+        if out_channels is not None:
+            self.out_channels = out_channels
 
         self.bottleneck = bottleneck
 
@@ -395,6 +405,9 @@ def create_autoencoder_from_config(model_config: Dict[str, Any]):
     io_channels = model_config.get("io_channels", None)
     assert io_channels is not None, "io_channels must be specified in model config"
 
+    in_channels = model_config.get("in_channels", None)
+    out_channels = model_config.get("out_channels", None)
+
     pretransform = model_config.get("pretransform", None)
 
     if pretransform is not None:
@@ -410,7 +423,9 @@ def create_autoencoder_from_config(model_config: Dict[str, Any]):
         latent_dim=latent_dim,
         downsampling_ratio=downsampling_ratio,
         bottleneck=bottleneck,
-        pretransform=pretransform
+        pretransform=pretransform,
+        in_channels=in_channels,
+        out_channels=out_channels
     )
 
 def create_diffAE_from_config(model_config: Dict[str, Any]):
