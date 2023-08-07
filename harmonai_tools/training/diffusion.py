@@ -242,17 +242,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1)
             p.tick("diffusion")
             mse_loss = F.mse_loss(v, targets)
-            
-            # Check if mse_loss is NaN
-            if torch.isnan(mse_loss).any():
-                torch.set_printoptions(threshold=10000)
-                print("NaN")
-                md_string = [f"{md['prompt'], md['seconds_start'], md['seconds_total']}" for md in metadata]
-                print(f"Conditioning: {conditioning}")
-                print('\n\n'.join(md_string))
-                #print(f"t: {t}")
-                #print(f"v: {v}")
-
+         
             loss = mse_loss
 
         log_dict = {
@@ -330,7 +320,6 @@ class DiffusionCondDemoCallback(pl.Callback):
                 if module.diffusion.pretransform is not None:
                     fakes = module.diffusion.pretransform.decode(fakes)
 
-                #fakes = generate_diffusion_cond(module.diffusion, self.demo_steps, cfg_scale, self.demo_conditioning, batch_size=self.num_demos, sample_size=demo_samples, device=module.device)
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')

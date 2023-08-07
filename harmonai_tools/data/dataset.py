@@ -10,13 +10,45 @@ import torch
 import torchaudio
 import webdataset as wds
 
-from aeiou.core import is_silence, fast_scandir
+from aeiou.core import is_silence
 from os import path
 from pedalboard.io import AudioFile
 from torchaudio import transforms as T
 from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
+
+# fast_scandir implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
+
+def fast_scandir(
+    dir:str,  # top-level directory at which to begin scanning
+    ext:list,  # list of allowed file extensions,
+    #max_size = 1 * 1000 * 1000 * 1000 # Only files < 1 GB
+    ):
+    "very fast `glob` alternative. from https://stackoverflow.com/a/59803793/4259243"
+    subfolders, files = [], []
+    ext = ['.'+x if x[0]!='.' else x for x in ext]  # add starting period to extensions if needed
+    try: # hope to avoid 'permission denied' by this try
+        for f in os.scandir(dir):
+            try: # 'hope to avoid too many levels of symbolic links' error
+                if f.is_dir():
+                    subfolders.append(f.path)
+                elif f.is_file():
+                    file_ext = os.path.splitext(f.name)[1].lower()
+                    is_hidden = os.path.basename(f.path).startswith(".")
+
+                    if file_ext in ext and not is_hidden:
+                        files.append(f.path)
+            except:
+                pass 
+    except:
+        pass
+
+    for dir in list(subfolders):
+        sf, f = fast_scandir(dir, ext)
+        subfolders.extend(sf)
+        files.extend(f)
+    return subfolders, files
 
 def keyword_scandir(
     dir: str,  # top-level directory at which to begin scanning

@@ -59,6 +59,12 @@ def create_training_wrapper_from_config(model_config, model):
             model,
             lr=training_config["learning_rate"]
         )
+    elif model_type == 'musicgen':
+        from .musicgen import MusicGenTrainingWrapper
+        return MusicGenTrainingWrapper(
+            model,
+            lr=training_config["learning_rate"]
+        )
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
 
@@ -118,6 +124,16 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_cfg_scales=demo_config["demo_cfg_scales"],
             **kwargs
         )
+    elif model_type == "musicgen":
+        from .musicgen import MusicGenDemoCallback
 
+        return MusicGenDemoCallback(
+            demo_every=demo_config.get("demo_every", 2000), 
+            sample_size=model_config["sample_size"],
+            sample_rate=model_config["sample_rate"],
+            demo_cfg_scales=demo_config["demo_cfg_scales"],
+            demo_conditioning=demo_config["demo_cond"],
+            **kwargs
+        )
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')

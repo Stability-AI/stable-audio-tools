@@ -8,6 +8,7 @@ setup(
     description='Training and inference tools for generative audio models from Harmonai',
     packages=find_packages(),  
     install_requires=[
+        'audiocraft==0.0.2',
         'aeiou==0.0.20',
         'alias-free-torch==0.0.6',
         'audio-diffusion-pytorch-fork==0.0.104',
