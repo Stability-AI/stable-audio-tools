@@ -176,14 +176,18 @@ class CLAPAudioConditioner(Conditioner):
         gc.collect()
         torch.cuda.empty_cache()
 
-    def forward(self, audios: torch.Tensor, device: tp.Any = "cuda") -> tp.Any:
+    def forward(self, audios: tp.Union[torch.Tensor, tp.List[torch.Tensor], tp.Tuple[torch.Tensor]] , device: tp.Any = "cuda") -> tp.Any:
 
         self.model.to(device)
+
+        if isinstance(audios, list) or isinstance(audios, tuple):
+            audios = torch.cat(audios, dim=0)
 
         # Convert to mono
         mono_audios = audios.mean(dim=1)
 
-        audio_embedding = self.model.get_audio_embedding_from_data(mono_audios, use_tensor=True)
+        with torch.cuda.amp.autocast(enabled=False):
+            audio_embedding = self.model.get_audio_embedding_from_data(mono_audios.float(), use_tensor=True)
 
         audio_embedding = audio_embedding.unsqueeze(1).to(device)
 

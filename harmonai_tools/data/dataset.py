@@ -452,6 +452,10 @@ class S3WebDataLoader():
             del sample[found_key]
 
         sample["audio"] = audio
+
+        # Add audio to the metadata as well for conditioning
+        sample["json"]["audio"] = audio
+        
         return sample
 
 def create_dataloader_from_configs_and_args(model_config, args, dataset_config):

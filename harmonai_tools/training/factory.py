@@ -111,7 +111,9 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_steps=demo_config.get("demo_steps", 250), 
             num_demos=demo_config["num_demos"],
             demo_cfg_scales=demo_config["demo_cfg_scales"],
-            demo_conditioning=demo_config["demo_cond"],
+            demo_conditioning=demo_config.get("demo_cond", {}),
+            demo_cond_from_batch=demo_config.get("demo_cond_from_batch", False),
+            display_audio_cond=demo_config.get("display_audio_cond", False),
         )
     elif model_type == "diffusion_cond_inpaint":
         from .diffusion import DiffusionCondInpaintDemoCallback
