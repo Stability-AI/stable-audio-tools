@@ -42,6 +42,8 @@ class MusicGenTrainingWrapper(pl.LightningModule):
 
         self.musicgen_model: MusicGen = musicgen_model
 
+        self.musicgen_model.compression_model.requires_grad_(False)
+
         self.lm = self.musicgen_model.lm
 
         self.lm.to(torch.float32).train().requires_grad_(True)
@@ -51,7 +53,7 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         self.lr = lr
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW([*self.musicgen_model.lm.parameters()], lr=self.lr)
+        optimizer = optim.AdamW([*self.lm.parameters()], lr=self.lr, betas=(0.9, 0.95), weight_decay=0.1)
 
         return optimizer
 

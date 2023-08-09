@@ -58,7 +58,7 @@ def main():
         devices=args.num_gpus,
         accelerator="gpu",
         num_nodes = args.num_nodes,
-        strategy='ddp',
+        strategy='ddp' if args.num_gpus > 1 else None,
         precision=16,
         accumulate_grad_batches=args.accum_batches, 
         callbacks=[ckpt_callback, demo_callback, exc_callback],
