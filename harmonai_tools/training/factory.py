@@ -25,6 +25,8 @@ def create_training_wrapper_from_config(model_config, model):
 
         use_ema = training_config.get("use_ema", False)
 
+        latent_mask_ratio = training_config.get("latent_mask_ratio", 0.0)
+
         return AutoencoderTrainingWrapper(
             model, 
             lr=training_config["learning_rate"],
@@ -34,6 +36,7 @@ def create_training_wrapper_from_config(model_config, model):
             use_ema=use_ema,
             ema_copy=ema_copy if use_ema else None,
             force_input_mono=training_config.get("force_input_mono", False),
+            latent_mask_ratio=latent_mask_ratio
         )
     elif model_type == 'diffusion_uncond':
         from .diffusion import DiffusionUncondTrainingWrapper

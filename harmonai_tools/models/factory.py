@@ -111,6 +111,6 @@ def create_bottleneck_from_config(bottleneck_config):
         return L2Bottleneck()
     elif bottleneck_type == "wasserstein":
         from .bottleneck import WassersteinBottleneck
-        return WassersteinBottleneck()
+        return WassersteinBottleneck(**bottleneck_config.get("config", {}))
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')

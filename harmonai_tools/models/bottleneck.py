@@ -82,8 +82,10 @@ def compute_mmd(latents):
     return mmd.mean()
 
 class WassersteinBottleneck(Bottleneck):
-    def __init__(self):
+    def __init__(self, noise_augment_dim: int = 0):
         super().__init__()
+
+        self.noise_augment_dim = noise_augment_dim
     
     def encode(self, x, return_info=False):
         info = {}
@@ -98,6 +100,12 @@ class WassersteinBottleneck(Bottleneck):
         return x
 
     def decode(self, x):
+
+        if self.noise_augment_dim > 0:
+            noise = torch.randn(x.shape[0], self.noise_augment_dim,
+                                x.shape[-1]).type_as(x)
+            x = torch.cat([x, noise], dim=1)
+
         return x
 
 class L2Bottleneck(Bottleneck):

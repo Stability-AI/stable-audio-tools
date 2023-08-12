@@ -25,7 +25,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             loss_config: dict = None,
             use_ema: bool = True,
             ema_copy = None,
-            force_input_mono = False
+            force_input_mono = False,
+            latent_mask_ratio = 0.0,
     ):
         super().__init__()
 
@@ -115,6 +116,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 update_after_step=1
             )
 
+        self.latent_mask_ratio = latent_mask_ratio
+
     def configure_optimizers(self):
         opt_gen = optim.Adam([*self.autoencoder.parameters()], lr=self.lr, betas=(.5, .9))
         opt_disc = optim.Adam([*self.discriminator.parameters()], lr=self.lr, betas=(.5, .9))
@@ -138,6 +141,10 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             encoder_input = encoder_input.mean(dim=1, keepdim=True)
 
         latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
+
+        if self.latent_mask_ratio > 0.0:
+            mask = torch.rand_like(latents) < self.latent_mask_ratio
+            latents = torch.where(mask, torch.zeros_like(latents), latents)
 
         decoded = self.autoencoder.decode(latents)
 

@@ -408,17 +408,30 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         # Create a mask tensor for each batch element
         masks = []
         for i in range(b):
-            # Randomly choose the length and starting index of the mask
-            mask_length = random.randint(1, max_mask_length)
-            mask_start = random.randint(0, sequence_length-mask_length)
+            mask_type = random.randint(0, 2)
 
-            # Create the mask tensor
-            mask = torch.ones((1, 1, sequence_length))
-            mask[:, :, mask_start:mask_start+mask_length] = 0
-            mask = mask.to(sequence.device)
+            if mask_type == 0: # Random mask
+                # Randomly choose the length and starting index of the mask
+                mask_length = random.randint(1, max_mask_length)
+                mask_start = random.randint(0, sequence_length-mask_length)
 
-            masks.append(mask)
+                # Create the mask tensor
+                mask = torch.ones((1, 1, sequence_length))
+                mask[:, :, mask_start:mask_start+mask_length] = 0
+                mask = mask.to(sequence.device)
 
+                masks.append(mask)
+
+            elif mask_type == 1: # Full mask
+                mask = torch.zeros((1, 1, sequence_length)).to(sequence.device)
+                masks.append(mask)
+
+            elif mask_type == 2: # Causal mask
+                mask = torch.ones((1, 1, sequence_length)).to(sequence.device)
+                mask_length = random.randint(1, max_mask_length)
+                mask[:, :, -mask_length:] = 0
+                masks.append(mask)
+                
         # Concatenate the mask tensors into a single tensor
         mask = torch.cat(masks, dim=0).to(sequence.device)
 
