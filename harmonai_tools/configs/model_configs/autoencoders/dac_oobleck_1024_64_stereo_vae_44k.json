@@ -1,36 +1,39 @@
 {
     "model_type": "autoencoder",
-    "sample_size": 32768,
-    "sample_rate": 48000,
+    "sample_size": 65536,
+    "sample_rate": 44100,
     "audio_channels": 2,
     "model": {
         "encoder": {
             "type": "dac",
             "config": {
                 "in_channels": 2,
-                "latent_dim": 32,
+                "latent_dim": 128,
                 "d_model": 128,
-                "strides": [2, 4, 8, 8]
+                "strides": [4, 4, 8, 8]
             }
         },
         "decoder": {
-            "type": "dac",
+            "type": "oobleck",
             "config": {
                 "out_channels": 2,
-                "latent_dim": 32,
-                "channels": 1536,
-                "rates": [8, 8, 4, 2]
+                "channels": 128,
+                "c_mults": [1, 2, 4, 8],
+                "strides": [4, 4, 8, 8],
+                "latent_dim": 64,
+                "use_snake": true,
+                "antialias_activation": false
             }
         },
         "bottleneck": {
-            "type": "wasserstein"
+            "type": "vae"
         },
-        "latent_dim": 32,
-        "downsampling_ratio": 512,
+        "latent_dim": 64,
+        "downsampling_ratio": 1024,
         "io_channels": 2
     },
     "training": {
-        "learning_rate": 4e-5,
+        "learning_rate": 2e-5,
         "warmup_steps": 0,
         "use_ema": true,
         "loss_configs": {
@@ -38,9 +41,9 @@
                 "type": "encodec",
                 "config": {
                     "filters": 32,
-                    "n_ffts": [2048, 1024, 512, 256, 128, 64, 32],
-                    "hop_lengths": [512, 256, 128, 64, 32, 16, 8],
-                    "win_lengths": [2048, 1024, 512, 256, 128, 64, 32]
+                    "n_ffts": [2048, 1024, 512, 256, 128],
+                    "hop_lengths": [512, 256, 128, 64, 32],
+                    "win_lengths": [2048, 1024, 512, 256, 128]
                 },
                 "weights": {
                     "adversarial": 0.1,
@@ -62,13 +65,7 @@
             "time": {
                 "type": "l1",
                 "weights": {
-                    "l1": 0.0
-                }
-            },
-            "bottleneck": {
-                "type": "mmd",
-                "weights": {
-                    "mmd": 10
+                    "l1": 0.1
                 }
             }
         },

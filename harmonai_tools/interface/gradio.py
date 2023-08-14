@@ -137,11 +137,11 @@ def create_sampling_ui():
             with gr.Row():
                 # Timing controls
                 seconds_start_slider = gr.Slider(minimum=0, maximum=512, step=1, value=0, label="Seconds start")
-                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=60, label="Seconds total")
+                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=95, label="Seconds total")
             
             with gr.Row():
                 # Steps slider
-                steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=200, label="Steps")
+                steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=100, label="Steps")
 
                 # CFG scale 
                 cfg_scale_slider = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=7.0, label="CFG scale")
