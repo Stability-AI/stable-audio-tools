@@ -16,8 +16,6 @@ def main():
 
     args = get_all_args()
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print('Using device:', device)
     torch.manual_seed(args.seed)
 
     #Get JSON config from args.model_config
@@ -33,7 +31,6 @@ def main():
 
     if args.pretrained_ckpt_path:
         copy_state_dict(model, torch.load(args.pretrained_ckpt_path)["state_dict"])
-        #model.load_state_dict(torch.load(args.pretrained_ckpt_path)["state_dict"], strict=False)
     
     if args.pretransform_ckpt_path:
         print("Loading pretransform from checkpoint")
@@ -56,11 +53,28 @@ def main():
     args_dict.update({"dataset_config": dataset_config})
     push_wandb_config(wandb_logger, args_dict)
 
+    #Set multi-GPU strategy if specified
+    if args.strategy:
+        if args.strategy == "deepspeed":
+            from pytorch_lightning.strategies import DeepSpeedStrategy
+            strategy = DeepSpeedStrategy(stage=2, 
+                                        contiguous_gradients=True, 
+                                        overlap_comm=True, 
+                                        reduce_scatter=True, 
+                                        reduce_bucket_size=5e8, 
+                                        allgather_bucket_size=5e8,
+                                        load_full_weights=True
+                                        )
+        else:
+            strategy = args.strategy
+    else:
+        strategy = 'ddp' if args.num_gpus > 1 else None 
+
     trainer = pl.Trainer(
         devices=args.num_gpus,
         accelerator="gpu",
         num_nodes = args.num_nodes,
-        strategy='ddp' if args.num_gpus > 1 else None,
+        strategy=strategy,
         precision=16,
         accumulate_grad_batches=args.accum_batches, 
         callbacks=[ckpt_callback, demo_callback, exc_callback],

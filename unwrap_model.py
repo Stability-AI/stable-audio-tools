@@ -58,6 +58,12 @@ if __name__ == '__main__':
     elif model_type == 'diffusion_cond':
         from harmonai_tools.training.diffusion import DiffusionCondTrainingWrapper
         training_wrapper = DiffusionCondTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)
+    elif model_type == 'diffusion_cond_inpaint':
+        from harmonai_tools.training.diffusion import DiffusionCondInpaintTrainingWrapper
+        training_wrapper = DiffusionCondInpaintTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)
+    else:
+        raise ValueError(f"Unknown model type {model_type}")
+
     
     print(f"Loaded model from {args.ckpt_path}")
 

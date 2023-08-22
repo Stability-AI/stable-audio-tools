@@ -109,16 +109,29 @@ class EncoderBlock(nn.Module):
         return self.layers(x)
 
 class DecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, use_snake=False, antialias_activation=False):
+    def __init__(self, in_channels, out_channels, stride, use_snake=False, antialias_activation=False, use_nearest_upsample=False):
         super().__init__()
+
+        if use_nearest_upsample:
+            upsample_layer = nn.Sequential(
+                nn.Upsample(scale_factor=stride, mode="nearest"),
+                WNConv1d(in_channels=in_channels,
+                        out_channels=out_channels, 
+                        kernel_size=2*stride,
+                        stride=1,
+                        bias=False,
+                        padding='same')
+            )
+        else:
+            upsample_layer = WNConvTranspose1d(in_channels=in_channels,
+                               out_channels=out_channels,
+                               kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2))
 
         act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels)
 
         self.layers = nn.Sequential(
             act,
-            WNConvTranspose1d(in_channels=in_channels,
-                               out_channels=out_channels,
-                               kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2)),
+            upsample_layer,
             ResidualUnit(in_channels=out_channels, out_channels=out_channels,
                          dilation=1, use_snake=use_snake),
             ResidualUnit(in_channels=out_channels, out_channels=out_channels,
@@ -173,6 +186,7 @@ class OobleckDecoder(nn.Module):
                  strides = [2, 4, 8, 8],
                  use_snake=False,
                  antialias_activation=False,
+                 use_nearest_upsample=False,
                  final_tanh=True):
         super().__init__()
 
@@ -190,13 +204,14 @@ class OobleckDecoder(nn.Module):
                 out_channels=c_mults[i-1]*channels, 
                 stride=strides[i-1], 
                 use_snake=use_snake, 
-                antialias_activation=antialias_activation
+                antialias_activation=antialias_activation,
+                use_nearest_upsample=use_nearest_upsample
                 )
             ]
 
         layers += [
             get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=c_mults[0] * channels),
-            WNConv1d(in_channels=c_mults[0] * channels, out_channels=out_channels, kernel_size=7, padding=3),
+            WNConv1d(in_channels=c_mults[0] * channels, out_channels=out_channels, kernel_size=7, padding=3, bias=False),
             nn.Tanh() if final_tanh else nn.Identity()
         ]
 

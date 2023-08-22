@@ -71,7 +71,7 @@
         "io_channels": 64
     },
     "training": {
-        "learning_rate": 4e-5,
+        "learning_rate": 2e-5,
         "demo": {
             "demo_every": 2000,
             "demo_steps": 250,

@@ -34,6 +34,7 @@
         "learning_rate": 2e-5,
         "warmup_steps": 0,
         "use_ema": true,
+        "latent_mask_ratio": 0.05,
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",

@@ -4,6 +4,7 @@ import torch
 import logging, warnings
 import typing as tp
 import gc
+import os
 
 from audio_diffusion_pytorch_fork import NumberEmbedder
 
@@ -94,8 +95,6 @@ class CLAPTextConditioner(Conditioner):
         self.use_text_features = use_text_features
         self.feature_layer_ix = feature_layer_ix
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
         # Suppress logging from transformers
         previous_level = logging.root.manager.disable
         logging.disable(logging.ERROR)
@@ -104,7 +103,7 @@ class CLAPTextConditioner(Conditioner):
             try:
                 import laion_clap
                 
-                self.__dict__["model"] = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device=device).requires_grad_(False).eval()
+                self.__dict__["model"] = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu').requires_grad_(False).eval()
                 self.model.load_ckpt(clap_ckpt_path)
             finally:
                 logging.disable(previous_level)
@@ -126,7 +125,6 @@ class CLAPTextConditioner(Conditioner):
         return prompt_features, attention_mask
 
     def forward(self, texts: tp.List[str], device: tp.Any = "cuda") -> tp.Any:
-
         self.model.to(device)
 
         if self.use_text_features:

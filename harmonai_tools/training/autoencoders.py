@@ -27,6 +27,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             ema_copy = None,
             force_input_mono = False,
             latent_mask_ratio = 0.0,
+            teacher_model: AudioAutoencoder = None
     ):
         super().__init__()
 
@@ -39,6 +40,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.lr = lr
 
         self.force_input_mono = force_input_mono
+
+        self.teacher_model = teacher_model
 
         if loss_config is None:
             scales = [2048, 1024, 512, 256, 128, 64, 32]
@@ -142,15 +145,40 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
 
+        # Encode with teacher model for distillation
+        if self.teacher_model is not None:
+            with torch.no_grad():
+                teacher_latents = self.teacher_model.encode(encoder_input, return_info=False)
+
+        # Optionally mask out some latents for noise resistance
         if self.latent_mask_ratio > 0.0:
             mask = torch.rand_like(latents) < self.latent_mask_ratio
             latents = torch.where(mask, torch.zeros_like(latents), latents)
 
         decoded = self.autoencoder.decode(latents)
 
-        mrstft_loss = self.sdstft(reals, decoded)
+        # Distillation
+        if self.teacher_model is not None:
+            with torch.no_grad():
+                teacher_decoded = self.teacher_model.decode(teacher_latents)
+                own_latents_teacher_decoded = self.teacher_model.decode(latents) #Distilled model's latents decoded by teacher
 
-        l1_time_loss = F.l1_loss(reals, decoded)
+
+            mrstft_loss = self.sdstft(reals, decoded) # Reconstruction loss
+            mrstft_loss += self.sdstft(reals, own_latents_teacher_decoded) # Distilled model's encoder is compatible with teacher's decoder
+            mrstft_loss += self.sdstft(decoded, teacher_decoded) # Distilled model's decoder is compatible with teacher's decoder
+            mrstft_loss /= 3
+
+            l1_time_loss = F.l1_loss(decoded, teacher_decoded)
+
+            latent_loss = F.l1_loss(latents, teacher_latents)
+
+        else:
+            mrstft_loss = self.sdstft(reals, decoded)
+
+            l1_time_loss = F.l1_loss(reals, decoded)
+
+            latent_loss = torch.tensor(0.).to(reals)
 
         if self.warmed_up:
             loss_dis, loss_adv, feature_matching_distance = self.discriminator.loss(reals, decoded)
@@ -183,7 +211,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             l1_time_loss = l1_time_loss * self.loss_config['time']['weights']['l1']
 
             # Combine spectral loss, KL loss, time-domain loss, and adversarial loss
-            loss = mrstft_loss + loss_adv + feature_matching_distance #+ l1_time_loss
+            loss = mrstft_loss + loss_adv + feature_matching_distance + l1_time_loss + latent_loss
 
             if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
                 kl = encoder_info['kl']
@@ -230,6 +258,9 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 'train/feature_matching': feature_matching_distance.detach(),
                 'train/latent_std': latents.std().detach(),
             }
+
+            if self.teacher_model is not None:
+                log_dict['train/latent_loss'] = latent_loss.detach()
 
             if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck):
                 log_dict['train/kl_loss'] = kl_loss.detach()

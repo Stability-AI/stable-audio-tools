@@ -1,3 +1,4 @@
+import torch
 from torch.nn import Parameter
 
 def create_training_wrapper_from_config(model_config, model):
@@ -27,6 +28,18 @@ def create_training_wrapper_from_config(model_config, model):
 
         latent_mask_ratio = training_config.get("latent_mask_ratio", 0.0)
 
+        teacher_model = training_config.get("teacher_model", None)
+        if teacher_model is not None:
+            from ..models.factory import create_model_from_config
+            teacher_model = create_model_from_config(teacher_model)
+            teacher_model = teacher_model.eval().requires_grad_(False)
+
+            teacher_model_ckpt = training_config.get("teacher_model_ckpt", None)
+            if teacher_model_ckpt is not None:
+                teacher_model.load_state_dict(torch.load(teacher_model_ckpt)["state_dict"])
+            else:
+                raise ValueError("teacher_model_ckpt must be specified if teacher_model is specified")
+
         return AutoencoderTrainingWrapper(
             model, 
             lr=training_config["learning_rate"],
@@ -36,7 +49,8 @@ def create_training_wrapper_from_config(model_config, model):
             use_ema=use_ema,
             ema_copy=ema_copy if use_ema else None,
             force_input_mono=training_config.get("force_input_mono", False),
-            latent_mask_ratio=latent_mask_ratio
+            latent_mask_ratio=latent_mask_ratio,
+            teacher_model=teacher_model
         )
     elif model_type == 'diffusion_uncond':
         from .diffusion import DiffusionUncondTrainingWrapper

@@ -1,8 +1,8 @@
 {
-    "model_type": "diffusion_cond",
+    "model_type": "diffusion_cond_inpaint",
     "sample_size": 524288,
     "sample_rate": 44100,
-    "audio_channels": 1,
+    "audio_channels": 2,
     "model": {
         "pretransform": {
             "type": "autoencoder",
@@ -10,25 +10,27 @@
                 "encoder": {
                     "type": "dac",
                     "config": {
-                        "latent_dim": 64,
+                        "in_channels": 2,
+                        "latent_dim": 128,
                         "d_model": 128,
-                        "strides": [4, 8, 8, 8]
+                        "strides": [4, 4, 8, 8]
                     }
                 },
                 "decoder": {
                     "type": "dac",
                     "config": {
-                        "latent_dim": 32,
+                        "out_channels": 2,
+                        "latent_dim": 64,
                         "channels": 1536,
-                        "rates": [8, 8, 8, 4]
+                        "rates": [8, 8, 4, 4]
                     }
                 },
                 "bottleneck": {
                     "type": "vae"
                 },
-                "latent_dim": 32,
-                "downsampling_ratio": 2048,
-                "io_channels": 1
+                "latent_dim": 64,
+                "downsampling_ratio": 1024,
+                "io_channels": 2
             }
         },
         "conditioning": {
@@ -47,42 +49,35 @@
         "diffusion": {
             "type": "adp_cfg_1d",
             "cross_attention_cond_ids": ["prompt"],
+            "input_concat_ids": ["inpaint_mask", "inpaint_masked_input"],
             "config": {
-                "in_channels": 32,
+                "in_channels": 64,
                 "context_embedding_features": 768,
-                "context_embedding_max_length": 77,
+                "context_embedding_max_length":77,
+                "context_channels": [65],
                 "channels": 256,
                 "resnet_groups": 8,
                 "kernel_multiplier_downsample": 2,
-                "multipliers": [2, 3, 3, 4, 4],
-                "factors": [1, 2, 2, 2],
-                "num_blocks": [2, 2, 2, 2],
-                "attentions": [0, 3, 3, 3, 3],
+                "multipliers": [3, 3, 4, 4, 4, 4],
+                "factors": [1, 2, 2, 4, 4],
+                "num_blocks": [2, 2, 2, 2, 2],
+                "attentions": [0, 3, 3, 3, 3, 3],
                 "attention_heads": 16,
-                "attention_multiplier": 2,
+                "attention_features": 64,
+                "attention_multiplier": 4,
                 "use_nearest_upsample": false,
                 "use_skip_scale": true,
                 "use_context_time": true
             }
         },
-        "io_channels": 32
+        "io_channels": 64
     },
     "training": {
-        "learning_rate": 1e-4,
+        "learning_rate": 4e-5,
         "demo": {
             "demo_every": 2000,
             "demo_steps": 250,
             "num_demos": 8,
-            "demo_cond": [
-                {"prompt": "The woman was shocked to learn that her dog was in fact not a dog at all"},
-                {"prompt": "Onward and onwards, we go on our own"},
-                {"prompt": "People talking in a crowded cafe"},
-                {"prompt": "When one of these ships is under construction and the steel frames have been set in the keel,"},
-                {"prompt": "Hit the bass again!"},
-                {"prompt": "it is never used except for very expensive books, although it would not materially increase the cost in all but the very cheapest."},
-                {"prompt": "The spooky, scary ghost floated away into the night"},
-                {"prompt": "Clean bright guitar loop"}
-            ],
             "demo_cfg_scales": [3, 6, 9]
         }
     }

@@ -216,15 +216,16 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         diffusion_input = reals
 
         p.tick("setup")
-        
+
         with torch.cuda.amp.autocast():
             conditioning = self.diffusion.conditioner(metadata, self.device)
+            
 
         p.tick("conditioning")
 
         if self.diffusion.pretransform is not None:
             self.diffusion.pretransform.to(self.device)
-            with torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+            with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                 p.tick("pretransform")
 
@@ -344,10 +345,11 @@ class DiffusionCondDemoCallback(pl.Callback):
             for cfg_scale in self.demo_cfg_scales:
 
                 print(f"Generating demo for cfg scale {cfg_scale}")
-                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
-
-                if module.diffusion.pretransform is not None:
-                    fakes = module.diffusion.pretransform.decode(fakes)
+                
+                with torch.cuda.amp.autocast():
+                    fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+                    if module.diffusion.pretransform is not None:
+                        fakes = module.diffusion.pretransform.decode(fakes)
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')
@@ -469,7 +471,8 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                 p.tick("pretransform")
 
-        max_mask_length = diffusion_input.shape[2] // 2
+        # Max mask size is the full sequence length
+        max_mask_length = diffusion_input.shape[2]
 
         # Create a mask of random length for a random slice of the input
         masked_input, mask = self.random_mask(diffusion_input, max_mask_length)
@@ -575,7 +578,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             # Get conditioning
             conditioning = module.diffusion.conditioner(metadata, module.device)
 
-            masked_input, mask = module.random_mask(demo_reals, demo_reals.shape[2] // 2)
+            masked_input, mask = module.random_mask(demo_reals, demo_reals.shape[2])
 
             conditioning['inpaint_mask'] = [mask]
             conditioning['inpaint_masked_input'] = [masked_input]

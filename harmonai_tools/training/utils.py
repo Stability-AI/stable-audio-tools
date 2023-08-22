@@ -1,4 +1,18 @@
 import torch
+import os
+
+def get_rank():
+    """Get rank of current process."""
+    
+    print(os.environ.keys())
+
+    if "SLURM_PROCID" in os.environ:
+        return int(os.environ["SLURM_PROCID"])
+
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return 0
+    
+    return torch.distributed.get_rank()
 
 def copy_state_dict(model, state_dict):
     """Load state_dict to model, but only for keys that match exactly.
@@ -13,8 +27,6 @@ def copy_state_dict(model, state_dict):
             if isinstance(state_dict[key], torch.nn.Parameter):
                 # backwards compatibility for serialized parameters
                 state_dict[key] = state_dict[key].data
-            print("Loading key", key)
             model_state_dict[key] = state_dict[key]
         
-    #model_state_dict.update(state_dict)
     model.load_state_dict(model_state_dict, strict=False)
