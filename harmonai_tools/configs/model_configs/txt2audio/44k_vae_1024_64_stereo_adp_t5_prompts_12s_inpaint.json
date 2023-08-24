@@ -1,6 +1,6 @@
 {
-    "model_type": "diffusion_cond",
-    "sample_size": 2097152,
+    "model_type": "diffusion_cond_inpaint",
+    "sample_size": 524288,
     "sample_rate": 44100,
     "audio_channels": 2,
     "model": {
@@ -42,42 +42,29 @@
                         "t5_model_name": "t5-base",
                         "max_length": 77
                     }
-                },
-                {
-                    "id": "seconds_start",
-                    "type": "int",
-                    "config": {
-                        "min_val": 0,
-                        "max_val": 512
-                    }
-                },
-                {
-                    "id": "seconds_total",
-                    "type": "int",
-                    "config": {
-                        "min_val": 0,
-                        "max_val": 512
-                    }
                 }
             ],
             "cond_dim": 768
         },
         "diffusion": {
             "type": "adp_cfg_1d",
-            "cross_attention_cond_ids": ["prompt", "seconds_start", "seconds_total"],
+            "cross_attention_cond_ids": ["prompt"],
+            "input_concat_ids": ["inpaint_mask", "inpaint_masked_input"],
             "config": {
                 "in_channels": 64,
                 "context_embedding_features": 768,
-                "context_embedding_max_length":79,
+                "context_embedding_max_length":77,
+                "context_channels": [65],
                 "channels": 256,
                 "resnet_groups": 8,
                 "kernel_multiplier_downsample": 2,
-                "multipliers": [2, 3, 3, 4, 5],
-                "factors": [1, 2, 2, 2],
-                "num_blocks": [2, 2, 2, 2],
-                "attentions": [0, 1, 1, 1, 1],
+                "multipliers": [3, 3, 4, 4, 4, 4],
+                "factors": [1, 2, 2, 4, 4],
+                "num_blocks": [2, 2, 2, 2, 2],
+                "attentions": [0, 3, 3, 3, 3, 3],
                 "attention_heads": 16,
-                "attention_multiplier": 2,
+                "attention_features": 64,
+                "attention_multiplier": 4,
                 "use_nearest_upsample": false,
                 "use_skip_scale": true,
                 "use_context_time": true
@@ -86,17 +73,11 @@
         "io_channels": 64
     },
     "training": {
-        "learning_rate": 1e-4,
+        "learning_rate": 4e-5,
         "demo": {
             "demo_every": 2000,
             "demo_steps": 250,
-            "num_demos": 4,
-            "demo_cond": [
-                {"prompt": "Keywords: Atmospheres, Orchestral Drone, Bass, Sci-Fi Ambient Soundscape, Synthesiser, Middle Eastern Vocal, dramatic piano", "seconds_start": 0, "seconds_total": 47},
-                {"prompt": "Genre: Corporate|Instruments: Ukulele, Drums, Clapping, Glockenspiel", "seconds_start": 0, "seconds_total": 30},
-                {"prompt": "Description: 116 BPM rock drums, drum track for a rock song", "seconds_start": 0, "seconds_total": 45},
-                {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 30}
-            ],
+            "num_demos": 8,
             "demo_cfg_scales": [3, 6, 9]
         }
     }

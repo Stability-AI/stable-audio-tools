@@ -31,14 +31,15 @@
         "io_channels": 2
     },
     "training": {
-        "learning_rate": 4e-5,
+        "learning_rate": 2e-5,
         "warmup_steps": 0,
         "use_ema": true,
+        "latent_mask_ratio": 0.05,
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",
                 "config": {
-                    "filters": 32,
+                    "filters": 64,
                     "n_ffts": [2048, 1024, 512, 256, 128],
                     "hop_lengths": [512, 256, 128, 64, 32],
                     "win_lengths": [2048, 1024, 512, 256, 128]
@@ -63,7 +64,7 @@
             "time": {
                 "type": "l1",
                 "weights": {
-                    "l1": 0.0
+                    "l1": 0.1
                 }
             }
         },

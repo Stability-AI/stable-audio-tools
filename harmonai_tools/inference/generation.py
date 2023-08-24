@@ -58,13 +58,14 @@ def generate_diffusion_cond(
         if in_sr != sample_rate:
             resample_tf = T.Resample(in_sr, sample_rate).to(device)
             init_audio = resample_tf(init_audio)
+
         # If the init audio is shorter than our model's window, pad it with zeros
         init_audio = PadCrop(audio_sample_size, randomize=False)(init_audio)
-        print("init_audio, 1", init_audio.shape)
         # Add batch dimension if needed
         if len(init_audio.shape) == 2:
             init_audio = init_audio.unsqueeze(0)
-        print("init_audio, 2", init_audio.shape)
+        elif len(init_audio.shape) == 1:
+            init_audio = init_audio.unsqueeze(0).unsqueeze(0)
 
         # Adjust for mono or stereo models
         io_channels = model.io_channels
@@ -79,14 +80,10 @@ def generate_diffusion_cond(
                 init_audio = init_audio.repeat(1, 2, 1)
             elif init_audio.shape[1] > 2:
                 init_audio = init_audio[:, :2, :]
-        print("init_audio, 3", init_audio.shape)
-
         # Finally, if this is latent diffusion, run the raw audio through the VAE encoder
         if model.pretransform is not None:
             init_audio = model.pretransform.encode(init_audio)
         # Okay great, our input audio has been prepared. 
-        print("init_audio, 4", init_audio.shape)
-
     else:
         # The user did not supply any initial audio for inpainting or variation. Generate new output from scratch. 
         init_audio = None
@@ -95,7 +92,6 @@ def generate_diffusion_cond(
 
     # Inpainting mask
     if init_audio is not None and mask_args is not None:
-        print("Inpainting mask 1")
         # Cut and paste init_audio according to cropfrom, pastefrom, pasteto
         # This is helpful for forward and reverse outpainting
         cropfrom = math.floor(mask_args["cropfrom"]/100.0 * sample_size)
@@ -113,7 +109,7 @@ def generate_diffusion_cond(
         pasteto = pastefrom + croplen
         cutpaste = init_audio.new_zeros(init_audio.shape)
         cutpaste[:, :, pastefrom:pasteto] = init_audio[:,:,cropfrom:cropto]
-        print(cropfrom, cropto, pastefrom, pasteto)
+        #print(cropfrom, cropto, pastefrom, pasteto)
         init_audio = cutpaste
         # Build a soft mask (list of floats 0 to 1, the size of the latent) from the given args
         mask = build_mask(sample_size, mask_args)
@@ -157,6 +153,5 @@ def build_mask(sample_size, mask_args):
     # marination finishes the inpainting early in the denoising schedule, and lets audio get changed in the final round
     if marination > 0:        
         mask = mask * (1-marination)
-    print("mask:")
-    print(mask)
+    #print(mask)
     return mask

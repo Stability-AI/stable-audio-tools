@@ -4,6 +4,7 @@ import torch
 import logging, warnings
 import typing as tp
 import gc
+import os
 
 from audio_diffusion_pytorch_fork import NumberEmbedder
 
@@ -94,8 +95,6 @@ class CLAPTextConditioner(Conditioner):
         self.use_text_features = use_text_features
         self.feature_layer_ix = feature_layer_ix
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
         # Suppress logging from transformers
         previous_level = logging.root.manager.disable
         logging.disable(logging.ERROR)
@@ -104,7 +103,7 @@ class CLAPTextConditioner(Conditioner):
             try:
                 import laion_clap
                 
-                self.__dict__["model"] = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device=device).requires_grad_(False).eval()
+                self.__dict__["model"] = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu').requires_grad_(False).eval()
                 self.model.load_ckpt(clap_ckpt_path)
             finally:
                 logging.disable(previous_level)
@@ -126,7 +125,6 @@ class CLAPTextConditioner(Conditioner):
         return prompt_features, attention_mask
 
     def forward(self, texts: tp.List[str], device: tp.Any = "cuda") -> tp.Any:
-
         self.model.to(device)
 
         if self.use_text_features:
@@ -176,14 +174,18 @@ class CLAPAudioConditioner(Conditioner):
         gc.collect()
         torch.cuda.empty_cache()
 
-    def forward(self, audios: torch.Tensor, device: tp.Any = "cuda") -> tp.Any:
+    def forward(self, audios: tp.Union[torch.Tensor, tp.List[torch.Tensor], tp.Tuple[torch.Tensor]] , device: tp.Any = "cuda") -> tp.Any:
 
         self.model.to(device)
+
+        if isinstance(audios, list) or isinstance(audios, tuple):
+            audios = torch.cat(audios, dim=0)
 
         # Convert to mono
         mono_audios = audios.mean(dim=1)
 
-        audio_embedding = self.model.get_audio_embedding_from_data(mono_audios, use_tensor=True)
+        with torch.cuda.amp.autocast(enabled=False):
+            audio_embedding = self.model.get_audio_embedding_from_data(mono_audios.float(), use_tensor=True)
 
         audio_embedding = audio_embedding.unsqueeze(1).to(device)
 
@@ -262,11 +264,6 @@ class T5Conditioner(Conditioner):
         embeddings = self.model(
             input_ids=input_ids, attention_mask=attention_mask
         )["last_hidden_state"]    
-
-        # Check for NaN Embeddings
-        if torch.isnan(embeddings).any():
-            print(f"Texts: {texts}")
-            print(f"Embeddings: {embeddings}")
 
         embeddings = self.proj_out(embeddings)
 

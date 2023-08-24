@@ -76,7 +76,13 @@ def generate(
     if init_audio is not None:
         in_sr, init_audio = init_audio
         # Turn into torch tensor, converting from int16 to float32
-        init_audio = torch.from_numpy(init_audio).float().div(32767).transpose(0, 1)
+        init_audio = torch.from_numpy(init_audio).float().div(32767)
+        
+        if init_audio.dim() == 1:
+            init_audio = init_audio.unsqueeze(0) # [1, n]
+        elif init_audio.dim() == 2:
+            init_audio = init_audio.transpose(0, 1) # [n, 2] -> [2, n]
+
         init_audio = (in_sr, init_audio)
 
     def progress_callback(callback_info):
@@ -149,11 +155,11 @@ def create_sampling_ui(inpainting=False):
             with gr.Row():
                 # Timing controls
                 seconds_start_slider = gr.Slider(minimum=0, maximum=512, step=1, value=0, label="Seconds start")
-                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=60, label="Seconds total")
+                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=95, label="Seconds total")
             
             with gr.Row():
                 # Steps slider
-                steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=200, label="Steps")
+                steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=100, label="Steps")
 
                 # CFG scale 
                 cfg_scale_slider = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=7.0, label="CFG scale")

@@ -1,6 +1,6 @@
 {
     "model_type": "diffusion_uncond",
-    "sample_size": 1048576,
+    "sample_size": 524288,
     "sample_rate": 44100,
     "audio_channels": 2,
     "model": {
@@ -36,11 +36,11 @@
         "type": "DAU1d",
         "config": {
             "io_channels": 64,
-            "n_attn_layers": 6,
-            "depth": 6,
-            "channels": [768, 768, 768, 1024, 1024, 1024],
+            "n_attn_layers": 4,
+            "depth": 7,
+            "channels": [512, 512, 768, 768, 1024, 1024, 1024],
             "learned_resample": true,
-            "strides": [2, 2, 4, 4, 4]
+            "strides": [2, 2, 2, 2, 2, 2]
         }
     },
     "training": {

@@ -216,15 +216,16 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         diffusion_input = reals
 
         p.tick("setup")
-        
+
         with torch.cuda.amp.autocast():
             conditioning = self.diffusion.conditioner(metadata, self.device)
+            
 
         p.tick("conditioning")
 
         if self.diffusion.pretransform is not None:
             self.diffusion.pretransform.to(self.device)
-            with torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+            with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                 p.tick("pretransform")
 
@@ -242,17 +243,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1)
             p.tick("diffusion")
             mse_loss = F.mse_loss(v, targets)
-            
-            # Check if mse_loss is NaN
-            if torch.isnan(mse_loss).any():
-                torch.set_printoptions(threshold=10000)
-                print("NaN")
-                md_string = [f"{md['prompt'], md['seconds_start'], md['seconds_total']}" for md in metadata]
-                print(f"Conditioning: {conditioning}")
-                print('\n\n'.join(md_string))
-                #print(f"t: {t}")
-                #print(f"v: {v}")
-
+         
             loss = mse_loss
 
         log_dict = {
@@ -282,8 +273,10 @@ class DiffusionCondDemoCallback(pl.Callback):
                  sample_size=65536,
                  demo_steps=250,
                  sample_rate=48000,
-                 demo_conditioning: tp.Optional[tp.Dict[str, tp.Any]] = None,
-                 demo_cfg_scales: tp.Optional[tp.List[int]] = [3, 5, 7]
+                 demo_conditioning: tp.Optional[tp.Dict[str, tp.Any]] = {},
+                 demo_cfg_scales: tp.Optional[tp.List[int]] = [3, 5, 7],
+                 demo_cond_from_batch: bool = False,
+                 display_audio_cond: bool = False
     ):
         super().__init__()
 
@@ -295,6 +288,12 @@ class DiffusionCondDemoCallback(pl.Callback):
         self.last_demo_step = -1
         self.demo_conditioning = demo_conditioning
         self.demo_cfg_scales = demo_cfg_scales
+
+        # If true, the callback will use the metadata from the batch to generate the demo conditioning
+        self.demo_cond_from_batch = demo_cond_from_batch
+
+        # If true, the callback will display the audio conditioning
+        self.display_audio_cond = display_audio_cond
 
     @rank_zero_only
     @torch.no_grad()
@@ -310,6 +309,12 @@ class DiffusionCondDemoCallback(pl.Callback):
 
         demo_samples = self.demo_samples
 
+        demo_cond = self.demo_conditioning
+
+        if self.demo_cond_from_batch:
+            # Get metadata from the batch
+            demo_cond = batch[1][:self.num_demos]
+
         if module.diffusion.pretransform is not None:
             demo_samples = demo_samples // module.diffusion.pretransform.downsampling_ratio
 
@@ -317,20 +322,34 @@ class DiffusionCondDemoCallback(pl.Callback):
 
         try:
             print("Getting conditioning")
-
-            conditioning = module.diffusion.conditioner(self.demo_conditioning, module.device)
+            with torch.cuda.amp.autocast():
+                conditioning = module.diffusion.conditioner(demo_cond, module.device)
 
             cond_inputs = module.diffusion.get_conditioning_inputs(conditioning)
+
+            log_dict = {}
+
+            if self.display_audio_cond:
+                audio_inputs = torch.cat([cond["audio"] for cond in demo_cond], dim=0)
+                audio_inputs = rearrange(audio_inputs, 'b d n -> d (b n)')
+
+                filename = f'demo_audio_cond_{trainer.global_step:08}.wav'
+                audio_inputs = audio_inputs.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+                torchaudio.save(filename, audio_inputs, self.sample_rate)
+                log_dict[f'demo_audio_cond'] = wandb.Audio(filename, sample_rate=self.sample_rate, caption="Audio conditioning")
+                log_dict[f"demo_audio_cond_melspec_left"] = wandb.Image(audio_spectrogram_image(audio_inputs))
+                trainer.logger.experiment.log(log_dict)
+
+
 
             for cfg_scale in self.demo_cfg_scales:
 
                 print(f"Generating demo for cfg scale {cfg_scale}")
-                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
-
-                if module.diffusion.pretransform is not None:
-                    fakes = module.diffusion.pretransform.decode(fakes)
-
-                #fakes = generate_diffusion_cond(module.diffusion, self.demo_steps, cfg_scale, self.demo_conditioning, batch_size=self.num_demos, sample_size=demo_samples, device=module.device)
+                
+                with torch.cuda.amp.autocast():
+                    fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+                    if module.diffusion.pretransform is not None:
+                        fakes = module.diffusion.pretransform.decode(fakes)
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')
@@ -391,17 +410,30 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         # Create a mask tensor for each batch element
         masks = []
         for i in range(b):
-            # Randomly choose the length and starting index of the mask
-            mask_length = random.randint(1, max_mask_length)
-            mask_start = random.randint(0, sequence_length-mask_length)
+            mask_type = random.randint(0, 2)
 
-            # Create the mask tensor
-            mask = torch.ones((1, 1, sequence_length))
-            mask[:, :, mask_start:mask_start+mask_length] = 0
-            mask = mask.to(sequence.device)
+            if mask_type == 0: # Random mask
+                # Randomly choose the length and starting index of the mask
+                mask_length = random.randint(1, max_mask_length)
+                mask_start = random.randint(0, sequence_length-mask_length)
 
-            masks.append(mask)
+                # Create the mask tensor
+                mask = torch.ones((1, 1, sequence_length))
+                mask[:, :, mask_start:mask_start+mask_length] = 0
+                mask = mask.to(sequence.device)
 
+                masks.append(mask)
+
+            elif mask_type == 1: # Full mask
+                mask = torch.zeros((1, 1, sequence_length)).to(sequence.device)
+                masks.append(mask)
+
+            elif mask_type == 2: # Causal mask
+                mask = torch.ones((1, 1, sequence_length)).to(sequence.device)
+                mask_length = random.randint(1, max_mask_length)
+                mask[:, :, -mask_length:] = 0
+                masks.append(mask)
+                
         # Concatenate the mask tensors into a single tensor
         mask = torch.cat(masks, dim=0).to(sequence.device)
 
@@ -439,7 +471,8 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                 p.tick("pretransform")
 
-        max_mask_length = diffusion_input.shape[2] // 2
+        # Max mask size is the full sequence length
+        max_mask_length = diffusion_input.shape[2]
 
         # Create a mask of random length for a random slice of the input
         masked_input, mask = self.random_mask(diffusion_input, max_mask_length)
@@ -545,7 +578,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             # Get conditioning
             conditioning = module.diffusion.conditioner(metadata, module.device)
 
-            masked_input, mask = module.random_mask(demo_reals, demo_reals.shape[2] // 2)
+            masked_input, mask = module.random_mask(demo_reals, demo_reals.shape[2])
 
             conditioning['inpaint_mask'] = [mask]
             conditioning['inpaint_masked_input'] = [masked_input]

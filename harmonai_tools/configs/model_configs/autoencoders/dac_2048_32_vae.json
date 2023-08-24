@@ -30,7 +30,7 @@
     "training": {
         "learning_rate": 1e-4,
         "warmup_steps": 0,
-        "use_ema": true,
+        "use_ema": false,
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",

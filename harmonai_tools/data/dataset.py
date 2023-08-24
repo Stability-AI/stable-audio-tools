@@ -10,13 +10,45 @@ import torch
 import torchaudio
 import webdataset as wds
 
-from aeiou.core import is_silence, fast_scandir
+from aeiou.core import is_silence
 from os import path
 from pedalboard.io import AudioFile
 from torchaudio import transforms as T
 from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
+
+# fast_scandir implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
+
+def fast_scandir(
+    dir:str,  # top-level directory at which to begin scanning
+    ext:list,  # list of allowed file extensions,
+    #max_size = 1 * 1000 * 1000 * 1000 # Only files < 1 GB
+    ):
+    "very fast `glob` alternative. from https://stackoverflow.com/a/59803793/4259243"
+    subfolders, files = [], []
+    ext = ['.'+x if x[0]!='.' else x for x in ext]  # add starting period to extensions if needed
+    try: # hope to avoid 'permission denied' by this try
+        for f in os.scandir(dir):
+            try: # 'hope to avoid too many levels of symbolic links' error
+                if f.is_dir():
+                    subfolders.append(f.path)
+                elif f.is_file():
+                    file_ext = os.path.splitext(f.name)[1].lower()
+                    is_hidden = os.path.basename(f.path).startswith(".")
+
+                    if file_ext in ext and not is_hidden:
+                        files.append(f.path)
+            except:
+                pass 
+    except:
+        pass
+
+    for dir in list(subfolders):
+        sf, f = fast_scandir(dir, ext)
+        subfolders.extend(sf)
+        files.extend(f)
+    return subfolders, files
 
 def keyword_scandir(
     dir: str,  # top-level directory at which to begin scanning
@@ -82,7 +114,8 @@ class SampleDataset(torch.utils.data.Dataset):
         keywords=None, 
         relpath=None, 
         random_crop=True,
-        force_channels="stereo"
+        force_channels="stereo",
+        custom_metadata_fn: Optional[Callable[[str], str]] = None
     ):
         super().__init__()
         self.filenames = []
@@ -106,6 +139,8 @@ class SampleDataset(torch.utils.data.Dataset):
         print(f'Found {len(self.filenames)} files')
 
         self.sr = sample_rate
+
+        self.custom_metadata_fn = custom_metadata_fn
 
     def load_file(self, filename):
         ext = filename.split(".")[-1]
@@ -160,11 +195,47 @@ class SampleDataset(torch.utils.data.Dataset):
 
             info["load_time"] = end_time - start_time
 
+            if self.custom_metadata_fn is not None:
+                custom_metadata = self.custom_metadata_fn(info, audio)
+                info.update(custom_metadata)
+
             return (audio, info)
         except Exception as e:
             print(f'Couldn\'t load file {audio_filename}: {e}')
             return self[random.randrange(len(self))]
 
+def group_by_keys(data, keys=wds.tariterators.base_plus_ext, lcase=True, suffixes=None, handler=None):
+    """Return function over iterator that groups key, value pairs into samples.
+    :param keys: function that splits the key into key and extension (base_plus_ext)
+    :param lcase: convert suffixes to lower case (Default value = True)
+    """
+    current_sample = None
+    for filesample in data:
+        assert isinstance(filesample, dict)
+        fname, value = filesample["fname"], filesample["data"]
+        prefix, suffix = keys(fname)
+        if wds.tariterators.trace:
+            print(
+                prefix,
+                suffix,
+                current_sample.keys() if isinstance(current_sample, dict) else None,
+            )
+        if prefix is None:
+            continue
+        if lcase:
+            suffix = suffix.lower()
+        if current_sample is None or prefix != current_sample["__key__"]:
+            if wds.tariterators.valid_sample(current_sample):
+                yield current_sample
+            current_sample = dict(__key__=prefix, __url__=filesample["__url__"])
+        if suffix in current_sample:
+            print(f"{fname}: duplicate file name in tar file {suffix} {current_sample.keys()}")
+        if suffixes is None or suffix in suffixes:
+            current_sample[suffix] = value
+    if wds.tariterators.valid_sample(current_sample):
+        yield current_sample
+
+wds.tariterators.group_by_keys = group_by_keys
 
 # S3 code and WDS preprocessing code based on implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
 
@@ -295,6 +366,20 @@ class S3DatasetConfig:
 
         return self.urls
 
+def collation_fn(samples):
+        batched = list(zip(*samples))
+        result = []
+        for b in batched:
+            if isinstance(b[0], (int, float)):
+                b = np.array(b)
+            elif isinstance(b[0], torch.Tensor):
+                b = torch.stack(b)
+            elif isinstance(b[0], np.ndarray):
+                b = np.array(b)
+            else:
+                b = b
+            result.append(b)
+        return result
 
 class S3WebDataLoader():
     def __init__(
@@ -331,25 +416,10 @@ class S3WebDataLoader():
             wds.map(self.wds_preprocess, handler=log_and_continue),
             wds.select(is_valid_sample),
             wds.to_tuple("audio", "json", handler=log_and_continue),
-            wds.batched(batch_size, partial=False, collation_fn=self.collation_fn),
+            wds.batched(batch_size, partial=False, collation_fn=collation_fn),
         ).with_epoch(epoch_steps//num_workers if num_workers > 0 else epoch_steps)
 
         self.data_loader = wds.WebLoader(self.dataset, num_workers=num_workers, **data_loader_kwargs)
-
-    def collation_fn(self, samples):
-        batched = list(zip(*samples))
-        result = []
-        for b in batched:
-            if isinstance(b[0], (int, float)):
-                b = np.array(b)
-            elif isinstance(b[0], torch.Tensor):
-                b = torch.stack(b)
-            elif isinstance(b[0], np.ndarray):
-                b = np.array(b)
-            else:
-                b = b
-            result.append(b)
-        return result
 
     def wds_preprocess(self, sample):
 
@@ -414,6 +484,10 @@ class S3WebDataLoader():
             del sample[found_key]
 
         sample["audio"] = audio
+
+        # Add audio to the metadata as well for conditioning
+        sample["json"]["audio"] = audio
+        
         return sample
 
 def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
@@ -437,6 +511,16 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
 
         training_dirs = []
 
+        custom_metadata_fn = None
+        custom_metadata_module_path = dataset_config.get("custom_metadata_module", None)
+
+        if custom_metadata_module_path is not None:
+            spec = importlib.util.spec_from_file_location("metadata_module", custom_metadata_module_path)
+            metadata_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(metadata_module)                
+
+            custom_metadata_fn = metadata_module.get_custom_metadata
+
         for audio_dir_config in audio_dir_configs:
             audio_dir_path = audio_dir_config.get("path", None)
             assert audio_dir_path is not None, "Path must be set for local audio directory configuration"
@@ -447,11 +531,13 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
             sample_rate=model_config["sample_rate"],
             sample_size=model_config["sample_size"],
             random_crop=dataset_config.get("random_crop", True),
-            force_channels=force_channels
+            force_channels=force_channels,
+            custom_metadata_fn=custom_metadata_fn,
+            relpath=training_dirs[0] #TODO: Make relpath relative to each training dir
         )
 
         return torch.utils.data.DataLoader(train_set, args.batch_size, shuffle=True,
-                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True)
+                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
 
     elif dataset_type == "s3":
         dataset_configs = []

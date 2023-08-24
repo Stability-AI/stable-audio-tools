@@ -15,6 +15,9 @@ def create_model_from_config(model_config):
     elif model_type == 'diffusion_autoencoder':
         from .autoencoders import create_diffAE_from_config
         return create_diffAE_from_config(model_config["model"])
+    elif model_type == 'musicgen':
+        from audiocraft.models import MusicGen
+        return MusicGen.get_pretrained(model_config["model"]["pretrained"], device="cpu")
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
     
@@ -99,7 +102,6 @@ def create_bottleneck_from_config(bottleneck_config):
         
     elif bottleneck_type == 'dac_rvq_vae':
         from .bottleneck import DACRVQVAEBottleneck
-
         return DACRVQVAEBottleneck(**bottleneck_config["config"])
     elif bottleneck_type == 'memcodes':
         from .bottleneck import MemcodesBottleneck
@@ -107,5 +109,8 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == 'l2_norm':
         from .bottleneck import L2Bottleneck
         return L2Bottleneck()
+    elif bottleneck_type == "wasserstein":
+        from .bottleneck import WassersteinBottleneck
+        return WassersteinBottleneck(**bottleneck_config.get("config", {}))
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')
