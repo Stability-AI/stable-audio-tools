@@ -60,11 +60,8 @@ def sample(model, x, steps, eta, **extra_args):
 # Given a float-valued soft mask (values between 0 and 1), get the binary mask for this particular step
 def get_bmask(i, steps, mask):
     strength = (i+1)/(steps)
-    #print(i, strength)
     # convert to binary mask
     bmask = torch.where(mask<=strength,0,1)
-    #print("bmask", "".join(bmask))
-    #print("".join(["1" if b else "0" for b in list(bmask)]))
     return bmask
 
 # Uses k-diffusion from https://github.com/crowsonkb/k-diffusion
@@ -81,7 +78,6 @@ def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, 
     sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)
     # Scale the initial noise by sigma 
     noise = noise * sigmas[0]
-    #print(f"sigmas[0]: {sigmas[0]}")
 
     if mask is None and init_audio is not None:
         # VARIATION (no inpainting)
@@ -118,9 +114,6 @@ def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, 
         # set the initial latent to noise
         x = noise
         callback = None
-
-    print("x.shape", x.shape)
-    print("sigmas", sigmas)
 
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":
