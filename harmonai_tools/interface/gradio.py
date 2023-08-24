@@ -47,16 +47,22 @@ def generate(
         use_init=False,
         init_audio=None,
         init_noise_level=1.0,
+        mask_cropfrom=None,
+        mask_pastefrom=None,
+        mask_pasteto=None,
+        mask_maskstart=None,
+        mask_maskend=None,
+        mask_softnessL=None,
+        mask_softnessR=None,
+        mask_marination=None,
         batch_size=1,
-        preview_every=None
+        preview_every=None,
         ):
 
     global preview_images
-
     preview_images = []
 
     # Return fake stereo audio
-
     conditioning = [{"prompt": prompt, "seconds_start": seconds_start, "seconds_total": seconds_total}] * batch_size
 
     #Get the device from the model
@@ -69,10 +75,8 @@ def generate(
     
     if init_audio is not None:
         in_sr, init_audio = init_audio
-
         # Turn into torch tensor, converting from int16 to float32
         init_audio = torch.from_numpy(init_audio).float().div(32767).transpose(0, 1)
-
         init_audio = (in_sr, init_audio)
 
     def progress_callback(callback_info):
@@ -82,18 +86,30 @@ def generate(
         sigma = callback_info["sigma"]
 
         if (current_step - 1) % preview_every == 0:
-
             if model.pretransform is not None:
                 denoised = model.pretransform.decode(denoised)
-
             denoised = rearrange(denoised, "b d n -> d (b n)")
-
             denoised = denoised.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-
             audio_spectrogram = audio_spectrogram_image(denoised, sample_rate=sample_rate)
-
             preview_images.append((audio_spectrogram, f"Step {current_step} sigma={sigma:.3f})"))
 
+    # If inpainting, send mask args
+    # This will definitely change in the future
+    if mask_cropfrom is not None: 
+        mask_args = {
+            "cropfrom": mask_cropfrom,
+            "pastefrom": mask_pastefrom,
+            "pasteto": mask_pasteto,
+            "maskstart": mask_maskstart,
+            "maskend": mask_maskend,
+            "softnessL": mask_softnessL,
+            "softnessR": mask_softnessR,
+            "marination": mask_marination,
+        }
+    else:
+        mask_args = None 
+
+    # Do the audio generation
     audio = generate_diffusion_cond(
         model, 
         conditioning=conditioning,
@@ -109,20 +125,21 @@ def generate(
         sigma_max=sigma_max,
         init_audio=init_audio,
         init_noise_level=init_noise_level,
+        mask_args = mask_args,
         callback = progress_callback if preview_every is not None else None
     )
 
+    # Convert to WAV file
     audio = rearrange(audio, "b d n -> d (b n)")
-
     audio = audio.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-
     torchaudio.save("output.wav", audio, sample_rate)
 
+    # Let's look at a nice spectrogram too
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
     return ("output.wav", [audio_spectrogram, *preview_images])
 
-def create_sampling_ui():
+def create_sampling_ui(inpainting=False):
     with gr.Row():
         prompt = gr.Textbox(show_label=False, placeholder="Prompt", scale=6)
         generate_button = gr.Button("Generate", variant='primary', scale=1)
@@ -152,10 +169,64 @@ def create_sampling_ui():
                     sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
                     sigma_max_slider = gr.Slider(minimum=0.0, maximum=200.0, step=0.1, value=80, label="Sigma max")
 
-            with gr.Accordion("Init audio", open=False):
-                init_audio_checkbox = gr.Checkbox(label="Use init audio")
-                init_audio_input = gr.Audio(label="Init audio")
-                init_noise_level_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.01, value=0.1, label="Init noise level")
+            if inpainting: 
+                # Inpainting Tab
+                with gr.Accordion("Inpainting", open=False):
+                    init_audio_checkbox = gr.Checkbox(label="Do inpainting")
+                    init_audio_input = gr.Audio(label="Init audio")
+                    init_noise_level_slider = gr.Slider(minimum=0.1, maximum=100.0, step=0.1, value=80, label="Init audio noise level")
+
+                    mask_cropfrom_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Crop From %")
+                    mask_pastefrom_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Paste From %")
+                    mask_pasteto_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=100, label="Paste To %")
+
+                    mask_maskstart_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=50, label="Mask Start %")
+                    mask_maskend_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=100, label="Mask End %")
+                    mask_softnessL_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=10, label="Softmask Left Crossfade Length %")
+                    mask_softnessR_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Softmask Right Crossfade Length %")
+                    mask_marination_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Marination level")
+
+                    inputs = [prompt, 
+                        seconds_start_slider, 
+                        seconds_total_slider, 
+                        cfg_scale_slider, 
+                        steps_slider, 
+                        seed_textbox, 
+                        sampler_type_dropdown, 
+                        sigma_min_slider, 
+                        sigma_max_slider,
+                        init_audio_checkbox,
+                        init_audio_input,
+                        init_noise_level_slider,
+                        mask_cropfrom_slider,
+                        mask_pastefrom_slider,
+                        mask_pasteto_slider,
+                        mask_maskstart_slider,
+                        mask_maskend_slider,
+                        mask_softnessL_slider,
+                        mask_softnessR_slider,
+                        mask_marination_slider
+                    ]
+            else:
+                # Default generation tab
+                with gr.Accordion("Init audio", open=False):
+                    init_audio_checkbox = gr.Checkbox(label="Use init audio")
+                    init_audio_input = gr.Audio(label="Init audio")
+                    init_noise_level_slider = gr.Slider(minimum=0.1, maximum=100.0, step=0.01, value=0.1, label="Init noise level")
+
+                    inputs = [prompt, 
+                        seconds_start_slider, 
+                        seconds_total_slider, 
+                        cfg_scale_slider, 
+                        steps_slider, 
+                        seed_textbox, 
+                        sampler_type_dropdown, 
+                        sigma_min_slider, 
+                        sigma_max_slider,
+                        init_audio_checkbox,
+                        init_audio_input,
+                        init_noise_level_slider
+                    ]
 
         with gr.Column():
             audio_output = gr.Audio(label="Output audio", interactive=False)
@@ -164,20 +235,7 @@ def create_sampling_ui():
             send_to_init_button.click(fn=lambda audio: audio, inputs=[audio_output], outputs=[init_audio_input])
     
     generate_button.click(fn=generate, 
-        inputs=[
-            prompt, 
-            seconds_start_slider, 
-            seconds_total_slider, 
-            cfg_scale_slider, 
-            steps_slider, 
-            seed_textbox, 
-            sampler_type_dropdown, 
-            sigma_min_slider, 
-            sigma_max_slider,
-            init_audio_checkbox,
-            init_audio_input,
-            init_noise_level_slider,
-        ], 
+        inputs=inputs,
         outputs=[
             audio_output, 
             audio_spectrogram_output
@@ -188,7 +246,9 @@ def create_sampling_ui():
 def create_txt2audio_ui():
     with gr.Blocks() as ui:
         with gr.Tab("Generation"):
-            create_sampling_ui()
+            create_sampling_ui() 
+        with gr.Tab("Inpainting"):
+            create_sampling_ui(inpainting=True)
     
     return ui
 
