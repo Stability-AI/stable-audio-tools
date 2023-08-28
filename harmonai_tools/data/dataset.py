@@ -168,7 +168,7 @@ class SampleDataset(torch.utils.data.Dataset):
             start_time = time.time()
             audio = self.load_file(audio_filename)
 
-            audio, t_start, t_end, _, _ = self.pad_crop(audio)
+            audio, t_start, t_end, seconds_start, seconds_total = self.pad_crop(audio)
 
             # Run augmentations on this sample (including random crop)
             if self.augs is not None:
@@ -180,16 +180,16 @@ class SampleDataset(torch.utils.data.Dataset):
             if self.encoding is not None:
                 audio = self.encoding(audio)
 
-            if self.relpath is not None:
-                audio_path = path.relpath(audio_filename, self.relpath)
-            else:
-                audio_path = audio_filename
-
             info = {}
 
-            info["path"] = audio_path
+            info["path"] = audio_filename
+
+            if self.relpath is not None:
+                info["relpath"] = path.relpath(audio_filename, self.relpath)
 
             info["timestamps"] = (t_start, t_end)
+            info["seconds_start"] = seconds_start
+            info["seconds_total"] = seconds_total
 
             end_time = time.time()
 

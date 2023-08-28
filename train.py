@@ -75,7 +75,7 @@ def main():
         accelerator="gpu",
         num_nodes = args.num_nodes,
         strategy=strategy,
-        precision=16,
+        precision=args.precision,
         accumulate_grad_batches=args.accum_batches, 
         callbacks=[ckpt_callback, demo_callback, exc_callback],
         logger=wandb_logger,

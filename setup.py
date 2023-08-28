@@ -21,6 +21,7 @@ setup(
         'importlib-resources==5.12.0',
         'k-diffusion==0.0.15',
         'laion-clap==1.1.4',
+        'local-attention==1.8.6',
         'nwt-pytorch==0.0.4',
         'pandas==2.0.2',
         'pedalboard==0.7.4',

@@ -157,28 +157,29 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         decoded = self.autoencoder.decode(latents)
 
-        # Distillation
+        # Distillation with spectral losses
         if self.teacher_model is not None:
             with torch.no_grad():
                 teacher_decoded = self.teacher_model.decode(teacher_latents)
                 own_latents_teacher_decoded = self.teacher_model.decode(latents) #Distilled model's latents decoded by teacher
+                teacher_latents_own_decoded = self.autoencoder.decode(teacher_latents) #Teacher's latents decoded by distilled model
 
 
             mrstft_loss = self.sdstft(reals, decoded) # Reconstruction loss
             mrstft_loss += self.sdstft(reals, own_latents_teacher_decoded) # Distilled model's encoder is compatible with teacher's decoder
             mrstft_loss += self.sdstft(decoded, teacher_decoded) # Distilled model's decoder is compatible with teacher's decoder
-            mrstft_loss /= 3
-
-            l1_time_loss = F.l1_loss(decoded, teacher_decoded)
+            mrstft_loss += self.sdstft(reals, teacher_latents_own_decoded) # Teacher's encoder is compatible with distilled model's decoder
+            mrstft_loss /= 4
 
             latent_loss = F.l1_loss(latents, teacher_latents)
 
         else:
             mrstft_loss = self.sdstft(reals, decoded)
 
-            l1_time_loss = F.l1_loss(reals, decoded)
-
             latent_loss = torch.tensor(0.).to(reals)
+
+        # Time-domain reconstruction loss
+        l1_time_loss = F.l1_loss(reals, decoded)
 
         if self.warmed_up:
             loss_dis, loss_adv, feature_matching_distance = self.discriminator.loss(reals, decoded)

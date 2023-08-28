@@ -42,8 +42,9 @@ def generate(
         steps=250,
         seed=-1,
         sampler_type="dpmpp-2m-sde",
-        sigma_min=0.5,
+        sigma_min=0.03,
         sigma_max=50,
+        cfg_rescale=0.7,
         use_init=False,
         init_audio=None,
         init_noise_level=1.0,
@@ -114,7 +115,8 @@ def generate(
         sigma_max=sigma_max,
         init_audio=init_audio,
         init_noise_level=init_noise_level,
-        callback = progress_callback if preview_every is not None else None
+        callback = progress_callback if preview_every is not None else None,
+        scale_phi = cfg_rescale
     )
 
     audio = rearrange(audio, "b d n -> d (b n)")
@@ -127,17 +129,29 @@ def generate(
 
     return ("output.wav", [audio_spectrogram, *preview_images])
 
-def create_sampling_ui():
+def create_sampling_ui(model_config):
     with gr.Row():
         prompt = gr.Textbox(show_label=False, placeholder="Prompt", scale=6)
         generate_button = gr.Button("Generate", variant='primary', scale=1)
     
+    model_conditioning_config = model_config["model"].get("conditioning", None)
+
+    has_seconds_start = False
+    has_seconds_total = False
+
+    if model_conditioning_config is not None:
+        for conditioning_config in model_conditioning_config["configs"]:
+            if conditioning_config["id"] == "seconds_start":
+                has_seconds_start = True
+            if conditioning_config["id"] == "seconds_total":
+                has_seconds_total = True
+
     with gr.Row(equal_height=False):
         with gr.Column():
-            with gr.Row():
+            with gr.Row(visible = has_seconds_start or has_seconds_total):
                 # Timing controls
-                seconds_start_slider = gr.Slider(minimum=0, maximum=512, step=1, value=0, label="Seconds start")
-                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=95, label="Seconds total")
+                seconds_start_slider = gr.Slider(minimum=0, maximum=512, step=1, value=0, label="Seconds start", visible=has_seconds_start)
+                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=95, label="Seconds total", visible=has_seconds_total)
             
             with gr.Row():
                 # Steps slider
@@ -156,6 +170,7 @@ def create_sampling_ui():
                     sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-2m-sde")
                     sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
                     sigma_max_slider = gr.Slider(minimum=0.0, maximum=200.0, step=0.1, value=80, label="Sigma max")
+                    cfg_rescale_slider = gr.Slider(minimum=0.0, maximum=1, step=0.01, value=0.7, label="CFG rescale amount")
 
             with gr.Accordion("Init audio", open=False):
                 init_audio_checkbox = gr.Checkbox(label="Use init audio")
@@ -179,6 +194,7 @@ def create_sampling_ui():
             sampler_type_dropdown, 
             sigma_min_slider, 
             sigma_max_slider,
+            cfg_rescale_slider,
             init_audio_checkbox,
             init_audio_input,
             init_noise_level_slider,
@@ -190,10 +206,10 @@ def create_sampling_ui():
         api_name="generate")
 
 
-def create_txt2audio_ui():
+def create_txt2audio_ui(model_config):
     with gr.Blocks() as ui:
         with gr.Tab("Generation"):
-            create_sampling_ui()
+            create_sampling_ui(model_config)
     
     return ui
 
@@ -248,7 +264,7 @@ def create_ui(model_config, ckpt_path):
     model_type = model_config["model_type"]
 
     if model_type == "diffusion_cond":
-        ui = create_txt2audio_ui()
+        ui = create_txt2audio_ui(model_config)
     elif model_type == "diffusion_uncond":
         raise NotImplementedError("Unconditional diffusion is not supported yet")
     elif model_type == "autoencoder":

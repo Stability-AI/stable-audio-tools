@@ -12,12 +12,14 @@ from encodec.modules import SEANetEncoder, SEANetDecoder
 from dac.model.dac import Encoder as DACEncoder, Decoder as DACDecoder
 from dac.nn.layers import WNConv1d, WNConvTranspose1d
 from typing import Literal, Dict, Any, Callable, Optional
+from einops import rearrange
 
 from ..inference.sampling import sample
 from .bottleneck import Bottleneck
 from .diffusion import create_diffusion_uncond_from_config
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform
+from .pca import PCA
 
 # Adapted from https://github.com/NVIDIA/BigVGAN/blob/main/activations.py under MIT license
 class SnakeBeta(nn.Module):
@@ -102,7 +104,7 @@ class EncoderBlock(nn.Module):
                          out_channels=in_channels, dilation=9, use_snake=use_snake),
             act,
             WNConv1d(in_channels=in_channels, out_channels=out_channels,
-                      kernel_size=2*stride, stride=stride, padding=math.ceil(stride//2)),
+                      kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2)),
         )
 
     def forward(self, x):
@@ -261,7 +263,8 @@ class AudioAutoencoder(nn.Module):
         decode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, decoder: decoder(x),
         pretransform: Pretransform = None,
         in_channels = None,
-        out_channels = None
+        out_channels = None,
+        latent_pca = False
     ):
         super().__init__()
 
@@ -287,6 +290,11 @@ class AudioAutoencoder(nn.Module):
         self.decode_fn = decode_fn
 
         self.pretransform = pretransform
+
+        self.latent_pca = None
+
+        if latent_pca:
+            self.latent_pca = PCA(n_components=latent_dim)
  
     def encode(self, audio, return_info=False, skip_pretransform=False):
 
@@ -305,13 +313,23 @@ class AudioAutoencoder(nn.Module):
             latents, bottleneck_info = self.bottleneck.encode(latents, return_info=True)
 
             info.update(bottleneck_info)
-            
+        
+        if self.latent_pca is not None and self.latent_pca.has_fit_.item():
+            latents = rearrange(latents, 'b c t -> b t c')
+            latents = self.latent_pca.transform(latents)
+            latents = rearrange(latents, 'b t c -> b c t')
+
         if return_info:
             return latents, info
 
         return latents
 
     def decode(self, latents, **kwargs):
+
+        if self.latent_pca is not None and self.latent_pca.has_fit_.item():
+            latents = rearrange(latents, 'b c t -> b t c')
+            latents = self.latent_pca.inverse_transform(latents)
+            latents = rearrange(latents, 'b t c -> b c t')
 
         if self.bottleneck is not None:
             latents = self.bottleneck.decode(latents)
@@ -385,6 +403,14 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
         dac_config = encoder_config["config"]
 
         encoder = DACEncoderWrapper(**dac_config)
+    elif encoder_type == "local_attn":
+        from .local_attention import TransformerEncoder1D
+
+        local_attn_config = encoder_config["config"]
+
+        encoder = TransformerEncoder1D(
+            **local_attn_config
+        )
     else:
         raise ValueError(f"Unknown encoder type {encoder_type}")
     
@@ -411,6 +437,14 @@ def create_decoder_from_config(decoder_config: Dict[str, Any]):
         dac_config = decoder_config["config"]
 
         decoder = DACDecoderWrapper(**dac_config)
+    elif decoder_type == "local_attn":
+        from .local_attention import TransformerDecoder1D
+
+        local_attn_config = decoder_config["config"]
+
+        decoder = TransformerDecoder1D(
+            **local_attn_config
+        )
     else:
         raise ValueError(f"Unknown decoder type {decoder_type}")
     
@@ -446,6 +480,8 @@ def create_autoencoder_from_config(model_config: Dict[str, Any]):
     if bottleneck is not None:
         bottleneck = create_bottleneck_from_config(bottleneck)
     
+    latent_pca = model_config.get("latent_pca", False)
+
     return AudioAutoencoder(
         encoder,
         decoder,
@@ -455,7 +491,8 @@ def create_autoencoder_from_config(model_config: Dict[str, Any]):
         bottleneck=bottleneck,
         pretransform=pretransform,
         in_channels=in_channels,
-        out_channels=out_channels
+        out_channels=out_channels,
+        latent_pca=latent_pca
     )
 
 def create_diffAE_from_config(model_config: Dict[str, Any]):

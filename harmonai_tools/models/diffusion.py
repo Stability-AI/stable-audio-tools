@@ -330,8 +330,12 @@ class DiTWrapper(ConditionedDiffusionModel):
                 global_cond=None, 
                 cfg_scale=6.0,
                 cfg_dropout_prob: float = 0.1,
+                batch_cfg: bool = True,
                 scale_cfg: bool = False,
                 **kwargs):
+
+        assert batch_cfg, "batch_cfg must be True for DiTWrapper"
+
         return self.model(
             x, 
             t, 

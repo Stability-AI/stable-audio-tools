@@ -62,7 +62,7 @@
             "time": {
                 "type": "l1",
                 "weights": {
-                    "l1": 0.1
+                    "l1": 0.0
                 }
             }
         },
@@ -101,6 +101,6 @@
                 "io_channels": 2
             }
         },
-        "teacher_model_ckpt": "/fsx/zqevans/checkpoints/private/asx-dac-vae/asx_dac_vae_1024_64_ft_decoder_640k_unwrap.ckpt"
+        "teacher_model_ckpt": ""
     }
 }
