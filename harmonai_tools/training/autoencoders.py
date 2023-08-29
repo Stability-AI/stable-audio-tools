@@ -341,35 +341,30 @@ class AutoencoderDemoCallback(pl.Callback):
 
                     fakes = module.autoencoder.decode(latents)
 
+            #Interleave reals and fakes
+            reals_fakes = rearrange([demo_reals, fakes], 'i b d n -> (b i) d n')
+
             # Put the demos together
-            fakes = rearrange(fakes, 'b d n -> d (b n)')
-            demo_reals = rearrange(demo_reals, 'b d n -> d (b n)')
+            reals_fakes = rearrange(reals_fakes, 'b d n -> d (b n)')
 
             log_dict = {}
             
             filename = f'recon_{trainer.global_step:08}.wav'
-            fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            torchaudio.save(filename, fakes, self.sample_rate)
-
-            reals_filename = f'reals_{trainer.global_step:08}.wav'
-            demo_reals = demo_reals.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            torchaudio.save(reals_filename, demo_reals, self.sample_rate)
+            reals_fakes = reals_fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+            torchaudio.save(filename, reals_fakes, self.sample_rate)
 
             log_dict[f'recon'] = wandb.Audio(filename,
                                                 sample_rate=self.sample_rate,
                                                 caption=f'Reconstructed')
-            log_dict[f'real'] = wandb.Audio(reals_filename,
-                                                sample_rate=self.sample_rate,
-                                                caption=f'Real')
-
+            
             log_dict[f'embeddings_3dpca'] = pca_point_cloud(latents)
             log_dict[f'embeddings_spec'] = wandb.Image(tokens_spectrogram_image(latents))
 
-            log_dict[f'real_melspec_left'] = wandb.Image(audio_spectrogram_image(demo_reals))
-            log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
+            log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
 
             trainer.logger.experiment.log(log_dict)
         except Exception as e:
             print(f'{type(e).__name__}: {e}')
+            raise e
         finally:
             module.train()

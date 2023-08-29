@@ -67,16 +67,12 @@ def main():
 
     latents = torch.cat(latents, dim=0)
 
-    batch_size, latent_dim, sequence_length = latents.shape
+    latent_dim = latents.shape[1]
 
     latents = latents.reshape(-1, latent_dim)
 
-    print(latents.shape)
-
     pca = PCA(n_components=latent_dim)
     pca.fit(latents)
-    # pca_data = pca.transform(latents)
-    # components = pca.components_
     explained_variance_ratios = pca.explained_variance_ratio_.numpy()
     cumulative_variance_ratio = np.cumsum(explained_variance_ratios)
 
