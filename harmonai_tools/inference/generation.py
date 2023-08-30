@@ -24,6 +24,7 @@ def generate_diffusion_cond(
         device: str = "cuda",
         init_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
         init_noise_level: float = 1.0,
+        return_latents = False,
         **sampler_kwargs
         ) -> torch.Tensor: 
     """Generate audio from a prompt using a diffusion model."""
@@ -87,7 +88,7 @@ def generate_diffusion_cond(
         sampled = sample_k(model.model, noise, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
 
 
-    if model.pretransform is not None:
+    if model.pretransform is not None and not return_latents:
         sampled = model.pretransform.decode(sampled)
 
     return sampled

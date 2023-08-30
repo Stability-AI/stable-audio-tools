@@ -44,6 +44,7 @@ def create_training_wrapper_from_config(model_config, model):
             model, 
             lr=training_config["learning_rate"],
             warmup_steps=training_config["warmup_steps"], 
+            encoder_freeze_on_warmup=training_config.get("encoder_freeze_on_warmup", False),
             sample_rate=model_config["sample_rate"],
             loss_config=training_config["loss_configs"],
             use_ema=use_ema,

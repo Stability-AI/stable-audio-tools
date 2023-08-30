@@ -74,9 +74,6 @@ Additional optional flags for `train.py` include:
 - `--checkpoint-every`
   - The number of steps between saved checkpoints.
   - *Default*: 10000
-- `--demo-every`
-  - The number of steps between model demos.
-  - *Default*: 2000
 - `--batch-size`
   - Number of samples per-GPU during training. Should be set as large as your GPU VRAM will allow.
   - *Default*: 8

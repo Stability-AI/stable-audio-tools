@@ -20,7 +20,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             self, 
             autoencoder: AudioAutoencoder,
             lr: float = 1e-4,
-            warmup_steps: int = 150000,
+            warmup_steps: int = 0,
+            encoder_freeze_on_warmup: bool = False,
             sample_rate=48000,
             loss_config: dict = None,
             use_ema: bool = True,
@@ -37,6 +38,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         self.warmed_up = False
         self.warmup_steps = warmup_steps
+        self.encoder_freeze_on_warmup = encoder_freeze_on_warmup
         self.lr = lr
 
         self.force_input_mono = force_input_mono
@@ -143,7 +145,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         if self.force_input_mono and encoder_input.shape[1] > 1:
             encoder_input = encoder_input.mean(dim=1, keepdim=True)
 
-        latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
+        if self.warmed_up and self.encoder_freeze_on_warmup:
+            with torch.no_grad():
+                latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
+        else:
+            latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
 
         # Encode with teacher model for distillation
         if self.teacher_model is not None:
