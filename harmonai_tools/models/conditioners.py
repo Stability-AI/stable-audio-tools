@@ -238,13 +238,16 @@ class T5Conditioner(Conditioner):
             finally:
                 logging.disable(previous_level)
             
-        #if self.enable_grad:
-        self.model = model
-        # else: 
-        #     self.__dict__["model"] = model
+        if self.enable_grad:
+            self.model = model
+        else: 
+            self.__dict__["model"] = model
 
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+        
+        self.model.to(device)
+        self.proj_out.to(device)
 
         encoded = self.tokenizer(
             texts,

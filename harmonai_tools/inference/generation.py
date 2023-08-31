@@ -79,6 +79,8 @@ def generate_diffusion_cond(
         if model.pretransform is not None:
             init_audio = model.pretransform.encode(init_audio)
 
+        init_audio = init_audio.repeat(batch_size, 1, 1)
+
         sampled = variation_k(model.model, init_audio, init_noise_level, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
     else:
         if model.pretransform is not None:

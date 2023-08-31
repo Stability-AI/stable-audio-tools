@@ -30,8 +30,10 @@ def load_model(model_config, model_ckpt_path, device="cuda"):
     model.to(device)
 
     print(f"Loading model checkpoint from {model_ckpt_path}")
+    
     # Load checkpoint
     model.load_state_dict(torch.load(model_ckpt_path)["state_dict"], strict=False)
+
     print(f"Done loading model")
 
 def generate(

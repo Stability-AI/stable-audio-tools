@@ -13,7 +13,7 @@ from .conditioners import MultiConditioner, create_multi_conditioner_from_condit
 from .pretransforms import Pretransform
 from ..inference.generation import generate_diffusion_cond
 
-from audio_diffusion_pytorch_fork.modules import UNetCFG1d
+from audio_diffusion_pytorch_fork.modules import UNetCFG1d, UNet1d
 
 from time import time
 
@@ -35,15 +35,25 @@ class Profiler:
         return rep
 
 class DiffusionModel(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x, t, **kwargs):
+        raise NotImplementedError()
+
+class DiffusionModelWrapper(nn.Module):
     def __init__(
                 self,
-                model,
-                io_channels = 2,
+                model: DiffusionModel,
+                io_channels,
+                sample_size,
                 pretransform: Pretransform = None
     ):
         super().__init__()
-        self.model = model
         self.io_channels = io_channels
+        self.sample_size = sample_size
+
+        self.model = model
 
         if pretransform is not None:
             self.pretransform = pretransform
@@ -135,8 +145,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         }
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
-        outputs = self.model(x, t, **self.get_conditioning_inputs(cond), **kwargs)
-        return outputs
+        return self.model(x, t, **self.get_conditioning_inputs(cond), **kwargs)
     
     def generate(self, *args, **kwargs):
         return generate_diffusion_cond(self, *args, **kwargs)
@@ -192,6 +201,30 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
 
         #print(f"Profiler: {p}")
         return outputs
+
+class UNet1DUncondWrapper(DiffusionModel):
+    def __init__(
+        self, 
+        in_channels,
+        *args,        
+        **kwargs
+    ):
+        super().__init__()
+
+        self.model = UNet1d(in_channels=in_channels, *args, **kwargs)
+
+        self.io_channels = in_channels
+
+        with torch.no_grad():
+            for param in self.model.parameters():
+                param *= 0.5
+
+    def forward(self, 
+                x, 
+                t, 
+                **kwargs):
+        
+        return self.model(x, t, **kwargs) 
 
 class DiffusionAttnUnet1D(nn.Module):
     def __init__(
@@ -463,23 +496,38 @@ class DiffusionTransformer(nn.Module):
         return output
 
 def create_diffusion_uncond_from_config(model_config: tp.Dict[str, tp.Any]):
-    model_type = model_config.get('type', None)
+    diffusion_uncond_config = model_config["model"]
+    model_type = diffusion_uncond_config.get('type', None)
 
-    diffusion_config = model_config.get('config', {})
+    diffusion_config = diffusion_uncond_config.get('config', {})
 
     assert model_type is not None, "Must specify model type in config"
 
-    pretransform = model_config.get("pretransform", None)
+    pretransform = diffusion_uncond_config.get("pretransform", None)
+
+    sample_size = model_config.get("sample_size", None)
+
+    assert sample_size is not None, "Must specify sample size in config"
 
     if pretransform is not None:
         pretransform = create_pretransform_from_config(pretransform)
 
     if model_type == 'DAU1d':
+
         model = DiffusionAttnUnet1D(
             **diffusion_config
         )
 
-        return DiffusionModel(model, io_channels=model.io_channels, pretransform=pretransform)
+        return DiffusionModelWrapper(model, io_channels=model.io_channels, sample_size=sample_size, pretransform=pretransform)
+    
+    elif model_type == "adp_uncond_1d":
+
+        model = UNet1DUncondWrapper(
+            **diffusion_config
+        )
+
+        return DiffusionModelWrapper(model, io_channels=model.io_channels, sample_size=sample_size, pretransform=pretransform)
+    
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
     

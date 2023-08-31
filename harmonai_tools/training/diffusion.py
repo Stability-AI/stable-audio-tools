@@ -15,7 +15,7 @@ from pytorch_lightning.utilities.distributed import rank_zero_only
 
 from ..inference.sampling import get_alphas_sigmas, sample
 from ..inference.generation import generate_diffusion_cond
-from ..models.diffusion import DiffusionModel, ConditionedDiffusionModelWrapper
+from ..models.diffusion import DiffusionModelWrapper, ConditionedDiffusionModelWrapper
 from ..models.autoencoders import DiffusionAutoencoder
 
 from time import time
@@ -43,7 +43,7 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
     '''
     def __init__(
             self,
-            model: DiffusionModel,
+            model: DiffusionModelWrapper,
             lr: float = 1e-4,
     ):
         super().__init__()
@@ -116,7 +116,6 @@ class DiffusionUncondDemoCallback(pl.Callback):
     def __init__(self, 
                  demo_every=2000,
                  num_demos=8,
-                 sample_size=65536,
                  demo_steps=250,
                  sample_rate=48000
     ):
@@ -124,7 +123,6 @@ class DiffusionUncondDemoCallback(pl.Callback):
 
         self.demo_every = demo_every
         self.num_demos = num_demos
-        self.demo_samples = sample_size
         self.demo_steps = demo_steps
         self.sample_rate = sample_rate
         self.last_demo_step = -1
@@ -138,7 +136,7 @@ class DiffusionUncondDemoCallback(pl.Callback):
         
         self.last_demo_step = trainer.global_step
 
-        demo_samples = self.demo_samples
+        demo_samples = module.diffusion.sample_size
 
         if module.diffusion.pretransform is not None:
             demo_samples = demo_samples // module.diffusion.pretransform.downsampling_ratio
