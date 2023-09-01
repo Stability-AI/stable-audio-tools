@@ -15,7 +15,8 @@ class Conditioner(nn.Module):
             self,
             dim: int,
             output_dim: int,
-            cond_len: int
+            cond_len: int,
+            project_out: bool = False,
             ):
         
         super().__init__()
@@ -23,7 +24,7 @@ class Conditioner(nn.Module):
         self.dim = dim
         self.output_dim = output_dim
         self.cond_len = cond_len
-        self.proj_out = nn.Linear(dim, output_dim) if dim != output_dim else nn.Identity()
+        self.proj_out = nn.Linear(dim, output_dim) if (dim != output_dim or project_out) else nn.Identity()
 
     def forward(self, x: tp.Any) -> tp.Any:
         raise NotImplementedError()
@@ -89,8 +90,9 @@ class CLAPTextConditioner(Conditioner):
                  use_text_features = False,
                  feature_layer_ix: int = -1,
                  audio_model_type="HTSAT-base", 
-                 enable_fusion=True):
-        super().__init__(768 if use_text_features else 512, output_dim, 1)
+                 enable_fusion=True,
+                 project_out: bool = False):
+        super().__init__(768 if use_text_features else 512, output_dim, 1, project_out=project_out)
 
         self.use_text_features = use_text_features
         self.feature_layer_ix = feature_layer_ix
@@ -151,8 +153,9 @@ class CLAPAudioConditioner(Conditioner):
                  output_dim: int, 
                  clap_ckpt_path,
                  audio_model_type="HTSAT-base", 
-                 enable_fusion=True):
-        super().__init__(512, output_dim, 1)
+                 enable_fusion=True,
+                 project_out: bool = False):
+        super().__init__(512, output_dim, 1, project_out=project_out)
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -216,9 +219,10 @@ class T5Conditioner(Conditioner):
             t5_model_name: str = "t5-base",
             max_length: str = 128,
             enable_grad: bool = False,
+            project_out: bool = False,
     ):
         assert t5_model_name in self.T5_MODELS, f"Unknown T5 model name: {t5_model_name}"
-        super().__init__(self.T5_MODEL_DIMS[t5_model_name], output_dim, max_length)
+        super().__init__(self.T5_MODEL_DIMS[t5_model_name], output_dim, max_length, project_out=project_out)
         
         from transformers import T5EncoderModel, AutoTokenizer
 
@@ -238,10 +242,10 @@ class T5Conditioner(Conditioner):
             finally:
                 logging.disable(previous_level)
             
-        if self.enable_grad:
-            self.model = model
-        else: 
-            self.__dict__["model"] = model
+        #if self.enable_grad:
+        self.model = model
+        # else: 
+        #     self.__dict__["model"] = model
 
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
@@ -260,13 +264,12 @@ class T5Conditioner(Conditioner):
         input_ids = encoded["input_ids"].to(device)
         attention_mask = encoded["attention_mask"].to(device).to(torch.bool)
 
-        #with torch.set_grad_enabled(self.enable_grad):
-
         self.model.eval()
             
-        embeddings = self.model(
-            input_ids=input_ids, attention_mask=attention_mask
-        )["last_hidden_state"]    
+        with torch.cuda.amp.autocast(enabled=False) and torch.set_grad_enabled(self.enable_grad):
+            embeddings = self.model(
+                input_ids=input_ids, attention_mask=attention_mask
+            )["last_hidden_state"]    
 
         embeddings = self.proj_out(embeddings)
 

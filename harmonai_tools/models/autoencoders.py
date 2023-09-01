@@ -1,20 +1,17 @@
 import torch
 import math
-import numpy as np
 
-from torch import nn
-from torch.nn import functional as F
-from functools import partial
 from torch import nn, sin, pow
+from torch.nn import functional as F
 from torch.nn import Parameter
+from torchaudio import transforms as T
 from alias_free_torch import Activation1d
-from encodec.modules import SEANetEncoder, SEANetDecoder
-from dac.model.dac import Encoder as DACEncoder, Decoder as DACDecoder
 from dac.nn.layers import WNConv1d, WNConvTranspose1d
-from typing import Literal, Dict, Any, Callable, Optional
+from typing import Literal, Dict, Any, Callable
 from einops import rearrange
 
 from ..inference.sampling import sample
+from ..inference.utils import prepare_audio
 from .bottleneck import Bottleneck
 from .diffusion import create_diffusion_uncond_from_config
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
@@ -226,6 +223,8 @@ class DACEncoderWrapper(nn.Module):
     def __init__(self, latent_dim, in_channels=1, **kwargs):
         super().__init__()
 
+        from dac.model.dac import Encoder as DACEncoder
+
         self.encoder = DACEncoder(**kwargs)
         self.latent_dim = latent_dim
 
@@ -243,6 +242,8 @@ class DACDecoderWrapper(nn.Module):
     def __init__(self, latent_dim, out_channels=1, **kwargs):
         super().__init__()
 
+        from dac.model.dac import Decoder as DACDecoder
+
         self.decoder = DACDecoder(**kwargs, input_channel = latent_dim, d_out=out_channels)
 
         self.latent_dim = latent_dim
@@ -257,6 +258,7 @@ class AudioAutoencoder(nn.Module):
         decoder,
         latent_dim,
         downsampling_ratio,
+        sample_rate,
         io_channels=2,
         bottleneck: Bottleneck = None,
         encode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, encoder: encoder(x),
@@ -269,6 +271,7 @@ class AudioAutoencoder(nn.Module):
         super().__init__()
 
         self.downsampling_ratio = downsampling_ratio
+        self.sample_rate = sample_rate
 
         self.latent_dim = latent_dim
         self.io_channels = io_channels
@@ -345,6 +348,38 @@ class AudioAutoencoder(nn.Module):
         
         return decoded
     
+    def encode_audio(self, audio, in_sr, **kwargs):
+        '''
+        Encode audio to latents, including preprocessing the audio to be compatible with the model
+        '''
+
+        audio_length = audio.shape[-1]
+
+        if in_sr != self.sample_rate:
+            resample_tf = T.Resample(in_sr, self.sample_rate).to(audio.device)
+            audio = resample_tf(audio)
+
+        pad_length = (self.downsampling_ratio - (audio_length % self.downsampling_ratio)) % self.downsampling_ratio
+
+        # Pad with zeros to multiple of model's downsampling ratio
+        audio = F.pad(audio, (0, pad_length))
+
+        audio = prepare_audio(audio, in_sr=self.sample_rate, target_sr=self.sample_rate, target_length=audio.shape[1], target_channels=self.in_channels, device=audio.device)
+
+        # TODO: Add chunking logic
+
+        return self.encode(audio, **kwargs)
+    
+    def decode_audio(self, audio, **kwargs):
+        '''
+        Decode latents to audio, including postprocessing the audio to be compatible with the model
+        '''
+
+        # TODO: Add chunking logic
+
+        return self.decode(audio, **kwargs)
+
+    
 class DiffusionAutoencoder(AudioAutoencoder):
     def __init__(
         self,
@@ -392,6 +427,7 @@ def create_encoder_from_config(encoder_config: Dict[str, Any]):
         )
     
     elif encoder_type == "seanet":
+        from encodec.modules import SEANetEncoder
         seanet_encoder_config = encoder_config["config"]
 
         #SEANet encoder expects strides in reverse order
@@ -430,6 +466,8 @@ def create_decoder_from_config(decoder_config: Dict[str, Any]):
             **decoder_config["config"]
         )
     elif decoder_type == "seanet":
+        from encodec.modules import SEANetDecoder
+
         decoder = SEANetDecoder(
             **decoder_config["config"]
         )
@@ -455,32 +493,36 @@ def create_decoder_from_config(decoder_config: Dict[str, Any]):
 
     return decoder
 
-def create_autoencoder_from_config(model_config: Dict[str, Any]):
+def create_autoencoder_from_config(config: Dict[str, Any]):
     
-    encoder = create_encoder_from_config(model_config["encoder"])
-    decoder = create_decoder_from_config(model_config["decoder"])
+    ae_config = config["model"]
 
-    bottleneck = model_config.get("bottleneck", None)
+    encoder = create_encoder_from_config(ae_config["encoder"])
+    decoder = create_decoder_from_config(ae_config["decoder"])
 
-    latent_dim = model_config.get("latent_dim", None)
+    bottleneck = ae_config.get("bottleneck", None)
+
+    latent_dim = ae_config.get("latent_dim", None)
     assert latent_dim is not None, "latent_dim must be specified in model config"
-    downsampling_ratio = model_config.get("downsampling_ratio", None)
+    downsampling_ratio = ae_config.get("downsampling_ratio", None)
     assert downsampling_ratio is not None, "downsampling_ratio must be specified in model config"
-    io_channels = model_config.get("io_channels", None)
+    io_channels = ae_config.get("io_channels", None)
     assert io_channels is not None, "io_channels must be specified in model config"
+    sample_rate = config.get("sample_rate", None)
+    assert sample_rate is not None, "sample_rate must be specified in model config"
 
-    in_channels = model_config.get("in_channels", None)
-    out_channels = model_config.get("out_channels", None)
+    in_channels = ae_config.get("in_channels", None)
+    out_channels = ae_config.get("out_channels", None)
 
-    pretransform = model_config.get("pretransform", None)
+    pretransform = ae_config.get("pretransform", None)
 
     if pretransform is not None:
-        pretransform = create_pretransform_from_config(pretransform)
+        pretransform = create_pretransform_from_config(pretransform, sample_rate)
 
     if bottleneck is not None:
         bottleneck = create_bottleneck_from_config(bottleneck)
     
-    latent_pca = model_config.get("latent_pca", False)
+    latent_pca = ae_config.get("latent_pca", False)
 
     return AudioAutoencoder(
         encoder,
@@ -488,6 +530,7 @@ def create_autoencoder_from_config(model_config: Dict[str, Any]):
         io_channels=io_channels,
         latent_dim=latent_dim,
         downsampling_ratio=downsampling_ratio,
+        sample_rate=sample_rate,
         bottleneck=bottleneck,
         pretransform=pretransform,
         in_channels=in_channels,
@@ -495,27 +538,31 @@ def create_autoencoder_from_config(model_config: Dict[str, Any]):
         latent_pca=latent_pca
     )
 
-def create_diffAE_from_config(model_config: Dict[str, Any]):
+def create_diffAE_from_config(config: Dict[str, Any]):
     
-    encoder = create_encoder_from_config(model_config["encoder"])
+    diffae_config = config["model"]
 
-    decoder = create_decoder_from_config(model_config["decoder"])
+    encoder = create_encoder_from_config(diffae_config["encoder"])
 
-    diffusion = create_diffusion_uncond_from_config(model_config["diffusion"])
+    decoder = create_decoder_from_config(diffae_config["decoder"])
 
-    latent_dim = model_config.get("latent_dim", None)
+    diffusion = create_diffusion_uncond_from_config(diffae_config["diffusion"])
+
+    latent_dim = diffae_config.get("latent_dim", None)
     assert latent_dim is not None, "latent_dim must be specified in model config"
-    downsampling_ratio = model_config.get("downsampling_ratio", None)
+    downsampling_ratio = diffae_config.get("downsampling_ratio", None)
     assert downsampling_ratio is not None, "downsampling_ratio must be specified in model config"
-    io_channels = model_config.get("io_channels", None)
+    io_channels = diffae_config.get("io_channels", None)
     assert io_channels is not None, "io_channels must be specified in model config"
+    sample_rate = config.get("sample_rate", None)
+    assert sample_rate is not None, "sample_rate must be specified in model config"
 
-    bottleneck = model_config.get("bottleneck", None)
+    bottleneck = diffae_config.get("bottleneck", None)
 
-    pretransform = model_config.get("pretransform", None)
+    pretransform = diffae_config.get("pretransform", None)
 
     if pretransform is not None:
-        pretransform = create_pretransform_from_config(pretransform)
+        pretransform = create_pretransform_from_config(pretransform, sample_rate)
 
     if bottleneck is not None:
         bottleneck = create_bottleneck_from_config(bottleneck)
@@ -525,6 +572,7 @@ def create_diffAE_from_config(model_config: Dict[str, Any]):
         decoder=decoder,
         diffusion=diffusion,
         io_channels=io_channels,
+        sample_rate=sample_rate,
         latent_dim=latent_dim,
         downsampling_ratio=downsampling_ratio,
         bottleneck=bottleneck,

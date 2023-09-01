@@ -47,11 +47,13 @@ class DiffusionModelWrapper(nn.Module):
                 model: DiffusionModel,
                 io_channels,
                 sample_size,
+                sample_rate,
                 pretransform: Pretransform = None
     ):
         super().__init__()
         self.io_channels = io_channels
         self.sample_size = sample_size
+        self.sample_rate = sample_rate
 
         self.model = model
 
@@ -97,7 +99,8 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             self, 
             model: ConditionedDiffusionModel,
             conditioner: MultiConditioner,
-            io_channels = 2,
+            io_channels,
+            sample_rate,
             pretransform: Pretransform = None,
             cross_attn_cond_ids: tp.List[str] = [],
             global_cond_ids: tp.List[str] = [],
@@ -108,6 +111,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.model = model
         self.conditioner = conditioner
         self.io_channels = io_channels
+        self.sample_rate = sample_rate
         self.pretransform = pretransform
         self.cross_attn_cond_ids = cross_attn_cond_ids
         self.global_cond_ids = global_cond_ids
@@ -219,11 +223,7 @@ class UNet1DUncondWrapper(DiffusionModel):
             for param in self.model.parameters():
                 param *= 0.5
 
-    def forward(self, 
-                x, 
-                t, 
-                **kwargs):
-        
+    def forward(self, x, t, **kwargs):
         return self.model(x, t, **kwargs) 
 
 class DiffusionAttnUnet1D(nn.Module):
@@ -495,8 +495,9 @@ class DiffusionTransformer(nn.Module):
 
         return output
 
-def create_diffusion_uncond_from_config(model_config: tp.Dict[str, tp.Any]):
-    diffusion_uncond_config = model_config["model"]
+def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
+    diffusion_uncond_config = config["model"]
+
     model_type = diffusion_uncond_config.get('type', None)
 
     diffusion_config = diffusion_uncond_config.get('config', {})
@@ -505,12 +506,14 @@ def create_diffusion_uncond_from_config(model_config: tp.Dict[str, tp.Any]):
 
     pretransform = diffusion_uncond_config.get("pretransform", None)
 
-    sample_size = model_config.get("sample_size", None)
-
+    sample_size = config.get("sample_size", None)
     assert sample_size is not None, "Must specify sample size in config"
 
+    sample_rate = config.get("sample_rate", None)
+    assert sample_rate is not None, "Must specify sample rate in config"
+
     if pretransform is not None:
-        pretransform = create_pretransform_from_config(pretransform)
+        pretransform = create_pretransform_from_config(pretransform, sample_rate)
 
     if model_type == 'DAU1d':
 
@@ -518,7 +521,11 @@ def create_diffusion_uncond_from_config(model_config: tp.Dict[str, tp.Any]):
             **diffusion_config
         )
 
-        return DiffusionModelWrapper(model, io_channels=model.io_channels, sample_size=sample_size, pretransform=pretransform)
+        return DiffusionModelWrapper(model, 
+                                     io_channels=model.io_channels, 
+                                     sample_size=sample_size, 
+                                     sample_rate=sample_rate,
+                                     pretransform=pretransform)
     
     elif model_type == "adp_uncond_1d":
 
@@ -526,12 +533,18 @@ def create_diffusion_uncond_from_config(model_config: tp.Dict[str, tp.Any]):
             **diffusion_config
         )
 
-        return DiffusionModelWrapper(model, io_channels=model.io_channels, sample_size=sample_size, pretransform=pretransform)
+        return DiffusionModelWrapper(model, 
+                                     io_channels=model.io_channels, 
+                                     sample_size=sample_size, 
+                                     sample_rate=sample_rate,
+                                     pretransform=pretransform)
     
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
     
-def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
+def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
+
+    model_config = config["model"]
 
     diffusion_config = model_config.get('diffusion', None)
     assert diffusion_config is not None, "Must specify diffusion config"
@@ -550,6 +563,9 @@ def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
     io_channels = model_config.get('io_channels', None)
     assert io_channels is not None, "Must specify io_channels in model config"
 
+    sample_rate = config.get('sample_rate', None)
+    assert sample_rate is not None, "Must specify sample_rate in config"
+
     conditioning_config = model_config.get('conditioning', None)
     assert conditioning_config is not None, "Must specify conditioning config"
 
@@ -561,11 +577,12 @@ def create_diffusion_cond_from_config(model_config: tp.Dict[str, tp.Any]):
 
     pretransform = model_config.get("pretransform", None)
     if pretransform is not None:
-        pretransform = create_pretransform_from_config(pretransform)
+        pretransform = create_pretransform_from_config(pretransform, sample_rate)
 
     return ConditionedDiffusionModelWrapper(
         diffusion_model, 
         conditioner, 
+        sample_rate=sample_rate,
         cross_attn_cond_ids=cross_attention_ids,
         global_cond_ids=global_cond_ids,
         input_concat_ids=input_concat_ids,

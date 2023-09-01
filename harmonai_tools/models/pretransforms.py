@@ -23,6 +23,7 @@ class AutoencoderPretransform(Pretransform):
         self.scale=scale
         self.downsampling_ratio = model.downsampling_ratio
         self.io_channels = model.io_channels
+        self.sample_rate = model.sample_rate
     
     def encode(self, x):
         encoded = self.model.encode(x)

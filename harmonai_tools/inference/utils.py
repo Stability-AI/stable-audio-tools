@@ -13,7 +13,9 @@ def prepare_audio(audio, in_sr, target_sr, target_length, target_channels, devic
     audio = PadCrop(target_length, randomize=False)(audio)
 
     # Add batch dimension if needed
-    if len(audio.shape) == 2:
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0).unsqueeze(0)
+    elif audio.dim() == 2:
         audio = audio.unsqueeze(0)
 
     if target_channels == 1:

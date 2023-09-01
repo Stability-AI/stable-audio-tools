@@ -27,7 +27,7 @@ def load_model(model_config, model_ckpt_path, device="cuda"):
     print(f"Creating model from config")
     model = create_model_from_config(model_config)
 
-    model.to(device)
+    model.to(device).eval().requires_grad_(False)
 
     print(f"Loading model checkpoint from {model_ckpt_path}")
     
@@ -216,30 +216,24 @@ def create_txt2audio_ui(model_config):
     return ui
 
 def autoencoder_process(audio):
-    # Return fake stereo audio
 
     #Get the device from the model
     device = next(model.parameters()).device
 
     in_sr, audio = audio
 
-    audio = torch.from_numpy(audio).float().div(32767)
+    audio = torch.from_numpy(audio).float().div(32767).to(device)
 
     if audio.dim() == 1:
         audio = audio.unsqueeze(0)
     else:
         audio = audio.transpose(0, 1)
 
-    audio_length = audio.shape[1]
+    latents = model.encode_audio(audio, in_sr)
+    print(latents.shape)
+    print(latents.std())
 
-    # Pad to multiple of model's downsampling ratio
-    pad_length = (model.downsampling_ratio - (audio_length % model.downsampling_ratio)) % model.downsampling_ratio
-    audio = F.pad(audio, (0, pad_length))
-
-    audio = prepare_audio(audio, in_sr=in_sr, target_sr=sample_rate, target_length=audio.shape[1], target_channels=model.io_channels, device=device)
-
-    latents = model.encode(audio)
-    audio = model.decode(latents)
+    audio = model.decode_audio(latents)
 
     audio = rearrange(audio, "b d n -> d (b n)")
 
