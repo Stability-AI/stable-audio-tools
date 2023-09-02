@@ -16,22 +16,43 @@ class Pretransform(nn.Module):
         return z
 
 class AutoencoderPretransform(Pretransform):
-    def __init__(self, model, scale=1.0):
+    def __init__(self, model, scale=1.0, model_half=False):
         super().__init__()
         self.model = model
         self.model.requires_grad_(False).eval()
         self.scale=scale
+        self.model_half = model_half
         self.downsampling_ratio = model.downsampling_ratio
         self.io_channels = model.io_channels
         self.sample_rate = model.sample_rate
+
+        if self.model_half:
+            self.model.half()
     
     def encode(self, x):
+        
+        if self.model_half:
+            x = x.half()
+
         encoded = self.model.encode(x)
+
+        if self.model_half:
+            encoded = encoded.float()
+
         return encoded / self.scale
 
     def decode(self, z):
         z = z * self.scale
-        return self.model.decode(z)
+
+        if self.model_half:
+            z = z.half()
+
+        decoded = self.model.decode(z)
+
+        if self.model_half:
+            decoded = decoded.float()
+
+        return decoded
     
     def load_state_dict(self, state_dict, strict=True):
         self.model.load_state_dict(state_dict, strict=strict)

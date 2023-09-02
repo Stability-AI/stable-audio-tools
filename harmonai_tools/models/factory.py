@@ -35,7 +35,10 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         autoencoder_config = {"sample_rate": sample_rate, "model": pretransform_config["config"]}
         autoencoder = create_autoencoder_from_config(autoencoder_config)
 
-        pretransform = AutoencoderPretransform(autoencoder, scale=pretransform_config.get("scale", 1.0))
+        scale = pretransform_config.get("scale", 1.0)
+        model_half = pretransform_config.get("model_half", False)
+
+        pretransform = AutoencoderPretransform(autoencoder, scale=scale, model_half=model_half)
     elif pretransform_type == 'wavelet':
         from .pretransforms import WaveletPretransform
 
@@ -50,6 +53,8 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
     
     enable_grad = pretransform_config.get('enable_grad', False)
     pretransform.enable_grad = enable_grad
+
+    pretransform.eval().requires_grad_(pretransform.enable_grad)
 
     return pretransform
 
