@@ -56,15 +56,26 @@ def sample(model, x, steps, eta, **extra_args):
     # If we are on the last timestep, output the denoised image
     return pred
 
-def sample_k(model_fn, noise, steps=100, sampler_type="dpmpp-2m-sde", sigma_min=0.5, sigma_max=50, rho=1.0, device="cuda", callback=None, add_noise=False, **extra_args):
+def sample_k(
+        model_fn, 
+        noise, 
+        steps=100, 
+        sampler_type="dpmpp-2m-sde", 
+        sigma_min=0.5, 
+        sigma_max=50, 
+        rho=1.0, device="cuda", 
+        callback=None, 
+        init_data=None,
+        **extra_args
+    ):
 
     denoiser = K.external.VDenoiser(model_fn)
 
     sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)
 
-    # Add noise to the input, used for init audio
-    if add_noise:
-        noise = noise + torch.randn_like(noise) * sigmas[0]
+    # If init data is passed in, we add the noise to it
+    if init_data is not None:
+        noise = init_data + noise * sigmas[0]
     else:
         noise = noise * sigmas[0]
 
