@@ -21,10 +21,11 @@ class AutoencoderPretransform(Pretransform):
         self.model = model
         self.model.requires_grad_(False).eval()
         self.scale=scale
-        self.model_half = model_half
         self.downsampling_ratio = model.downsampling_ratio
         self.io_channels = model.io_channels
         self.sample_rate = model.sample_rate
+        
+        self.model_half = model_half
 
         if self.model_half:
             self.model.half()

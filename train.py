@@ -33,10 +33,8 @@ def main():
         copy_state_dict(model, torch.load(args.pretrained_ckpt_path)["state_dict"])
     
     if args.pretransform_ckpt_path:
-        print("Loading pretransform from checkpoint")
         model.pretransform.load_state_dict(torch.load(args.pretransform_ckpt_path)["state_dict"])
-        print("Done loading pretransform from checkpoint")
-
+                 
     training_wrapper = create_training_wrapper_from_config(model_config, model)
 
     exc_callback = ExceptionCallback()
@@ -84,7 +82,7 @@ def main():
         default_root_dir=args.save_dir
     )
 
-    trainer.fit(training_wrapper, train_dl, ckpt_path=args.ckpt_path)
+    trainer.fit(training_wrapper, train_dl, ckpt_path=args.ckpt_path if args.ckpt_path else None)
 
 if __name__ == '__main__':
     main()

@@ -17,7 +17,7 @@ setup(
         'einops==0.6.1',
         'ema-pytorch==0.2.3',
         'encodec==0.1.1',
-        'gradio==3.35.2',
+        'gradio==3.42.0',
         'importlib-resources==5.12.0',
         'k-diffusion==0.0.15',
         'laion-clap==1.1.4',

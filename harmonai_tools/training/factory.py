@@ -1,5 +1,6 @@
 import torch
 from torch.nn import Parameter
+from ..models.factory import create_model_from_config
 
 def create_training_wrapper_from_config(model_config, model):
     model_type = model_config.get('model_type', None)
@@ -14,7 +15,6 @@ def create_training_wrapper_from_config(model_config, model):
         ema_copy = None
 
         if training_config.get("use_ema", False):
-            from ..models.factory import create_model_from_config
             ema_copy = create_model_from_config(model_config)
             ema_copy = create_model_from_config(model_config) # I don't know why this needs to be called twice but it broke when I called it once
             # Copy each weight to the ema copy
@@ -30,7 +30,6 @@ def create_training_wrapper_from_config(model_config, model):
 
         teacher_model = training_config.get("teacher_model", None)
         if teacher_model is not None:
-            from ..models.factory import create_model_from_config
             teacher_model = create_model_from_config(teacher_model)
             teacher_model = teacher_model.eval().requires_grad_(False)
 
@@ -73,8 +72,20 @@ def create_training_wrapper_from_config(model_config, model):
         )
     elif model_type == 'diffusion_autoencoder':
         from .diffusion import DiffusionAutoencoderTrainingWrapper
+
+
+        ema_copy = create_model_from_config(model_config)
+        #ema_copy = create_model_from_config(model_config) # I don't know why this needs to be called twice but it broke when I called it once
+        # Copy each weight to the ema copy
+        for name, param in model.state_dict().items():
+            if isinstance(param, Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            ema_copy.state_dict()[name].copy_(param)
+
         return DiffusionAutoencoderTrainingWrapper(
             model,
+            ema_copy=ema_copy,
             lr=training_config["learning_rate"]
         )
     elif model_type == 'musicgen':
@@ -114,6 +125,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
         from .diffusion import DiffusionAutoencoderDemoCallback
         return DiffusionAutoencoderDemoCallback(
             demo_every=demo_config.get("demo_every", 2000), 
+            demo_steps=demo_config.get("demo_steps", 250),
             sample_size=model_config["sample_size"],
             sample_rate=model_config["sample_rate"],
             **kwargs

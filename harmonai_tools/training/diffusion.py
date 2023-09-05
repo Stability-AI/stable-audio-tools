@@ -195,7 +195,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
     def configure_optimizers(self):
-        return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
+        #return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
+        return optim.Adam([*self.trainer.model.parameters()], lr=self.lr)
 
     def training_step(self, batch, batch_idx):
         reals, metadata = batch
@@ -338,8 +339,6 @@ class DiffusionCondDemoCallback(pl.Callback):
                 log_dict[f"demo_audio_cond_melspec_left"] = wandb.Image(audio_spectrogram_image(audio_inputs))
                 trainer.logger.experiment.log(log_dict)
 
-
-
             for cfg_scale in self.demo_cfg_scales:
 
                 print(f"Generating demo for cfg scale {cfg_scale}")
@@ -365,6 +364,8 @@ class DiffusionCondDemoCallback(pl.Callback):
                 log_dict[f'demo_melspec_left_cfg_{cfg_scale}'] = wandb.Image(audio_spectrogram_image(fakes))
 
                 trainer.logger.experiment.log(log_dict)
+            
+            del fakes
 
         except Exception as e:
             raise e
@@ -628,6 +629,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
             self,
             model: DiffusionAutoencoder,
             lr: float = 1e-4,
+            ema_copy = None,
     ):
         super().__init__()
 
@@ -635,6 +637,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         
         self.diffae_ema = EMA(
             self.diffae,
+            ema_model=ema_copy,
             beta=0.9999,
             power=3/4,
             update_every=1,
@@ -685,6 +688,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
             'train/loss': loss.detach(),
             'train/mse_loss': mse_loss.detach(),
             'train/std_data': reals.std(),
+            'train/latent_std': latents.std(),
         }
 
         self.log_dict(log_dict, prog_bar=True, on_step=True)
@@ -740,33 +744,26 @@ class DiffusionAutoencoderDemoCallback(pl.Callback):
                 latents = module.diffae_ema.ema_model.encode(encoder_input)
                 fakes = module.diffae_ema.ema_model.decode(latents, steps=self.demo_steps)
 
+            #Interleave reals and fakes
+            reals_fakes = rearrange([demo_reals, fakes], 'i b d n -> (b i) d n')
+
             # Put the demos together
-            fakes = rearrange(fakes, 'b d n -> d (b n)')
-            demo_reals = rearrange(demo_reals, 'b d n -> d (b n)')
+            reals_fakes = rearrange(reals_fakes, 'b d n -> d (b n)')
 
             log_dict = {}
             
             filename = f'recon_{trainer.global_step:08}.wav'
-            fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            torchaudio.save(filename, fakes, self.sample_rate)
-
-            reals_filename = f'reals_{trainer.global_step:08}.wav'
-            demo_reals = demo_reals.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            torchaudio.save(reals_filename, demo_reals, self.sample_rate)
-
+            reals_fakes = reals_fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+            torchaudio.save(filename, reals_fakes, self.sample_rate)
 
             log_dict[f'recon'] = wandb.Audio(filename,
                                                 sample_rate=self.sample_rate,
                                                 caption=f'Reconstructed')
-            log_dict[f'real'] = wandb.Audio(reals_filename,
-                                                sample_rate=self.sample_rate,
-                                                caption=f'Real')
 
             log_dict[f'embeddings_3dpca'] = pca_point_cloud(latents)
             log_dict[f'embeddings_spec'] = wandb.Image(tokens_spectrogram_image(latents))
 
-            log_dict[f'real_melspec_left'] = wandb.Image(audio_spectrogram_image(demo_reals))
-            log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
+            log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
 
             if module.diffae_ema.ema_model.pretransform is not None:
                 with torch.no_grad():

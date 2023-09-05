@@ -4,7 +4,7 @@ import typing as tp
 
 from torchaudio import transforms as T
 
-from .sampling import sample_k, variation_k
+from .sampling import sample_k
 from ..data.utils import PadCrop
 from .utils import prepare_audio
 
@@ -73,7 +73,9 @@ def generate_diffusion_cond(
 
         init_audio = init_audio.repeat(batch_size, 1, 1)
 
-        sampled = variation_k(model.model, init_audio, init_noise_level, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
+        sampler_kwargs["sigma_max"] = init_noise_level
+
+        sampled = sample_k(model.model, init_audio, steps=steps, add_noise=True, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
     else:
         if model.pretransform is not None:
             sample_size = sample_size // model.pretransform.downsampling_ratio

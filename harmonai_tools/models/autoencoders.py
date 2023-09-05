@@ -13,7 +13,7 @@ from einops import rearrange
 from ..inference.sampling import sample
 from ..inference.utils import prepare_audio
 from .bottleneck import Bottleneck
-from .diffusion import create_diffusion_uncond_from_config
+from .diffusion import DiffusionAttnUnet1D
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform
 from .pca import PCA
@@ -397,6 +397,11 @@ class DiffusionAutoencoder(AudioAutoencoder):
                 param *= 0.5
 
     def decode(self, latents, steps=100):
+
+        if self.latent_pca is not None and self.latent_pca.has_fit_.item():
+            latents = rearrange(latents, 'b c t -> b t c')
+            latents = self.latent_pca.inverse_transform(latents)
+            latents = rearrange(latents, 'b t c -> b c t')
         
         upsampled_length = latents.shape[2] * self.downsampling_ratio
 
@@ -410,8 +415,11 @@ class DiffusionAutoencoder(AudioAutoencoder):
         decoded = sample(self.diffusion, noise, steps, 0, cond=latents)
 
         if self.pretransform is not None:
-            with torch.no_grad():
+            if self.pretransform.enable_grad:
                 decoded = self.pretransform.decode(decoded)
+            else:
+                with torch.no_grad():
+                    decoded = self.pretransform.decode(decoded)
 
         return decoded
         
@@ -546,7 +554,8 @@ def create_diffAE_from_config(config: Dict[str, Any]):
 
     decoder = create_decoder_from_config(diffae_config["decoder"])
 
-    diffusion = create_diffusion_uncond_from_config(diffae_config["diffusion"])
+    diffusion = DiffusionAttnUnet1D(**diffae_config["diffusion"]["config"])
+     #create_diffusion_uncond_from_config(diffae_config["diffusion"])
 
     latent_dim = diffae_config.get("latent_dim", None)
     assert latent_dim is not None, "latent_dim must be specified in model config"

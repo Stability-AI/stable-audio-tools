@@ -242,10 +242,10 @@ class T5Conditioner(Conditioner):
             finally:
                 logging.disable(previous_level)
             
-        #if self.enable_grad:
-        self.model = model
-        # else: 
-        #     self.__dict__["model"] = model
+        if self.enable_grad:
+            self.model = model
+        else: 
+            self.__dict__["model"] = model
 
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
@@ -284,20 +284,37 @@ class MultiConditioner(nn.Module):
 
     Args:
         conditioners: a dictionary of conditioners with keys corresponding to the keys of the conditioning input dictionary (e.g. "prompt")
+        default_keys: a dictionary of default keys to use if the key is not in the input dictionary (e.g. {"prompt_t5": "prompt"})
     """
-    def __init__(self, conditioners: tp.Dict[str, Conditioner]):
+    def __init__(self, conditioners: tp.Dict[str, Conditioner], default_keys: tp.Dict[str, str] = {}):
         super().__init__()
 
         self.conditioners = nn.ModuleDict(conditioners)
+        self.default_keys = default_keys
 
     def forward(self, batch_metadata: tp.List[tp.Dict[str, tp.Any]], device: tp.Union[torch.device, str]) -> tp.Dict[str, tp.Any]:
         output = {}
 
         for key, conditioner in self.conditioners.items():
-            if key in batch_metadata[0]:
-                conditioner_inputs = [x[key][0] if isinstance(x[key], list) or isinstance(x[key], tuple) else x[key] for x in batch_metadata]
-                
-                output[key] = conditioner(conditioner_inputs, device)
+            condition_key = key
+
+            conditioner_inputs = []
+
+            for x in batch_metadata:
+
+                if condition_key not in x:
+                    if condition_key in self.default_keys:
+                        condition_key = self.default_keys[condition_key]
+                    else:
+                        raise ValueError(f"Conditioner key {condition_key} not found in batch metadata")
+
+                #Unwrap the condition info if it's a single-element list or tuple, this is to support collation functions that wrap everything in a list
+                if isinstance(x[condition_key], list) or isinstance(x[condition_key], tuple) and len(x[condition_key]) == 1:
+                    conditioner_inputs.append(x[condition_key][0])
+                else:
+                    conditioner_inputs.append(x[condition_key])
+            
+            output[key] = conditioner(conditioner_inputs, device)
 
         return output
     
@@ -311,6 +328,8 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
     """
     conditioners = {}
     cond_dim = config["cond_dim"]
+    
+    default_keys = config.get("default_keys", {})
 
     for conditioner_info in config["configs"]:
         id = conditioner_info["id"]
@@ -334,4 +353,4 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
         else:
             raise ValueError(f"Unknown conditioner type: {conditioner_type}")
 
-    return MultiConditioner(conditioners)
+    return MultiConditioner(conditioners, default_keys=default_keys)

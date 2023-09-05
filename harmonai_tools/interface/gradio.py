@@ -46,7 +46,7 @@ def generate(
         sampler_type="dpmpp-2m-sde",
         sigma_min=0.03,
         sigma_max=50,
-        cfg_rescale=0.7,
+        cfg_rescale=0.4,
         use_init=False,
         init_audio=None,
         init_noise_level=1.0,
@@ -172,7 +172,7 @@ def create_sampling_ui(model_config):
                     sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-2m-sde")
                     sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
                     sigma_max_slider = gr.Slider(minimum=0.0, maximum=200.0, step=0.1, value=80, label="Sigma max")
-                    cfg_rescale_slider = gr.Slider(minimum=0.0, maximum=1, step=0.01, value=0.7, label="CFG rescale amount")
+                    cfg_rescale_slider = gr.Slider(minimum=0.0, maximum=1, step=0.01, value=0.4, label="CFG rescale amount")
 
             with gr.Accordion("Init audio", open=False):
                 init_audio_checkbox = gr.Checkbox(label="Use init audio")
