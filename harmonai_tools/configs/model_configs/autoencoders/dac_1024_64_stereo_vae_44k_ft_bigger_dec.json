@@ -31,10 +31,9 @@
         "io_channels": 2
     },
     "training": {
-        "learning_rate": 2e-5,
+        "learning_rate": 4e-5,
         "warmup_steps": 0,
         "use_ema": true,
-        "latent_mask_ratio": 0.05,
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",

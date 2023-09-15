@@ -7,6 +7,58 @@ from torchaudio import transforms as T
 from .sampling import sample_k
 from .utils import prepare_audio
 
+def generate_diffusion_uncond(
+        model,
+        steps: int = 250,
+        batch_size: int = 1,
+        sample_size: int = 2097152,
+        seed: int = -1,
+        device: str = "cuda",
+        init_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
+        init_noise_level: float = 1.0,
+        return_latents = False,
+        **sampler_kwargs
+        ) -> torch.Tensor:
+    seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1)
+
+    torch.manual_seed(seed)
+
+    if init_audio is not None:
+        in_sr, init_audio = init_audio
+
+        io_channels = model.io_channels
+
+        # For latent models, set the io_channels to the autoencoder's io_channels
+        if model.pretransform is not None:
+            io_channels = model.pretransform.io_channels
+
+        # Prepare the initial audio for use by the model
+        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=sample_size, target_channels=io_channels, device=device)
+
+        # For latent models, encode the initial audio into latents
+        if model.pretransform is not None:
+            init_audio = model.pretransform.encode(init_audio)
+
+        init_audio = init_audio.repeat(batch_size, 1, 1)
+
+        sampler_kwargs["sigma_max"] = init_noise_level
+
+        noise = torch.randn_like(init_audio)
+
+        sampled = sample_k(model.model, noise, steps=steps, init_data=init_audio, **sampler_kwargs, device=device)
+    else:
+        if model.pretransform is not None:
+            sample_size = sample_size // model.pretransform.downsampling_ratio
+
+        noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
+        sampled = sample_k(model.model, noise, steps, **sampler_kwargs, device=device)
+
+    if model.pretransform is not None and not return_latents:
+        sampled = model.pretransform.decode(sampled)
+
+    return sampled
+
+
 def generate_diffusion_cond(
         model,
         steps: int = 250,

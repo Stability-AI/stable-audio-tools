@@ -42,10 +42,10 @@ def create_training_wrapper_from_config(model_config, model):
         return AutoencoderTrainingWrapper(
             model, 
             lr=training_config["learning_rate"],
-            warmup_steps=training_config["warmup_steps"], 
+            warmup_steps=training_config.get("warmup_steps", 0), 
             encoder_freeze_on_warmup=training_config.get("encoder_freeze_on_warmup", False),
             sample_rate=model_config["sample_rate"],
-            loss_config=training_config["loss_configs"],
+            loss_config=training_config.get("loss_configs", {}),
             use_ema=use_ema,
             ema_copy=ema_copy if use_ema else None,
             force_input_mono=training_config.get("force_input_mono", False),
@@ -62,7 +62,8 @@ def create_training_wrapper_from_config(model_config, model):
         from .diffusion import DiffusionCondTrainingWrapper
         return DiffusionCondTrainingWrapper(
             model, 
-            lr=training_config["learning_rate"]
+            lr=training_config["learning_rate"],
+            causal_dropout=training_config.get("causal_dropout", 0.0)
         )
     elif model_type == 'diffusion_cond_inpaint':
         from .diffusion import DiffusionCondInpaintTrainingWrapper

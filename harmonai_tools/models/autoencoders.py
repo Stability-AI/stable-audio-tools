@@ -1,5 +1,6 @@
 import torch
 import math
+import numpy as np
 
 from torch import nn, sin, pow
 from torch.nn import functional as F
@@ -15,7 +16,7 @@ from ..inference.utils import prepare_audio
 from .bottleneck import Bottleneck
 from .diffusion import DiffusionAttnUnet1D
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
-from .pretransforms import Pretransform
+from .pretransforms import Pretransform, AutoencoderPretransform
 from .pca import PCA
 
 # Adapted from https://github.com/NVIDIA/BigVGAN/blob/main/activations.py under MIT license
@@ -278,6 +279,8 @@ class AudioAutoencoder(nn.Module):
         self.in_channels = io_channels
         self.out_channels = io_channels
 
+        self.min_length = self.downsampling_ratio
+
         if in_channels is not None:
             self.in_channels = in_channels
 
@@ -299,7 +302,7 @@ class AudioAutoencoder(nn.Module):
         if latent_pca:
             self.latent_pca = PCA(n_components=latent_dim)
  
-    def encode(self, audio, return_info=False, skip_pretransform=False):
+    def encode(self, audio, return_info=False, skip_pretransform=False, **kwargs):
 
         info = {}
 
@@ -313,7 +316,7 @@ class AudioAutoencoder(nn.Module):
         latents = self.encode_fn(audio, self.encoder)
 
         if self.bottleneck is not None:
-            latents, bottleneck_info = self.bottleneck.encode(latents, return_info=True)
+            latents, bottleneck_info = self.bottleneck.encode(latents, return_info=True, **kwargs)
 
             info.update(bottleneck_info)
         
@@ -350,16 +353,16 @@ class AudioAutoencoder(nn.Module):
     
     def encode_audio(self, audio, in_sr, **kwargs):
         '''
-        Encode audio to latents, including preprocessing the audio to be compatible with the model
+        Encode single audio tensor to latents, including preprocessing the audio to be compatible with the model
         '''
-
-        audio_length = audio.shape[-1]
 
         if in_sr != self.sample_rate:
             resample_tf = T.Resample(in_sr, self.sample_rate).to(audio.device)
             audio = resample_tf(audio)
 
-        pad_length = (self.downsampling_ratio - (audio_length % self.downsampling_ratio)) % self.downsampling_ratio
+        audio_length = audio.shape[-1]
+
+        pad_length = (self.min_length - (audio_length % self.min_length)) % self.min_length
 
         # Pad with zeros to multiple of model's downsampling ratio
         audio = F.pad(audio, (0, pad_length))
@@ -370,26 +373,28 @@ class AudioAutoencoder(nn.Module):
 
         return self.encode(audio, **kwargs)
     
-    def decode_audio(self, audio, **kwargs):
+    def decode_audio(self, latents, **kwargs):
         '''
-        Decode latents to audio, including postprocessing the audio to be compatible with the model
+        Decode latents to audio
         '''
 
         # TODO: Add chunking logic
 
-        return self.decode(audio, **kwargs)
-
+        return self.decode(latents, **kwargs)
     
 class DiffusionAutoencoder(AudioAutoencoder):
     def __init__(
         self,
         diffusion,
+        diffusion_downsampling_ratio,
         *args,
         **kwargs
     ):
         super().__init__(*args, **kwargs)
 
         self.diffusion = diffusion
+
+        self.min_length = self.downsampling_ratio * diffusion_downsampling_ratio
 
         # Shrink the initial encoder parameters to avoid saturated latents
         with torch.no_grad():
@@ -403,7 +408,10 @@ class DiffusionAutoencoder(AudioAutoencoder):
             latents = self.latent_pca.inverse_transform(latents)
             latents = rearrange(latents, 'b t c -> b c t')
         
-        upsampled_length = latents.shape[2] * self.downsampling_ratio
+        if self.pretransform is not None:
+            upsampled_length = latents.shape[2] * self.downsampling_ratio // self.pretransform.downsampling_ratio 
+        else:
+            upsampled_length = latents.shape[2] * self.downsampling_ratio
 
         if self.bottleneck is not None:
             latents = self.bottleneck.decode(latents)
@@ -576,6 +584,11 @@ def create_diffAE_from_config(config: Dict[str, Any]):
     if bottleneck is not None:
         bottleneck = create_bottleneck_from_config(bottleneck)
 
+    diffusion_downsampling_ratio = None,
+
+    if diffae_config["diffusion"]["type"] == "DAU1d":
+        diffusion_downsampling_ratio = np.prod(diffae_config["diffusion"]["config"]["strides"])
+
     return DiffusionAutoencoder(
         encoder=encoder,
         decoder=decoder,
@@ -584,6 +597,7 @@ def create_diffAE_from_config(config: Dict[str, Any]):
         sample_rate=sample_rate,
         latent_dim=latent_dim,
         downsampling_ratio=downsampling_ratio,
+        diffusion_downsampling_ratio=diffusion_downsampling_ratio,
         bottleneck=bottleneck,
         pretransform=pretransform
     )

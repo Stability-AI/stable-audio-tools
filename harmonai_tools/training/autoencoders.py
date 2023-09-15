@@ -338,6 +338,7 @@ class AutoencoderDemoCallback(pl.Callback):
 
             with torch.no_grad():
                 if module.use_ema:
+
                     latents = module.autoencoder_ema.ema_model.encode(encoder_input)
 
                     fakes = module.autoencoder_ema.ema_model.decode(latents)

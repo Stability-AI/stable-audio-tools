@@ -108,7 +108,10 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         self.diffusion_ema.update()
 
     def export_model(self, path):
-        export_state_dict = {"state_dict": self.diffusion_ema.ema_model.state_dict()}
+
+        self.diffusion.model = self.diffusion_ema.ema_model
+
+        export_state_dict = {"state_dict": self.diffusion.state_dict()}
         
         torch.save(export_state_dict, path)
 
@@ -166,8 +169,13 @@ class DiffusionUncondDemoCallback(pl.Callback):
 
             trainer.logger.experiment.log(log_dict)
 
+            del fakes
+            
         except Exception as e:
             print(f'{type(e).__name__}: {e}')
+        finally:
+            gc.collect()
+            torch.cuda.empty_cache()
 
 class DiffusionCondTrainingWrapper(pl.LightningModule):
     '''
@@ -177,6 +185,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             self,
             model: ConditionedDiffusionModelWrapper,
             lr: float = 1e-4,
+            causal_dropout: float = 0.0,
     ):
         super().__init__()
 
@@ -194,9 +203,10 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
+        self.causal_dropout = causal_dropout
+
     def configure_optimizers(self):
-        #return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
-        return optim.Adam([*self.trainer.model.parameters()], lr=self.lr)
+        return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
 
     def training_step(self, batch, batch_idx):
         reals, metadata = batch
@@ -239,7 +249,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         with torch.cuda.amp.autocast():
             p.tick("amp")
-            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1)
+            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1, causal=random.random() < self.causal_dropout)
             p.tick("diffusion")
             mse_loss = F.mse_loss(v, targets)
          

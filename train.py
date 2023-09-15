@@ -12,6 +12,13 @@ class ExceptionCallback(pl.Callback):
     def on_exception(self, trainer, module, err):
         print(f'{type(err).__name__}: {err}')
 
+class ModelConfigEmbedderCallback(pl.Callback):
+    def __init__(self, model_config):
+        self.model_config = model_config
+
+    def on_save_checkpoint(self, trainer, pl_module, checkpoint):
+        checkpoint["model_config"] = self.model_config
+
 def main():
 
     args = get_all_args()
@@ -30,15 +37,16 @@ def main():
     model = create_model_from_config(model_config)
 
     if args.pretrained_ckpt_path:
-        copy_state_dict(model, torch.load(args.pretrained_ckpt_path)["state_dict"])
+        copy_state_dict(model, torch.load(args.pretrained_ckpt_path, map_location="cpu")["state_dict"])
     
     if args.pretransform_ckpt_path:
-        model.pretransform.load_state_dict(torch.load(args.pretransform_ckpt_path)["state_dict"])
+        model.pretransform.load_state_dict(torch.load(args.pretransform_ckpt_path, map_location="cpu")["state_dict"])
                  
     training_wrapper = create_training_wrapper_from_config(model_config, model)
 
     exc_callback = ExceptionCallback()
     ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, save_top_k=-1)
+    save_model_config_callback = ModelConfigEmbedderCallback(model_config)
 
     demo_callback = create_demo_callback_from_config(model_config, demo_dl=train_dl)
 
@@ -75,7 +83,7 @@ def main():
         strategy=strategy,
         precision=args.precision,
         accumulate_grad_batches=args.accum_batches, 
-        callbacks=[ckpt_callback, demo_callback, exc_callback],
+        callbacks=[ckpt_callback, demo_callback, exc_callback, save_model_config_callback],
         logger=wandb_logger,
         log_every_n_steps=1,
         max_epochs=10000000,
