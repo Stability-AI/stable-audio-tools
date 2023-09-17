@@ -76,3 +76,19 @@ class WaveletPretransform(Pretransform):
     def decode(self, z):
         return self.decoder(z)
     
+class PQMFPretransform(Pretransform):
+    def __init__(self, attenuation=100, num_bands=16):
+        super().__init__()
+        from .pqmf import PQMF
+        self.pqmf = PQMF(attenuation, num_bands)
+
+    def encode(self, x):
+        # x is (Batch x Channels x Length)
+        # returns (Batch x Channels x Bands x Length) 
+        return self.pqmf.forward(x)
+    
+    def decode(self, x):
+        # x is (Batch x Channels x Bands x Length)
+        # returns (Batch x Channels x Length) 
+        return self.pqmf.inverse(x)
+
