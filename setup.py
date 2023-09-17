@@ -13,7 +13,7 @@ setup(
         'alias-free-torch==0.0.6',
         'audio-diffusion-pytorch-fork==0.0.104',
         'auraloss==0.4.0',
-        'descript-audio-codec<1.0.0',
+        'descript-audio-codec==1.0.0',
         'einops==0.6.1',
         'ema-pytorch==0.2.3',
         'encodec==0.1.1',

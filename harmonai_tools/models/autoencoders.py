@@ -221,15 +221,19 @@ class OobleckDecoder(nn.Module):
         return self.layers(x)
 
 class DACEncoderWrapper(nn.Module):
-    def __init__(self, latent_dim, in_channels=1, **kwargs):
+    def __init__(self, in_channels=1, **kwargs):
         super().__init__()
 
         from dac.model.dac import Encoder as DACEncoder
 
-        self.encoder = DACEncoder(**kwargs)
+        latent_dim = kwargs.pop("latent_dim", None)
+
+        encoder_out_dim = kwargs["d_model"] * (2 ** len(kwargs["strides"]))
+        self.encoder = DACEncoder(d_latent=encoder_out_dim, **kwargs)
         self.latent_dim = latent_dim
 
-        self.proj_out = nn.Conv1d(self.encoder.enc_dim, latent_dim, kernel_size=1)
+        # Latent-dim support was added to DAC after this was first written, and implemented differently, so this is for backwards compatibility
+        self.proj_out = nn.Conv1d(self.encoder.enc_dim, latent_dim, kernel_size=1) if latent_dim is not None else nn.Identity()
 
         if in_channels != 1:
             self.encoder.block[0] = WNConv1d(in_channels, kwargs.get("d_model", 64), kernel_size=7, padding=3)
@@ -563,7 +567,7 @@ def create_diffAE_from_config(config: Dict[str, Any]):
     decoder = create_decoder_from_config(diffae_config["decoder"])
 
     diffusion = DiffusionAttnUnet1D(**diffae_config["diffusion"]["config"])
-     #create_diffusion_uncond_from_config(diffae_config["diffusion"])
+    #create_diffusion_uncond_from_config(diffae_config["diffusion"])
 
     latent_dim = diffae_config.get("latent_dim", None)
     assert latent_dim is not None, "latent_dim must be specified in model config"

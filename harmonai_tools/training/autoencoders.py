@@ -9,7 +9,7 @@ from ema_pytorch import EMA
 import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
-from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator
+from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
 from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
 
 from pytorch_lightning.utilities.distributed import rank_zero_only
@@ -106,6 +106,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             self.discriminator = OobleckDiscriminator(**loss_config['discriminator']['config'])
         elif loss_config['discriminator']['type'] == 'encodec':
             self.discriminator = EncodecDiscriminator(in_channels=self.autoencoder.out_channels, **loss_config['discriminator']['config'])
+        elif loss_config['discriminator']['type'] == 'dac':
+            self.discriminator = DACGANLoss(channels=self.autoencoder.out_channels, sample_rate=sample_rate, **loss_config['discriminator']['config'])
 
         self.autoencoder_ema = None
         

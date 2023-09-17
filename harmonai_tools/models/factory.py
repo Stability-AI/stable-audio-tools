@@ -48,6 +48,10 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         wavelet = wavelet_config["wavelet"]
 
         pretransform = WaveletPretransform(channels, levels, wavelet)
+    elif pretransform_type == 'dac_pretrained':
+        from .pretransforms import PretrainedDACPretransform
+        pretrained_dac_config = pretransform_config["config"]
+        pretransform = PretrainedDACPretransform(**pretrained_dac_config)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     

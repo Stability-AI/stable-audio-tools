@@ -1,7 +1,7 @@
 from torch import nn
 
 class Pretransform(nn.Module):
-    def __init__(self, enable_grad=False, io_channels=2):
+    def __init__(self, enable_grad=False, io_channels=2, ):
         super().__init__()
 
         self.io_channels = io_channels
@@ -76,3 +76,53 @@ class WaveletPretransform(Pretransform):
     def decode(self, z):
         return self.decoder(z)
     
+class PretrainedDACPretransform(Pretransform):
+    def __init__(self, model_type="44khz", model_bitrate="8kbps", scale=1.0, quantize_on_decode: bool = True, chunked=True):
+        super().__init__()
+        
+        import dac
+        
+        model_path = dac.utils.download(model_type=model_type, model_bitrate=model_bitrate)
+        
+        self.model = dac.DAC.load(model_path)
+
+        self.quantize_on_decode = quantize_on_decode
+
+        if model_type == "44khz":
+            self.downsampling_ratio = 512
+        else:
+            self.downsampling_ratio = 320
+
+        self.io_channels = 1
+
+        self.scale = scale
+
+        self.chunked = chunked
+
+    def encode(self, x):
+
+        latents = self.model.encoder(x)
+
+        if self.quantize_on_decode:
+            output = latents
+        else:
+            z, _, latents, _, _ = self.model.quantizer(z, n_quantizers=self.model.n_codebooks)
+            output = z
+        
+        if self.scale != 1.0:
+            output = output / self.scale
+        
+        return output
+
+    def decode(self, z):
+        
+        if self.scale != 1.0:
+            z = z * self.scale
+
+        if self.quantize_on_decode:
+            z, _, _, _, _ = self.model.quantizer(z, n_quantizers=self.model.n_codebooks)
+
+        return self.model.decode(z)
+
+        
+
