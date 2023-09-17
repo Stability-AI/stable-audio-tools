@@ -83,12 +83,16 @@ class PQMFPretransform(Pretransform):
         self.pqmf = PQMF(attenuation, num_bands)
 
     def encode(self, x):
-        # x is (Batch x Channels x Length)
-        # returns (Batch x Channels x Bands x Length) 
-        return self.pqmf.forward(x)
-    
+        # x is (Batch x Channels x Time)
+        x = self.pqmf.forward(x)
+        # pqmf.forward returns (Batch x Channels x Bands x Time)
+        # but Pretransform needs Batch x Channels x Time
+        # so concatenate channels and bands into one axis
+        return rearrange(x, "b c n t -> b (c n) t")
+
     def decode(self, x):
-        # x is (Batch x Channels x Bands x Length)
-        # returns (Batch x Channels x Length) 
+        # x is (Batch x (Channels Bands) x Time), convert back to (Batch x Channels x Bands x Time) 
+        x = rearrange(x, "b (c n) t -> b c n t", n=self.pqmf.num_bands)
+        # returns (Batch x Channels x Time) 
         return self.pqmf.inverse(x)
 
