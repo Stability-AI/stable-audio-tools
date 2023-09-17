@@ -48,6 +48,12 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         wavelet = wavelet_config["wavelet"]
 
         pretransform = WaveletPretransform(channels, levels, wavelet)
+    elif pretransform_type == 'pqmf':
+        from .pretransforms import PQMFPretransform
+        pqmf_config = pretransform_config["config"]
+        attenuation = pqmf_config["attenuation"]
+        num_bands = pqmf_config["num_bands"]
+        pretransform = PQMFPretransform(attenuation, num_bands)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     
