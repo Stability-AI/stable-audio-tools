@@ -46,6 +46,7 @@ def create_training_wrapper_from_config(model_config, model):
             encoder_freeze_on_warmup=training_config.get("encoder_freeze_on_warmup", False),
             sample_rate=model_config["sample_rate"],
             loss_config=training_config.get("loss_configs", {}),
+            optimizer_configs=training_config.get("optimizer_configs", {}),
             use_ema=use_ema,
             ema_copy=ema_copy if use_ema else None,
             force_input_mono=training_config.get("force_input_mono", False),

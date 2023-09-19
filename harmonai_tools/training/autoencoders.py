@@ -11,8 +11,10 @@ import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
 from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
+from .utils import create_optimizer_from_config, create_scheduler_from_config
 
-from pytorch_lightning.utilities.distributed import rank_zero_only
+
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 
 class AutoencoderTrainingWrapper(pl.LightningModule):
@@ -24,6 +26,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             encoder_freeze_on_warmup: bool = False,
             sample_rate=48000,
             loss_config: dict = None,
+            optimizer_configs: dict = None,
             use_ema: bool = True,
             ema_copy = None,
             force_input_mono = False,
@@ -44,6 +47,31 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.force_input_mono = force_input_mono
 
         self.teacher_model = teacher_model
+
+        if optimizer_configs is None:
+            optimizer_configs ={
+                "autoencoder": {
+                    "optimizer": {
+                        "type": "adam",
+                        "config": {
+                            "lr": lr,
+                            "betas": (.5, .9)
+                        }
+                    }
+                },
+                "discriminator": {
+                    "optimizer": {
+                        "type": "adam",
+                        "config": {
+                            "lr": lr,
+                            "betas": (.5, .9)
+                        }
+                    }
+                }
+
+            } 
+            
+        self.optimizer_configs = optimizer_configs
 
         if loss_config is None:
             scales = [2048, 1024, 512, 256, 128, 64, 32]
@@ -126,8 +154,15 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.latent_mask_ratio = latent_mask_ratio
 
     def configure_optimizers(self):
-        opt_gen = optim.Adam([*self.autoencoder.parameters()], lr=self.lr, betas=(.5, .9))
-        opt_disc = optim.Adam([*self.discriminator.parameters()], lr=self.lr, betas=(.5, .9))
+
+        opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], self.autoencoder.parameters())
+        opt_disc = create_optimizer_from_config(self.optimizer_configs['discriminator']['optimizer'], self.discriminator.parameters())
+
+        if "scheduler" in self.optimizer_configs['autoencoder'] and "scheduler" in self.optimizer_configs['discriminator']:
+            sched_gen = create_scheduler_from_config(self.optimizer_configs['autoencoder']['scheduler'], opt_gen)
+            sched_disc = create_scheduler_from_config(self.optimizer_configs['discriminator']['scheduler'], opt_disc)
+            return [opt_gen, opt_disc], [sched_gen, sched_disc]
+
         return [opt_gen, opt_disc]
   
     def training_step(self, batch, batch_idx):
@@ -139,8 +174,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         if self.global_step >= self.warmup_steps:
             self.warmed_up = True
-
-        opt_gen, opt_disc = self.optimizers()
 
         encoder_input = reals
 
@@ -196,17 +229,32 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             loss_adv = torch.tensor(0.).to(reals)
             feature_matching_distance = torch.tensor(0.).to(reals)
 
+        opt_gen, opt_disc = self.optimizers()
+
+        lr_schedulers = self.lr_schedulers()
+
+        sched_gen = None
+        sched_disc = None
+
+        if lr_schedulers is not None:
+            sched_gen, sched_disc = lr_schedulers
+
         # Train the discriminator
         if self.global_step % 2 and self.warmed_up:
             loss = loss_dis
 
             log_dict = {
-                'train/discriminator_loss': loss_dis.detach()  
+                'train/discriminator_loss': loss_dis.detach()  ,
+                'train/disc_lr': opt_disc.param_groups[0]['lr']
             }
 
             opt_disc.zero_grad()
             self.manual_backward(loss_dis)
             opt_disc.step()
+
+            if sched_disc is not None:
+                # sched step every step
+                sched_disc.step()
 
         # Train the generator 
         else:
@@ -259,6 +307,10 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             self.manual_backward(loss)
             opt_gen.step()
 
+            if sched_gen is not None:
+                # scheduler step every step
+                sched_gen.step()
+
             log_dict = {
                 'train/loss': loss.detach(),
                 'train/mrstft_loss': mrstft_loss.detach(),   
@@ -266,6 +318,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 'train/loss_adv': loss_adv.detach(),
                 'train/feature_matching': feature_matching_distance.detach(),
                 'train/latent_std': latents.std().detach(),
+                'train/gen_lr': opt_gen.param_groups[0]['lr']
             }
 
             if self.teacher_model is not None:

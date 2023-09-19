@@ -11,7 +11,7 @@ from ema_pytorch import EMA
 from einops import rearrange
 from torch import optim
 from torch.nn import functional as F
-from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 from ..inference.sampling import get_alphas_sigmas, sample
 from ..inference.generation import generate_diffusion_cond
