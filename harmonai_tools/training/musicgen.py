@@ -14,7 +14,7 @@ from torch.nn import functional as F
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 from audiocraft.models import MusicGen
-from audiocraft.modules.conditioners import ClassifierFreeGuidanceDropout
+from audiocraft.modules.conditioners import ClassifierFreeGuidanceDropout, ConditioningAttributes
 
 from time import time
 
@@ -56,6 +56,43 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         optimizer = optim.AdamW([*self.lm.parameters()], lr=self.lr, betas=(0.9, 0.95), weight_decay=0.1)
 
         return optimizer
+    
+    # Copied and modified from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/solvers/musicgen.py under MIT license
+    # License can be found in LICENSES/LICENSE_META.txt
+
+    def _compute_cross_entropy(
+        self, logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor
+    ) -> tp.Tuple[torch.Tensor, tp.List[torch.Tensor]]:
+        """Compute cross entropy between multi-codebook targets and model's logits.
+        The cross entropy is computed per codebook to provide codebook-level cross entropy.
+        Valid timesteps for each of the codebook are pulled from the mask, where invalid
+        timesteps are set to 0.
+
+        Args:
+            logits (torch.Tensor): Model's logits of shape [B, K, T, card].
+            targets (torch.Tensor): Target codes, of shape [B, K, T].
+            mask (torch.Tensor): Mask for valid target codes, of shape [B, K, T].
+        Returns:
+            ce (torch.Tensor): Cross entropy averaged over the codebooks
+            ce_per_codebook (list of torch.Tensor): Cross entropy per codebook (detached).
+        """
+        B, K, T = targets.shape
+        assert logits.shape[:-1] == targets.shape
+        assert mask.shape == targets.shape
+        ce = torch.zeros([], device=targets.device)
+        ce_per_codebook: tp.List[torch.Tensor] = []
+        for k in range(K):
+            logits_k = logits[:, k, ...].contiguous().view(-1, logits.size(-1))  # [B x T, card]
+            targets_k = targets[:, k, ...].contiguous().view(-1)  # [B x T]
+            mask_k = mask[:, k, ...].contiguous().view(-1)  # [B x T]
+            ce_targets = targets_k[mask_k]
+            ce_logits = logits_k[mask_k]
+            q_ce = F.cross_entropy(ce_logits, ce_targets)
+            ce += q_ce
+            ce_per_codebook.append(q_ce.detach())
+        # average cross entropy across codebooks
+        ce = ce / K
+        return ce, ce_per_codebook
 
     def training_step(self, batch, batch_idx):
         reals, metadata = batch
@@ -64,7 +101,6 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         # Convert reals to mono
         reals = reals.mean(dim=1, keepdim=True)
 
-        condition_strings = [md["prompt"][0] for md in metadata]
 
         self.musicgen_model.compression_model.to(self.device).eval()
         self.lm.to(self.device).train()
@@ -73,20 +109,18 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         self.lm.condition_provider.conditioners["description"].device = self.device
         self.lm.condition_provider.conditioners["description"].t5.to(self.device).eval()
 
-        codes, _ = self.musicgen_model.compression_model.encode(reals) # [b, k, t]
-        
-        # Get the conditioning attributes from the prompts
-        conditioning, _ = self.musicgen_model._prepare_tokens_and_attributes(condition_strings, None)
-
-        # Apply dropout to the conditioning attributes
-        conditioning = self.cfg_dropout(conditioning)
-
-        # tokenize the conditioning attributes
-        tokenized = self.lm.condition_provider.tokenize(conditioning)
-
-        condition_tensors = self.lm.condition_provider(tokenized)
-        
         with torch.cuda.amp.autocast():
+
+            codes, _ = self.musicgen_model.compression_model.encode(reals) # [b, k, t]
+
+            attributes = [ConditioningAttributes(text={'description': md["prompt"][0]}) for md in metadata]
+            attributes = self.lm.cfg_dropout(attributes)
+            attributes = self.lm.att_dropout(attributes)
+            tokenized = self.lm.condition_provider.tokenize(attributes)
+     
+            with torch.cuda.amp.autocast(enabled=False):
+                condition_tensors = self.lm.condition_provider(tokenized)
+                
             lm_output = self.lm.compute_predictions(
                 codes=codes,
                 conditions = [],
@@ -96,24 +130,19 @@ class MusicGenTrainingWrapper(pl.LightningModule):
             logits = lm_output.logits # [b, k, t, c]
             logits_mask = lm_output.mask # [b, k, t]
 
-            logits = logits.float()
-            logits_mask = logits_mask.float()
+            cross_entropy, cross_entropy_per_codebook = self._compute_cross_entropy(logits, codes, logits_mask)
 
-            #one-hot encode the codes
-            codes = F.one_hot(codes, num_classes=self.lm.card).float() # [b, k, t, c]
-            
-            # Flatten and mask the logits
-            logits = logits.reshape(-1, logits.shape[-1])
-            logits_mask = logits_mask.reshape(-1)
-            logits = logits[logits_mask == 1]
-            codes = codes.reshape(-1, codes.shape[-1])
-            codes = codes[logits_mask == 1]
-
-            loss = F.cross_entropy(logits, codes.argmax(dim=-1))
+            loss = cross_entropy
 
         log_dict = {
             'train/loss': loss.detach(),
+            'train/cross_entropy': cross_entropy.detach(),
+            'train/perplexity': torch.exp(cross_entropy).detach(),
         }
+
+        for k, ce_q in enumerate(cross_entropy_per_codebook):
+            log_dict[f'cross_entropy_q{k + 1}'] = ce_q
+            log_dict[f'perplexity_q{k + 1}'] = torch.exp(ce_q)
 
         self.log_dict(log_dict, prog_bar=True, on_step=True)
         return loss

@@ -52,19 +52,19 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             optimizer_configs ={
                 "autoencoder": {
                     "optimizer": {
-                        "type": "adam",
+                        "type": "AdamW",
                         "config": {
                             "lr": lr,
-                            "betas": (.5, .9)
+                            "betas": (.8, .99)
                         }
                     }
                 },
                 "discriminator": {
                     "optimizer": {
-                        "type": "adam",
+                        "type": "AdamW",
                         "config": {
                             "lr": lr,
-                            "betas": (.5, .9)
+                            "betas": (.8, .99)
                         }
                     }
                 }
@@ -324,7 +324,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             if self.teacher_model is not None:
                 log_dict['train/latent_loss'] = latent_loss.detach()
 
-            if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck):
+            if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
                 log_dict['train/kl_loss'] = kl_loss.detach()
             
             if isinstance(self.autoencoder.bottleneck, RVQBottleneck):
