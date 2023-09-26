@@ -178,9 +178,11 @@ def create_sampling_ui(inpainting=False):
             if inpainting: 
                 # Inpainting Tab
                 with gr.Accordion("Inpainting", open=False):
+                    sigma_max_slider.maximum=1000
+                    
                     init_audio_checkbox = gr.Checkbox(label="Do inpainting")
                     init_audio_input = gr.Audio(label="Init audio")
-                    init_noise_level_slider = gr.Slider(minimum=0.1, maximum=100.0, step=0.1, value=80, label="Init audio noise level")
+                    init_noise_level_slider = gr.Slider(minimum=0.1, maximum=100.0, step=0.1, value=80, label="Init audio noise level", visible=False) # hide this
 
                     mask_cropfrom_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Crop From %")
                     mask_pastefrom_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Paste From %")
@@ -188,9 +190,9 @@ def create_sampling_ui(inpainting=False):
 
                     mask_maskstart_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=50, label="Mask Start %")
                     mask_maskend_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=100, label="Mask End %")
-                    mask_softnessL_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=10, label="Softmask Left Crossfade Length %")
+                    mask_softnessL_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Softmask Left Crossfade Length %")
                     mask_softnessR_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Softmask Right Crossfade Length %")
-                    mask_marination_slider = gr.Slider(minimum=0.0, maximum=100.0, step=0.1, value=0, label="Marination level")
+                    mask_marination_slider = gr.Slider(minimum=0.0, maximum=1, step=0.0001, value=0, label="Marination level", visible=False) # still working on the usefulness of this 
 
                     inputs = [prompt, 
                         seconds_start_slider, 

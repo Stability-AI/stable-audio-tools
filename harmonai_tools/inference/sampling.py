@@ -61,13 +61,13 @@ def sample(model, x, steps, eta, **extra_args):
 def get_bmask(i, steps, mask):
     strength = (i+1)/(steps)
     # convert to binary mask
-    bmask = torch.where(mask<=strength,0,1)
+    bmask = torch.where(mask<=strength,1,0)
     return bmask
 
 # Uses k-diffusion from https://github.com/crowsonkb/k-diffusion
-# For normal generation, set init_audio and mask to None
+# For sampling, set both init_audio and mask to None
 # For variations, set init_audio 
-# For inpainting, set init_audio & mask 
+# For inpainting, set both init_audio & mask 
 def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, steps=100, sampler_type="dpmpp-2m-sde", sigma_max=80, sigma_min=0.5, rho=1.0, device="cuda", callback=None, **extra_args):
     denoiser = K.external.VDenoiser(model_fn)
     if init_audio is not None and mask is None:
@@ -83,7 +83,6 @@ def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, 
         # VARIATION (no inpainting)
         # set the initial latent to the init_audio, and noise it with initial sigma
         x = init_audio + torch.randn_like(init_audio) * sigmas[0]
-        callback = None
     elif mask is not None and init_audio is not None:
         # INPAINTING
         bmask = get_bmask(0, steps, mask)
@@ -91,12 +90,11 @@ def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, 
         input_noised = init_audio + torch.randn_like(init_audio) * sigmas[0] 
         # set the initial latent to a mix of init_audio and noise, based on step 0's binary mask
         x = input_noised * bmask + noise * (1-bmask)
-
         # define the inpainting callback function (Note: side effects, it mutates x)
         # See https://github.com/crowsonkb/k-diffusion/blob/master/k_diffusion/sampling.py#L596C13-L596C105
         # callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
         # This is called immediately after `denoised = model(x, sigmas[i] * s_in, **extra_args)`
-        def callback(args):
+        def inpainting_callback(args):
             i = args["i"]
             x = args["x"]
             sigma = args["sigma"]
@@ -109,11 +107,12 @@ def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, 
             new_x = input_noised * bmask + x * (1-bmask)
             # mutate x
             x[:,:,:] = new_x[:,:,:]
+        # wrap together the inpainting callback and the user-submitted callback. 
+        callback = lambda args: inpainting_callback(args) and callback(args)
     else:
-        # NORMAL GENERATION
+        # SAMPLING
         # set the initial latent to noise
         x = noise
-        callback = None
 
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":

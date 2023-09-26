@@ -114,6 +114,10 @@ def generate_diffusion_cond(
         # Build a soft mask (list of floats 0 to 1, the size of the latent) from the given args
         mask = build_mask(sample_size, mask_args)
         mask = mask.to(device)
+    elif init_audio is not None and mask_args is None:
+        # variations
+        sampler_kwargs["sigma_max"] = init_noise_level
+        mask = None 
     else:
         mask = None
 
@@ -141,7 +145,7 @@ def build_mask(sample_size, mask_args):
     maskend = math.ceil(mask_args["maskend"]/100.0 * sample_size)
     softnessL = round(mask_args["softnessL"]/100.0 * sample_size)
     softnessR = round(mask_args["softnessR"]/100.0 * sample_size)
-    marination = math.floor(mask_args["marination"]/100.0)
+    marination = mask_args["marination"]
     # use hann windows for softening the transition (i don't know if this is correct)
     hannL = torch.hann_window(softnessL*2, periodic=False)[:softnessL]
     hannR = torch.hann_window(softnessR*2, periodic=False)[softnessR:]
@@ -150,8 +154,8 @@ def build_mask(sample_size, mask_args):
     mask[maskstart:maskend] = 1
     mask[maskstart:maskstart+softnessL] = hannL
     mask[maskend-softnessR:maskend] = hannR
-    # marination finishes the inpainting early in the denoising schedule, and lets audio get changed in the final round
+    # marination finishes the inpainting early in the denoising schedule, and lets audio get changed in the final rounds
     if marination > 0:        
-        mask = mask * (1-marination)
+        mask = mask * (1-marination) 
     #print(mask)
     return mask
