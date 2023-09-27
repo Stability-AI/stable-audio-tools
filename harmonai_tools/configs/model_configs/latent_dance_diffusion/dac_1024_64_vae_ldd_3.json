@@ -38,13 +38,13 @@
             "io_channels": 64,
             "n_attn_layers": 4,
             "depth": 6,
-            "channels": [512, 512, 768, 768, 768, 768],
-            "learned_resample": false,
+            "channels": [768, 768, 768, 768, 1024, 1024],
+            "learned_resample": true,
             "strides": [2, 2, 2, 2, 2]
         }
     },
     "training": {
-        "learning_rate": 4e-5,
+        "learning_rate": 1e-4,
         "demo_steps": 250,
         "num_demos": 8,
         "demo_every": 2000

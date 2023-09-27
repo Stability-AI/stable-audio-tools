@@ -11,14 +11,15 @@
                 "latent_dim": 128,
                 "d_model": 128,
                 "strides": [4, 4, 8, 8]
-            }
+            },
+            "requires_grad": false
         },
         "decoder": {
             "type": "dac",
             "config": {
                 "out_channels": 2,
                 "latent_dim": 64,
-                "channels": 1536,
+                "channels": 2048,
                 "rates": [8, 8, 4, 4]
             }
         },
@@ -30,14 +31,14 @@
         "io_channels": 2
     },
     "training": {
-        "learning_rate": 2e-5,
+        "learning_rate": 4e-5,
         "warmup_steps": 0,
         "use_ema": true,
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",
                 "config": {
-                    "filters": 32,
+                    "filters": 64,
                     "n_ffts": [2048, 1024, 512, 256, 128],
                     "hop_lengths": [512, 256, 128, 64, 32],
                     "win_lengths": [2048, 1024, 512, 256, 128]
@@ -63,12 +64,6 @@
                 "type": "l1",
                 "weights": {
                     "l1": 0.1
-                }
-            },
-            "bottleneck": {
-                "type": "kl",
-                "weights": {
-                    "kl": 1e-6
                 }
             }
         },

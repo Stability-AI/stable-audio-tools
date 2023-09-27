@@ -9,10 +9,12 @@ from ema_pytorch import EMA
 import auraloss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
-from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator
+from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
 from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
+from .utils import create_optimizer_from_config, create_scheduler_from_config
 
-from pytorch_lightning.utilities.distributed import rank_zero_only
+
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 
 class AutoencoderTrainingWrapper(pl.LightningModule):
@@ -20,9 +22,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             self, 
             autoencoder: AudioAutoencoder,
             lr: float = 1e-4,
-            warmup_steps: int = 150000,
+            warmup_steps: int = 0,
+            encoder_freeze_on_warmup: bool = False,
             sample_rate=48000,
             loss_config: dict = None,
+            optimizer_configs: dict = None,
             use_ema: bool = True,
             ema_copy = None,
             force_input_mono = False,
@@ -37,11 +41,37 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         self.warmed_up = False
         self.warmup_steps = warmup_steps
+        self.encoder_freeze_on_warmup = encoder_freeze_on_warmup
         self.lr = lr
 
         self.force_input_mono = force_input_mono
 
         self.teacher_model = teacher_model
+
+        if optimizer_configs is None:
+            optimizer_configs ={
+                "autoencoder": {
+                    "optimizer": {
+                        "type": "AdamW",
+                        "config": {
+                            "lr": lr,
+                            "betas": (.8, .99)
+                        }
+                    }
+                },
+                "discriminator": {
+                    "optimizer": {
+                        "type": "AdamW",
+                        "config": {
+                            "lr": lr,
+                            "betas": (.8, .99)
+                        }
+                    }
+                }
+
+            } 
+            
+        self.optimizer_configs = optimizer_configs
 
         if loss_config is None:
             scales = [2048, 1024, 512, 256, 128, 64, 32]
@@ -104,6 +134,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             self.discriminator = OobleckDiscriminator(**loss_config['discriminator']['config'])
         elif loss_config['discriminator']['type'] == 'encodec':
             self.discriminator = EncodecDiscriminator(in_channels=self.autoencoder.out_channels, **loss_config['discriminator']['config'])
+        elif loss_config['discriminator']['type'] == 'dac':
+            self.discriminator = DACGANLoss(channels=self.autoencoder.out_channels, sample_rate=sample_rate, **loss_config['discriminator']['config'])
 
         self.autoencoder_ema = None
         
@@ -122,8 +154,15 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.latent_mask_ratio = latent_mask_ratio
 
     def configure_optimizers(self):
-        opt_gen = optim.Adam([*self.autoencoder.parameters()], lr=self.lr, betas=(.5, .9))
-        opt_disc = optim.Adam([*self.discriminator.parameters()], lr=self.lr, betas=(.5, .9))
+
+        opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], self.autoencoder.parameters())
+        opt_disc = create_optimizer_from_config(self.optimizer_configs['discriminator']['optimizer'], self.discriminator.parameters())
+
+        if "scheduler" in self.optimizer_configs['autoencoder'] and "scheduler" in self.optimizer_configs['discriminator']:
+            sched_gen = create_scheduler_from_config(self.optimizer_configs['autoencoder']['scheduler'], opt_gen)
+            sched_disc = create_scheduler_from_config(self.optimizer_configs['discriminator']['scheduler'], opt_disc)
+            return [opt_gen, opt_disc], [sched_gen, sched_disc]
+
         return [opt_gen, opt_disc]
   
     def training_step(self, batch, batch_idx):
@@ -136,14 +175,16 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         if self.global_step >= self.warmup_steps:
             self.warmed_up = True
 
-        opt_gen, opt_disc = self.optimizers()
-
         encoder_input = reals
 
         if self.force_input_mono and encoder_input.shape[1] > 1:
             encoder_input = encoder_input.mean(dim=1, keepdim=True)
 
-        latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
+        if self.warmed_up and self.encoder_freeze_on_warmup:
+            with torch.no_grad():
+                latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
+        else:
+            latents, encoder_info = self.autoencoder.encode(encoder_input, return_info=True)
 
         # Encode with teacher model for distillation
         if self.teacher_model is not None:
@@ -157,28 +198,29 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         decoded = self.autoencoder.decode(latents)
 
-        # Distillation
+        # Distillation with spectral losses
         if self.teacher_model is not None:
             with torch.no_grad():
                 teacher_decoded = self.teacher_model.decode(teacher_latents)
                 own_latents_teacher_decoded = self.teacher_model.decode(latents) #Distilled model's latents decoded by teacher
+                teacher_latents_own_decoded = self.autoencoder.decode(teacher_latents) #Teacher's latents decoded by distilled model
 
 
             mrstft_loss = self.sdstft(reals, decoded) # Reconstruction loss
             mrstft_loss += self.sdstft(reals, own_latents_teacher_decoded) # Distilled model's encoder is compatible with teacher's decoder
             mrstft_loss += self.sdstft(decoded, teacher_decoded) # Distilled model's decoder is compatible with teacher's decoder
-            mrstft_loss /= 3
-
-            l1_time_loss = F.l1_loss(decoded, teacher_decoded)
+            mrstft_loss += self.sdstft(reals, teacher_latents_own_decoded) # Teacher's encoder is compatible with distilled model's decoder
+            mrstft_loss /= 4
 
             latent_loss = F.l1_loss(latents, teacher_latents)
 
         else:
             mrstft_loss = self.sdstft(reals, decoded)
 
-            l1_time_loss = F.l1_loss(reals, decoded)
-
             latent_loss = torch.tensor(0.).to(reals)
+
+        # Time-domain reconstruction loss
+        l1_time_loss = F.l1_loss(reals, decoded)
 
         if self.warmed_up:
             loss_dis, loss_adv, feature_matching_distance = self.discriminator.loss(reals, decoded)
@@ -187,17 +229,32 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             loss_adv = torch.tensor(0.).to(reals)
             feature_matching_distance = torch.tensor(0.).to(reals)
 
+        opt_gen, opt_disc = self.optimizers()
+
+        lr_schedulers = self.lr_schedulers()
+
+        sched_gen = None
+        sched_disc = None
+
+        if lr_schedulers is not None:
+            sched_gen, sched_disc = lr_schedulers
+
         # Train the discriminator
         if self.global_step % 2 and self.warmed_up:
             loss = loss_dis
 
             log_dict = {
-                'train/discriminator_loss': loss_dis.detach()  
+                'train/discriminator_loss': loss_dis.detach()  ,
+                'train/disc_lr': opt_disc.param_groups[0]['lr']
             }
 
             opt_disc.zero_grad()
             self.manual_backward(loss_dis)
             opt_disc.step()
+
+            if sched_disc is not None:
+                # sched step every step
+                sched_disc.step()
 
         # Train the generator 
         else:
@@ -250,6 +307,10 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             self.manual_backward(loss)
             opt_gen.step()
 
+            if sched_gen is not None:
+                # scheduler step every step
+                sched_gen.step()
+
             log_dict = {
                 'train/loss': loss.detach(),
                 'train/mrstft_loss': mrstft_loss.detach(),   
@@ -257,12 +318,13 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                 'train/loss_adv': loss_adv.detach(),
                 'train/feature_matching': feature_matching_distance.detach(),
                 'train/latent_std': latents.std().detach(),
+                'train/gen_lr': opt_gen.param_groups[0]['lr']
             }
 
             if self.teacher_model is not None:
                 log_dict['train/latent_loss'] = latent_loss.detach()
 
-            if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck):
+            if isinstance(self.autoencoder.bottleneck, VAEBottleneck) or isinstance(self.autoencoder.bottleneck, DACRVQVAEBottleneck) or isinstance(self.autoencoder.bottleneck, RVQVAEBottleneck):
                 log_dict['train/kl_loss'] = kl_loss.detach()
             
             if isinstance(self.autoencoder.bottleneck, RVQBottleneck):
@@ -340,35 +402,30 @@ class AutoencoderDemoCallback(pl.Callback):
 
                     fakes = module.autoencoder.decode(latents)
 
+            #Interleave reals and fakes
+            reals_fakes = rearrange([demo_reals, fakes], 'i b d n -> (b i) d n')
+
             # Put the demos together
-            fakes = rearrange(fakes, 'b d n -> d (b n)')
-            demo_reals = rearrange(demo_reals, 'b d n -> d (b n)')
+            reals_fakes = rearrange(reals_fakes, 'b d n -> d (b n)')
 
             log_dict = {}
             
             filename = f'recon_{trainer.global_step:08}.wav'
-            fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            torchaudio.save(filename, fakes, self.sample_rate)
-
-            reals_filename = f'reals_{trainer.global_step:08}.wav'
-            demo_reals = demo_reals.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            torchaudio.save(reals_filename, demo_reals, self.sample_rate)
+            reals_fakes = reals_fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+            torchaudio.save(filename, reals_fakes, self.sample_rate)
 
             log_dict[f'recon'] = wandb.Audio(filename,
                                                 sample_rate=self.sample_rate,
                                                 caption=f'Reconstructed')
-            log_dict[f'real'] = wandb.Audio(reals_filename,
-                                                sample_rate=self.sample_rate,
-                                                caption=f'Real')
-
+            
             log_dict[f'embeddings_3dpca'] = pca_point_cloud(latents)
             log_dict[f'embeddings_spec'] = wandb.Image(tokens_spectrogram_image(latents))
 
-            log_dict[f'real_melspec_left'] = wandb.Image(audio_spectrogram_image(demo_reals))
-            log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
+            log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
 
             trainer.logger.experiment.log(log_dict)
         except Exception as e:
             print(f'{type(e).__name__}: {e}')
+            raise e
         finally:
             module.train()

@@ -5,7 +5,7 @@
     "model": {
         "type": "DAU1d",
         "config": {
-            "n_attn_layers": 4
+            "n_attn_layers": 5
         }
     },
     "training": {

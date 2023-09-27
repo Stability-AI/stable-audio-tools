@@ -1,5 +1,6 @@
 import argparse
 import json
+import torch
 from torch.nn.parameter import Parameter
 from harmonai_tools.models import create_model_from_config
 
@@ -52,9 +53,19 @@ if __name__ == '__main__':
     elif model_type == 'diffusion_uncond':
         from harmonai_tools.training.diffusion import DiffusionUncondTrainingWrapper
         training_wrapper = DiffusionUncondTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)
+
     elif model_type == 'diffusion_autoencoder':
         from harmonai_tools.training.diffusion import DiffusionAutoencoderTrainingWrapper
-        training_wrapper = DiffusionAutoencoderTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)
+
+        ema_copy = create_model_from_config(model_config)
+        
+        for name, param in model.state_dict().items():
+            if isinstance(param, Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            ema_copy.state_dict()[name].copy_(param)
+
+        training_wrapper = DiffusionAutoencoderTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, ema_copy=ema_copy, strict=False)
     elif model_type == 'diffusion_cond':
         from harmonai_tools.training.diffusion import DiffusionCondTrainingWrapper
         training_wrapper = DiffusionCondTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)

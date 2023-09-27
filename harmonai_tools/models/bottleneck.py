@@ -11,7 +11,7 @@ class Bottleneck(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def encode(self, x, return_info=False):
+    def encode(self, x, return_info=False, **kwargs):
         raise NotImplementedError
 
     def decode(self, x):
@@ -49,7 +49,7 @@ class VAEBottleneck(Bottleneck):
     def __init__(self):
         super().__init__()
 
-    def encode(self, x, return_info=False):
+    def encode(self, x, return_info=False, **kwargs):
         info = {}
 
         mean, scale = x.chunk(2, dim=1)
@@ -131,7 +131,7 @@ class RVQBottleneck(Bottleneck):
         self.quantizer = ResidualVQ(**quantizer_kwargs)
         self.num_quantizers = quantizer_kwargs["num_quantizers"]
 
-    def encode(self, x, return_info=False):
+    def encode(self, x, return_info=False, **kwargs):
         info = {}
 
         x = rearrange(x, "b c n -> b n c")
@@ -184,7 +184,7 @@ class DACRVQBottleneck(Bottleneck):
         self.num_quantizers = quantizer_kwargs["n_codebooks"]
         self.quantize_on_decode = quantize_on_decode
 
-    def encode(self, x, return_info=False):
+    def encode(self, x, return_info=False, **kwargs):
         info = {}
 
         info["pre_quantizer"] = x
@@ -192,7 +192,7 @@ class DACRVQBottleneck(Bottleneck):
         if self.quantize_on_decode:
             return x, info if return_info else x
 
-        output = self.quantizer(x)
+        output = self.quantizer(x, **kwargs)
 
         output["vq/commitment_loss"] /= self.num_quantizers
         output["vq/codebook_loss"] /= self.num_quantizers

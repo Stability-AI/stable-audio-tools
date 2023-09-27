@@ -68,11 +68,24 @@ def get_bmask(i, steps, mask):
 # For sampling, set both init_audio and mask to None
 # For variations, set init_audio 
 # For inpainting, set both init_audio & mask 
-def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, steps=100, sampler_type="dpmpp-2m-sde", sigma_max=80, sigma_min=0.5, rho=1.0, device="cuda", callback=None, **extra_args):
+#def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, steps=100, sampler_type="dpmpp-2m-sde", sigma_max=80, sigma_min=0.5, rho=1.0, device="cuda", callback=None, **extra_args):
+
+def sample_k(
+        model_fn, 
+        noise, 
+        init_audio=None,
+        mask=None,
+        steps=100, 
+        sampler_type="dpmpp-2m-sde", 
+        sigma_min=0.5, 
+        sigma_max=50, 
+        rho=1.0, device="cuda", 
+        callback=None, 
+        init_data=None,
+        **extra_args
+    ):
+
     denoiser = K.external.VDenoiser(model_fn)
-    if init_audio is not None and mask is None:
-        # VARIATIONS
-        sigma_max = init_noise_level
 
     # Make the list of sigmas. Sigma values are scalars related to the amount of noise each denoising step has
     sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)
@@ -82,7 +95,7 @@ def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, 
     if mask is None and init_audio is not None:
         # VARIATION (no inpainting)
         # set the initial latent to the init_audio, and noise it with initial sigma
-        x = init_audio + torch.randn_like(init_audio) * sigmas[0]
+        x = init_audio + noise 
     elif mask is not None and init_audio is not None:
         # INPAINTING
         bmask = get_bmask(0, steps, mask)
@@ -129,3 +142,4 @@ def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, 
             return K.sampling.sample_dpm_adaptive(denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=False, callback=callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-2m-sde":
             return K.sampling.sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
+

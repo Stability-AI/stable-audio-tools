@@ -19,7 +19,7 @@
             "config": {
                 "out_channels": 2,
                 "latent_dim": 64,
-                "channels": 1536,
+                "channels": 2048,
                 "rates": [8, 8, 4, 4]
             }
         },

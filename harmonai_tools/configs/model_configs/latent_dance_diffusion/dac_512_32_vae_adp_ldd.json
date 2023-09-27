@@ -11,40 +11,48 @@
                     "type": "dac",
                     "config": {
                         "in_channels": 2,
-                        "latent_dim": 128,
+                        "latent_dim": 64,
                         "d_model": 128,
-                        "strides": [4, 4, 8, 8]
+                        "strides": [2, 4, 8, 8]
                     }
                 },
                 "decoder": {
                     "type": "dac",
                     "config": {
                         "out_channels": 2,
-                        "latent_dim": 64,
+                        "latent_dim": 32,
                         "channels": 1536,
-                        "rates": [8, 8, 4, 4]
+                        "rates": [8, 8, 4, 2]
                     }
                 },
                 "bottleneck": {
                     "type": "vae"
                 },
-                "latent_dim": 64,
-                "downsampling_ratio": 1024,
+                "latent_dim": 32,
+                "downsampling_ratio": 512,
                 "io_channels": 2
             }
         },
-        "type": "DAU1d",
+        "type": "adp_uncond_1d",
         "config": {
-            "io_channels": 64,
-            "n_attn_layers": 4,
-            "depth": 6,
-            "channels": [512, 512, 768, 768, 768, 768],
-            "learned_resample": false,
-            "strides": [2, 2, 2, 2, 2]
+            "in_channels": 32,
+            "channels": 256,
+            "resnet_groups": 8,
+            "kernel_multiplier_downsample": 2,
+            "multipliers": [3, 3, 3, 4, 4, 4],
+            "factors": [1, 2, 2, 4, 4],
+            "num_blocks": [2, 2, 2, 2, 2],
+            "attentions": [0, 3, 3, 3, 3, 3],
+            "attention_heads": 16,
+            "attention_features": 64,
+            "attention_multiplier": 2,
+            "use_nearest_upsample": false,
+            "use_skip_scale": true,
+            "use_context_time": true
         }
     },
     "training": {
-        "learning_rate": 4e-5,
+        "learning_rate": 5e-5,
         "demo_steps": 250,
         "num_demos": 8,
         "demo_every": 2000
