@@ -2,16 +2,16 @@ from setuptools import setup, find_packages
 
 setup(
     name='harmonai-tools',
-    version='0.0.5',
+    version='0.0.6',
     url='https://github.com/Harmonai-org/harmonai-tools.git',
     author='Harmonai',
     description='Training and inference tools for generative audio models from Harmonai',
     packages=find_packages(),  
     install_requires=[
-        'audiocraft==0.0.2',
+        'audiocraft==1.0.0',
         'aeiou==0.0.20',
         'alias-free-torch==0.0.6',
-        'audio-diffusion-pytorch-fork==0.0.104',
+        'audio-diffusion-pytorch-fork==0.0.105',
         'auraloss==0.4.0',
         'descript-audio-codec==1.0.0',
         'einops==0.6.1',
@@ -26,7 +26,7 @@ setup(
         'pandas==2.0.2',
         'pedalboard==0.7.4',
         'prefigure==0.0.9',
-        'pytorch_lightning==1.7.4', 
+        'pytorch_lightning==2.0.9', 
         'PyWavelets==1.4.1',
         'sentencepiece==0.1.99',
         's3fs==2023.6.0',

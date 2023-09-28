@@ -418,38 +418,44 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
 
         # Create a mask tensor for each batch element
         masks = []
-        for i in range(b):
-            mask_type = random.randint(0, 2)
+       # for i in range(b):
+        mask_type = random.randint(0, 2)
 
-            if mask_type == 0: # Random mask
-                # Randomly choose the length and starting index of the mask
-                mask_length = random.randint(1, max_mask_length)
-                mask_start = random.randint(0, sequence_length-mask_length)
+        if mask_type == 0: # Random mask
+            # Randomly choose the length and starting index of the mask
+            mask_length = random.randint(1, max_mask_length)
+            mask_start = random.randint(0, sequence_length-mask_length)
 
-                # Create the mask tensor
-                mask = torch.ones((1, 1, sequence_length))
-                mask[:, :, mask_start:mask_start+mask_length] = 0
-                mask = mask.to(sequence.device)
+            # Create the mask tensor
+            mask = torch.ones((1, 1, sequence_length))
+            mask[:, :, mask_start:mask_start+mask_length] = 0
+            mask = mask.to(sequence.device)
 
-                masks.append(mask)
+            masks.append(mask)
+            causal = False
 
-            elif mask_type == 1: # Full mask
-                mask = torch.zeros((1, 1, sequence_length)).to(sequence.device)
-                masks.append(mask)
+        elif mask_type == 1: # Full mask
+            mask = torch.zeros((1, 1, sequence_length)).to(sequence.device)
+            masks.append(mask)
+            causal = False
 
-            elif mask_type == 2: # Causal mask
-                mask = torch.ones((1, 1, sequence_length)).to(sequence.device)
-                mask_length = random.randint(1, max_mask_length)
-                mask[:, :, -mask_length:] = 0
-                masks.append(mask)
+        elif mask_type == 2: # Causal mask
+            mask = torch.ones((1, 1, sequence_length)).to(sequence.device)
+            mask_length = random.randint(1, max_mask_length)
+            mask[:, :, -mask_length:] = 0
+            masks.append(mask)
+            causal = True
                 
+        # Repeat masks to batch size
+        masks = masks * b
+        
         # Concatenate the mask tensors into a single tensor
         mask = torch.cat(masks, dim=0).to(sequence.device)
 
         # Apply the mask to the sequence tensor for each batch element
         masked_sequence = sequence * mask
 
-        return masked_sequence, mask
+        return masked_sequence, mask, causal
 
     def training_step(self, batch, batch_idx):
         reals, metadata = batch
@@ -476,7 +482,7 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
 
         if self.diffusion.pretransform is not None:
             self.diffusion.pretransform.to(self.device)
-            with torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+            with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                 p.tick("pretransform")
 
@@ -484,7 +490,7 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         max_mask_length = diffusion_input.shape[2]
 
         # Create a mask of random length for a random slice of the input
-        masked_input, mask = self.random_mask(diffusion_input, max_mask_length)
+        masked_input, mask, causal = self.random_mask(diffusion_input, max_mask_length)
 
         conditioning['inpaint_mask'] = [mask]
         conditioning['inpaint_masked_input'] = [masked_input]
@@ -500,7 +506,7 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
 
         with torch.cuda.amp.autocast():
             p.tick("amp")
-            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1)
+            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1, causal=causal)
             p.tick("diffusion")
             mse_loss = F.mse_loss(v, targets)
             
@@ -511,8 +517,6 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
                 md_string = [f"{md['prompt'], md['seconds_start'], md['seconds_total']}" for md in metadata]
                 print(f"Conditioning: {conditioning}")
                 print('\n\n'.join(md_string))
-                #print(f"t: {t}")
-                #print(f"v: {v}")
 
             loss = mse_loss
 
@@ -580,6 +584,8 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             # log_dict[f'demo_reals'] = wandb.Audio(rearrange(demo_reals, "b d n -> d (b n)").mul(32767).to(torch.int16).cpu(), sample_rate=self.sample_rate, caption="demo reals")
 
             if module.diffusion.pretransform is not None:
+                module.diffusion.pretransform.to(module.device)
+                with torch.cuda.amp.autocast():
                     demo_reals = module.diffusion.pretransform.encode(demo_reals)
 
             demo_samples = demo_reals.shape[2]
@@ -587,7 +593,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             # Get conditioning
             conditioning = module.diffusion.conditioner(metadata, module.device)
 
-            masked_input, mask = module.random_mask(demo_reals, demo_reals.shape[2])
+            masked_input, mask, causal = module.random_mask(demo_reals, demo_reals.shape[2])
 
             conditioning['inpaint_mask'] = [mask]
             conditioning['inpaint_masked_input'] = [masked_input]
@@ -606,10 +612,11 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             for cfg_scale in self.demo_cfg_scales:
                 
                 print(f"Generating demo for cfg scale {cfg_scale}")
-                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True, causal=causal)
 
                 if module.diffusion.pretransform is not None:
-                    fakes = module.diffusion.pretransform.decode(fakes)
+                    with torch.cuda.amp.autocast():
+                        fakes = module.diffusion.pretransform.decode(fakes)
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')
@@ -633,7 +640,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
 
 class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
     '''
-    Wrapper for training an unconditional audio diffusion model (like Dance Diffusion).
+    Wrapper for training a diffusion autoencoder
     '''
     def __init__(
             self,

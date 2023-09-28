@@ -192,7 +192,15 @@ class DACRVQBottleneck(Bottleneck):
         if self.quantize_on_decode:
             return x, info if return_info else x
 
-        output = self.quantizer(x, **kwargs)
+        z, codes, latents, commitment_loss, codebook_loss = self.quantizer(x, **kwargs)
+
+        output = {
+            "z": z,
+            "codes": codes,
+            "latents": latents,
+            "vq/commitment_loss": commitment_loss,
+            "vq/codebook_loss": codebook_loss,
+        }
 
         output["vq/commitment_loss"] /= self.num_quantizers
         output["vq/codebook_loss"] /= self.num_quantizers
@@ -207,7 +215,7 @@ class DACRVQBottleneck(Bottleneck):
     def decode(self, x):
 
         if self.quantize_on_decode:
-            x = self.quantizer(x)["z"]
+            x = self.quantizer(x)[0]
 
         return x
 
