@@ -33,8 +33,8 @@ def load_model(model_config, model_ckpt_path, pretransform_ckpt_path=None, devic
     print(f"Loading model checkpoint from {model_ckpt_path}")
     
     # Load checkpoint
-    #copy_state_dict(model, torch.load(model_ckpt_path)["state_dict"])
-    model.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
+    copy_state_dict(model, torch.load(model_ckpt_path)["state_dict"])
+    #model.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
 
     if pretransform_ckpt_path is not None:
         print(f"Loading pretransform checkpoint from {pretransform_ckpt_path}")
@@ -404,7 +404,7 @@ def create_sampling_ui(model_config, inpainting=False):
             send_to_init_button = gr.Button("Send to init audio", scale=1)
             send_to_init_button.click(fn=lambda audio: audio, inputs=[audio_output], outputs=[init_audio_input])
     
-    generate_button.click(fn=generate, 
+    generate_button.click(fn=generate_diffusion_cond, 
         inputs=inputs,
         outputs=[
             audio_output, 
