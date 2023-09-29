@@ -92,6 +92,8 @@ def sample_k(
     # Scale the initial noise by sigma 
     noise = noise * sigmas[0]
 
+    wrapped_callback = callback
+
     if mask is None and init_audio is not None:
         # VARIATION (no inpainting)
         # set the initial latent to the init_audio, and noise it with initial sigma
@@ -100,7 +102,7 @@ def sample_k(
         # INPAINTING
         bmask = get_bmask(0, steps, mask)
         # initial noising
-        input_noised = init_audio + torch.randn_like(init_audio) * sigmas[0] 
+        input_noised = init_audio + noise
         # set the initial latent to a mix of init_audio and noise, based on step 0's binary mask
         x = input_noised * bmask + noise * (1-bmask)
         # define the inpainting callback function (Note: side effects, it mutates x)
@@ -121,25 +123,27 @@ def sample_k(
             # mutate x
             x[:,:,:] = new_x[:,:,:]
         # wrap together the inpainting callback and the user-submitted callback. 
-        callback = lambda args: inpainting_callback(args) and callback(args)
+        if callback is not None: 
+            wrapped_callback = lambda args: (inpainting_callback(args), callback(args))
     else:
         # SAMPLING
         # set the initial latent to noise
         x = noise
 
+
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":
-            return K.sampling.sample_heun(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
+            return K.sampling.sample_heun(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-lms":
-            return K.sampling.sample_lms(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
+            return K.sampling.sample_lms(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpmpp-2s-ancestral":
-            return K.sampling.sample_dpmpp_2s_ancestral(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
+            return K.sampling.sample_dpmpp_2s_ancestral(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-2":
-            return K.sampling.sample_dpm_2(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
+            return K.sampling.sample_dpm_2(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-fast":
-            return K.sampling.sample_dpm_fast(denoiser, x, sigma_min, sigma_max, steps, disable=False, callback=callback, extra_args=extra_args)
+            return K.sampling.sample_dpm_fast(denoiser, x, sigma_min, sigma_max, steps, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-adaptive":
-            return K.sampling.sample_dpm_adaptive(denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=False, callback=callback, extra_args=extra_args)
+            return K.sampling.sample_dpm_adaptive(denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-2m-sde":
-            return K.sampling.sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
+            return K.sampling.sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
 

@@ -33,8 +33,8 @@ def load_model(model_config, model_ckpt_path, pretransform_ckpt_path=None, devic
     print(f"Loading model checkpoint from {model_ckpt_path}")
     
     # Load checkpoint
-    copy_state_dict(model, torch.load(model_ckpt_path)["state_dict"])
-    #model.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
+    #copy_state_dict(model, torch.load(model_ckpt_path)["state_dict"])
+    model.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
 
     if pretransform_ckpt_path is not None:
         print(f"Loading pretransform checkpoint from {pretransform_ckpt_path}")
@@ -49,6 +49,7 @@ def generate_cond(
         seconds_total=30,
         cfg_scale=6.0,
         steps=250,
+        preview_every=None,
         seed=-1,
         sampler_type="dpmpp-2m-sde",
         sigma_min=0.03,
@@ -65,12 +66,13 @@ def generate_cond(
         mask_softnessL=None,
         mask_softnessR=None,
         mask_marination=None,
-        batch_size=1,
-        preview_every=None,
-        ):
+        batch_size=1    
+    ):
 
     global preview_images
     preview_images = []
+    if preview_every == 0:
+        preview_every = None
 
     # Return fake stereo audio
     conditioning = [{"prompt": prompt, "seconds_start": seconds_start, "seconds_total": seconds_total}] * batch_size
@@ -228,9 +230,7 @@ def generate_uncond(
         sigma_max=sigma_max,
         init_audio=init_audio,
         init_noise_level=init_noise_level,
-        mask_args = mask_args,
-        callback = progress_callback if preview_every is not None else None,
-        scale_phi = cfg_rescale
+        callback = progress_callback if preview_every is not None else None
     )
 
     audio = rearrange(audio, "b d n -> d (b n)")
@@ -320,6 +320,9 @@ def create_sampling_ui(model_config, inpainting=False):
                 # Steps slider
                 steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=100, label="Steps")
 
+                # Preview Every slider
+                preview_every_slider = gr.Slider(minimum=0, maximum=100, step=1, value=0, label="Preview Every")
+
                 # CFG scale 
                 cfg_scale_slider = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=7.0, label="CFG scale")
 
@@ -359,6 +362,7 @@ def create_sampling_ui(model_config, inpainting=False):
                         seconds_total_slider, 
                         cfg_scale_slider, 
                         steps_slider, 
+                        preview_every_slider, 
                         seed_textbox, 
                         sampler_type_dropdown, 
                         sigma_min_slider, 
@@ -388,6 +392,7 @@ def create_sampling_ui(model_config, inpainting=False):
                         seconds_total_slider, 
                         cfg_scale_slider, 
                         steps_slider, 
+                        preview_every_slider, 
                         seed_textbox, 
                         sampler_type_dropdown, 
                         sigma_min_slider, 
@@ -404,7 +409,7 @@ def create_sampling_ui(model_config, inpainting=False):
             send_to_init_button = gr.Button("Send to init audio", scale=1)
             send_to_init_button.click(fn=lambda audio: audio, inputs=[audio_output], outputs=[init_audio_input])
     
-    generate_button.click(fn=generate_diffusion_cond, 
+    generate_button.click(fn=generate_cond, 
         inputs=inputs,
         outputs=[
             audio_output, 

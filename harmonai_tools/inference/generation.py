@@ -45,14 +45,13 @@ def generate_diffusion_uncond(
         sampler_kwargs["sigma_max"] = init_noise_level
 
         noise = torch.randn_like(init_audio)
-
-        sampled = sample_k(model.model, noise, steps=steps, init_data=init_audio, **sampler_kwargs, device=device)
     else:
         if model.pretransform is not None:
             sample_size = sample_size // model.pretransform.downsampling_ratio
 
         noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
-        sampled = sample_k(model.model, noise, steps, **sampler_kwargs, device=device)
+    
+    sampled = sample_k(model.model, noise, init_audio=init_audio, mask=None, steps=steps, **sampler_kwargs, device=device)
 
     if model.pretransform is not None and not return_latents:
         sampled = model.pretransform.decode(sampled)
@@ -129,7 +128,7 @@ def generate_diffusion_cond(
             io_channels = model.pretransform.io_channels
 
         # Prepare the initial audio for use by the model
-        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=sample_size, target_channels=io_channels, device=device)
+        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=audio_sample_size, target_channels=io_channels, device=device)
 
         # For latent models, encode the initial audio into latents
         if model.pretransform is not None:
