@@ -98,9 +98,9 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         reals, metadata = batch
         reals = reals[0]
 
-        # Convert reals to mono
-        reals = reals.mean(dim=1, keepdim=True)
-
+        # Convert reals to mono if necessary
+        if self.musicgen_model.audio_channels == 1:
+            reals = reals.mean(dim=1, keepdim=True)
 
         self.musicgen_model.compression_model.to(self.device).eval()
         self.lm.to(self.device).train()
@@ -189,7 +189,7 @@ class MusicGenDemoCallback(pl.Callback):
         try:
             print("Getting conditioning")
 
-            prompts = [md["prompt"] for md in self.demo_conditioning]
+            prompts = [md["prompt"][:512] for md in self.demo_conditioning]
 
             for cfg_scale in self.demo_cfg_scales:
 
@@ -221,4 +221,3 @@ class MusicGenDemoCallback(pl.Callback):
             gc.collect()
             torch.cuda.empty_cache()
             module.train()
-

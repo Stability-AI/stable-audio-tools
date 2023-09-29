@@ -16,8 +16,8 @@ def create_model_from_config(model_config):
         from .autoencoders import create_diffAE_from_config
         return create_diffAE_from_config(model_config)
     elif model_type == 'musicgen':
-        from audiocraft.models import MusicGen
-        return MusicGen.get_pretrained(model_config["model"]["pretrained"], device="cpu")
+        from .musicgen import create_musicgen_from_config
+        return create_musicgen_from_config(model_config)
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
     

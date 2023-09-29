@@ -328,7 +328,7 @@ class AudioAutoencoder(nn.Module):
             latents = rearrange(latents, 'b c t -> b t c')
             latents = self.latent_pca.transform(latents)
             latents = rearrange(latents, 'b t c -> b c t')
-
+        
         if return_info:
             return latents, info
 
