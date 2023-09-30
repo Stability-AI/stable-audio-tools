@@ -74,7 +74,7 @@ def main():
         else:
             strategy = args.strategy
     else:
-        strategy = 'ddp' if args.num_gpus > 1 else None 
+        strategy = 'ddp_find_unused_parameters_true' if args.num_gpus > 1 else None 
 
     trainer = pl.Trainer(
         devices=args.num_gpus,

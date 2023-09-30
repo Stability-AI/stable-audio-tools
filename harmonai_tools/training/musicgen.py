@@ -37,7 +37,7 @@ class Profiler:
 
 
 class MusicGenTrainingWrapper(pl.LightningModule):
-    def __init__(self, musicgen_model, lr = 1e-4):
+    def __init__(self, musicgen_model, lr = 1e-4, ema_copy=None):
         super().__init__()
 
         self.musicgen_model: MusicGen = musicgen_model
@@ -47,6 +47,8 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         self.lm = self.musicgen_model.lm
 
         self.lm.to(torch.float32).train().requires_grad_(True)
+
+        self.lm_ema = EMA(self.lm, ema_model=ema_copy, beta=0.99, update_every=10)
 
         self.cfg_dropout = ClassifierFreeGuidanceDropout(0.1)
 
@@ -96,7 +98,9 @@ class MusicGenTrainingWrapper(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         reals, metadata = batch
-        reals = reals[0]
+
+        if reals.ndim == 4 and reals.shape[0] == 1:
+            reals = reals[0]
 
         # Convert reals to mono if necessary
         if self.musicgen_model.audio_channels == 1:
@@ -113,7 +117,7 @@ class MusicGenTrainingWrapper(pl.LightningModule):
 
             codes, _ = self.musicgen_model.compression_model.encode(reals) # [b, k, t]
 
-            attributes = [ConditioningAttributes(text={'description': md["prompt"][0]}) for md in metadata]
+            attributes = [ConditioningAttributes(text={'description': md["prompt"][0][:512]}) for md in metadata]
             attributes = self.lm.cfg_dropout(attributes)
             attributes = self.lm.att_dropout(attributes)
             tokenized = self.lm.condition_provider.tokenize(attributes)
@@ -147,7 +151,11 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         self.log_dict(log_dict, prog_bar=True, on_step=True)
         return loss
 
+    def on_before_zero_grad(self, *args, **kwargs):
+        self.lm_ema.update()
+
     def export_model(self, path):
+        self.musicgen_model.lm = self.lm_ema.ema_model
         export_state_dict = {"state_dict": self.musicgen_model.state_dict()}
         
         torch.save(export_state_dict, path)

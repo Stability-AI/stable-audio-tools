@@ -5,6 +5,8 @@ import logging, warnings
 import typing as tp
 import gc
 import os
+from ..training.utils import copy_state_dict
+from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
 
 from audio_diffusion_pytorch_fork import NumberEmbedder
 
@@ -91,11 +93,13 @@ class CLAPTextConditioner(Conditioner):
                  feature_layer_ix: int = -1,
                  audio_model_type="HTSAT-base", 
                  enable_fusion=True,
-                 project_out: bool = False):
+                 project_out: bool = False,
+                 finetune: bool = False):
         super().__init__(768 if use_text_features else 512, output_dim, 1, project_out=project_out)
 
         self.use_text_features = use_text_features
         self.feature_layer_ix = feature_layer_ix
+        self.finetune = finetune
 
         # Suppress logging from transformers
         previous_level = logging.root.manager.disable
@@ -105,8 +109,23 @@ class CLAPTextConditioner(Conditioner):
             try:
                 import laion_clap
                 
-                self.__dict__["model"] = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu').requires_grad_(False).eval()
-                self.model.load_ckpt(clap_ckpt_path)
+                model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu')
+
+                if self.finetune:
+                    self.model = model
+                else: 
+                    self.__dict__["model"] = model
+
+                state_dict = clap_load_state_dict(clap_ckpt_path)
+                self.model.model.load_state_dict(state_dict, strict=False)
+
+                if self.finetune:
+                    self.model.model.text_branch.requires_grad_(True)
+                    self.model.model.text_branch.train()
+                else:
+                    self.model.model.text_branch.requires_grad_(False)
+                    self.model.model.text_branch.eval()
+
             finally:
                 logging.disable(previous_level)
 
@@ -167,8 +186,23 @@ class CLAPAudioConditioner(Conditioner):
             try:
                 import laion_clap
                 
-                self.__dict__["model"] = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device=device).requires_grad_(False).eval()
-                self.model.load_ckpt(clap_ckpt_path)
+                model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu')
+
+                if self.finetune:
+                    self.model = model
+                else: 
+                    self.__dict__["model"] = model
+
+                state_dict = clap_load_state_dict(clap_ckpt_path)
+                self.model.model.load_state_dict(state_dict, strict=False)
+
+                if self.finetune:
+                    self.model.model.audio_branch.requires_grad_(True)
+                    self.model.model.audio_branch.train()
+                else:
+                    self.model.model.audio_branch.requires_grad_(False)
+                    self.model.model.audio_branch.eval()
+
             finally:
                 logging.disable(previous_level)
 
