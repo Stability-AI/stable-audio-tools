@@ -65,15 +65,14 @@ def get_bmask(i, steps, mask):
     return bmask
 
 # Uses k-diffusion from https://github.com/crowsonkb/k-diffusion
-# For sampling, set both init_audio and mask to None
-# For variations, set init_audio 
-# For inpainting, set both init_audio & mask 
-#def sample_k(model_fn, noise, init_audio=None, init_noise_level=0.1, mask=None, steps=100, sampler_type="dpmpp-2m-sde", sigma_max=80, sigma_min=0.5, rho=1.0, device="cuda", callback=None, **extra_args):
-
+# init_data is init_audio as latents (if this is latent diffusion)
+# For sampling, set both init_data and mask to None
+# For variations, set init_data 
+# For inpainting, set both init_data & mask 
 def sample_k(
         model_fn, 
         noise, 
-        init_audio=None,
+        init_data=None,
         mask=None,
         steps=100, 
         sampler_type="dpmpp-2m-sde", 
@@ -81,7 +80,6 @@ def sample_k(
         sigma_max=50, 
         rho=1.0, device="cuda", 
         callback=None, 
-        init_data=None,
         **extra_args
     ):
 
@@ -94,16 +92,16 @@ def sample_k(
 
     wrapped_callback = callback
 
-    if mask is None and init_audio is not None:
+    if mask is None and init_data is not None:
         # VARIATION (no inpainting)
-        # set the initial latent to the init_audio, and noise it with initial sigma
-        x = init_audio + noise 
-    elif mask is not None and init_audio is not None:
+        # set the initial latent to the init_data, and noise it with initial sigma
+        x = init_data + noise 
+    elif mask is not None and init_data is not None:
         # INPAINTING
         bmask = get_bmask(0, steps, mask)
         # initial noising
-        input_noised = init_audio + noise
-        # set the initial latent to a mix of init_audio and noise, based on step 0's binary mask
+        input_noised = init_data + noise
+        # set the initial latent to a mix of init_data and noise, based on step 0's binary mask
         x = input_noised * bmask + noise * (1-bmask)
         # define the inpainting callback function (Note: side effects, it mutates x)
         # See https://github.com/crowsonkb/k-diffusion/blob/master/k_diffusion/sampling.py#L596C13-L596C105
@@ -114,8 +112,8 @@ def sample_k(
             x = args["x"]
             sigma = args["sigma"]
             #denoised = args["denoised"]
-            # noise the init_audio input with this step's appropriate amount of noise
-            input_noised = init_audio + torch.randn_like(init_audio) * sigma
+            # noise the init_data input with this step's appropriate amount of noise
+            input_noised = init_data + torch.randn_like(init_data) * sigma
             # shrinking hard mask
             bmask = get_bmask(i, steps, mask)
             # mix input_noise with x, using binary mask
@@ -123,7 +121,9 @@ def sample_k(
             # mutate x
             x[:,:,:] = new_x[:,:,:]
         # wrap together the inpainting callback and the user-submitted callback. 
-        if callback is not None: 
+        if callback is None: 
+            wrapped_callback = inpainting_callback
+        else:
             wrapped_callback = lambda args: (inpainting_callback(args), callback(args))
     else:
         # SAMPLING

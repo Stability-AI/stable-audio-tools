@@ -135,8 +135,6 @@ def generate_diffusion_cond(
             init_audio = model.pretransform.encode(init_audio)
 
         init_audio = init_audio.repeat(batch_size, 1, 1)
-
-        #sampled = sample_k(model.model, noise, steps=steps, init_data=init_audio, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
     else:
         # The user did not supply any initial audio for inpainting or variation. Generate new output from scratch. 
         init_audio = None
@@ -150,11 +148,7 @@ def generate_diffusion_cond(
         cropfrom = math.floor(mask_args["cropfrom"]/100.0 * sample_size)
         pastefrom = math.floor(mask_args["pastefrom"]/100.0 * sample_size)
         pasteto = math.ceil(mask_args["pasteto"]/100.0 * sample_size)
-        if pastefrom > pasteto: 
-            # if from/to are out of order, swap them
-            pasteto = _
-            pastefrom = pasteto 
-            pasteto = _ 
+        assert pastefrom < pasteto, "Paste From should be less than Paste To"
         croplen = pasteto - pastefrom
         if cropfrom + croplen > sample_size:
             croplen = sample_size - cropfrom 
