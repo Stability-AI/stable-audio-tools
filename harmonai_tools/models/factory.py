@@ -16,8 +16,8 @@ def create_model_from_config(model_config):
         from .autoencoders import create_diffAE_from_config
         return create_diffAE_from_config(model_config)
     elif model_type == 'musicgen':
-        from audiocraft.models import MusicGen
-        return MusicGen.get_pretrained(model_config["model"]["pretrained"], device="cpu")
+        from .musicgen import create_musicgen_from_config
+        return create_musicgen_from_config(model_config)
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
     
@@ -54,6 +54,10 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         attenuation = pqmf_config["attenuation"]
         num_bands = pqmf_config["num_bands"]
         pretransform = PQMFPretransform(attenuation, num_bands)
+    elif pretransform_type == 'dac_pretrained':
+        from .pretransforms import PretrainedDACPretransform
+        pretrained_dac_config = pretransform_config["config"]
+        pretransform = PretrainedDACPretransform(**pretrained_dac_config)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     

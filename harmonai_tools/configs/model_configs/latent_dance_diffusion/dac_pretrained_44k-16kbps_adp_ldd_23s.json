@@ -1,0 +1,40 @@
+{
+    "model_type": "diffusion_uncond",
+    "sample_size": 1048576,
+    "sample_rate": 44100,
+    "audio_channels": 1,
+    "model": {
+        "pretransform": {
+            "type": "dac_pretrained",
+            "config": {
+                "model_type": "44khz",
+                "model_bitrate": "16kbps",
+                "quantize_on_decode": true,
+                "scale": 5.3
+            }
+        },
+        "type": "adp_uncond_1d",
+        "config": {
+            "in_channels": 128,
+            "channels": 256,
+            "resnet_groups": 8,
+            "kernel_multiplier_downsample": 2,
+            "multipliers": [2, 2, 2, 3, 3, 3, 3],
+            "factors": [1, 2, 2, 2, 4, 4],
+            "num_blocks": [2, 2, 2, 2, 2, 2],
+            "attentions": [0, 0, 0, 3, 3, 3, 3],
+            "attention_heads": 16,
+            "attention_features": 64,
+            "attention_multiplier": 2,
+            "use_nearest_upsample": false,
+            "use_skip_scale": true,
+            "use_context_time": true
+        }
+    },
+    "training": {
+        "learning_rate": 1e-4,
+        "demo_steps": 250,
+        "num_demos": 2,
+        "demo_every": 2000
+    }
+}

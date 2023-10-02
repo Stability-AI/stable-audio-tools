@@ -45,7 +45,8 @@ def create_training_wrapper_from_config(model_config, model):
             warmup_steps=training_config.get("warmup_steps", 0), 
             encoder_freeze_on_warmup=training_config.get("encoder_freeze_on_warmup", False),
             sample_rate=model_config["sample_rate"],
-            loss_config=training_config.get("loss_configs", {}),
+            loss_config=training_config.get("loss_configs", None),
+            optimizer_configs=training_config.get("optimizer_configs", None),
             use_ema=use_ema,
             ema_copy=ema_copy if use_ema else None,
             force_input_mono=training_config.get("force_input_mono", False),
@@ -74,9 +75,8 @@ def create_training_wrapper_from_config(model_config, model):
     elif model_type == 'diffusion_autoencoder':
         from .diffusion import DiffusionAutoencoderTrainingWrapper
 
-
         ema_copy = create_model_from_config(model_config)
-        #ema_copy = create_model_from_config(model_config) # I don't know why this needs to be called twice but it broke when I called it once
+        
         # Copy each weight to the ema copy
         for name, param in model.state_dict().items():
             if isinstance(param, Parameter):
@@ -91,8 +91,18 @@ def create_training_wrapper_from_config(model_config, model):
         )
     elif model_type == 'musicgen':
         from .musicgen import MusicGenTrainingWrapper
+
+        ema_copy = create_model_from_config(model_config).lm
+
+        for name, param in model.lm.state_dict().items():
+            if isinstance(param, Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            ema_copy.state_dict()[name].copy_(param)
+
         return MusicGenTrainingWrapper(
             model,
+            ema_copy=ema_copy,
             lr=training_config["learning_rate"]
         )
     else:

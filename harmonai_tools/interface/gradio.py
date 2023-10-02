@@ -392,7 +392,7 @@ def create_autoencoder_ui(model_config):
     is_dac_rvq = "model" in model_config and "bottleneck" in model_config["model"] and model_config["model"]["bottleneck"]["type"] in ["dac_rvq","dac_rvq_vae"]
 
     if is_dac_rvq:
-        n_quantizers = model["bottleneck"]["config"]["num_quantizers"]
+        n_quantizers = model_config["model"]["bottleneck"]["config"]["n_codebooks"]
     else:
         n_quantizers = 0
 

@@ -64,6 +64,12 @@
                 "weights": {
                     "l1": 0.1
                 }
+            },
+            "bottleneck": {
+                "type": "kl",
+                "weights": {
+                    "kl": 1e-6
+                }
             }
         },
         "demo": {

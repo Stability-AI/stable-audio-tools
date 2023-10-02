@@ -1,46 +1,70 @@
 {
     "model_type": "autoencoder",
-    "sample_size": 65536,
+    "sample_size": 32768,
     "sample_rate": 44100,
-    "audio_channels": 2,
+    "audio_channels": 1,
     "model": {
         "encoder": {
             "type": "dac",
             "config": {
-                "in_channels": 2,
-                "latent_dim": 128,
-                "d_model": 128,
-                "strides": [4, 4, 8, 8]
-            },
-            "requires_grad": false
+                "in_channels": 1,
+                "latent_dim": 256,
+                "d_model": 64,
+                "strides": [2, 4, 8, 8]
+            }
         },
         "decoder": {
             "type": "dac",
             "config": {
-                "out_channels": 2,
-                "latent_dim": 64,
+                "out_channels": 1,
+                "latent_dim": 128,
                 "channels": 1536,
-                "rates": [8, 8, 4, 4]
+                "rates": [8, 8, 4, 2]
             }
         },
         "bottleneck": {
-            "type": "rvq_vae",
-            "config": {
-                "num_quantizers": 16,
-                "codebook_size": 1024,
-                "dim": 64,
-                "decay": 0.99,
-                "threshold_ema_dead_code": 2
-            }
+            "type": "vae"
         },
-        "latent_dim": 64,
-        "downsampling_ratio": 1024,
-        "io_channels": 2
+        "latent_dim": 128,
+        "downsampling_ratio": 512,
+        "io_channels": 1
     },
     "training": {
         "learning_rate": 1e-4,
         "warmup_steps": 0,
         "use_ema": true,
+        "optimizer_configs": {
+            "autoencoder": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "betas": [0.8, 0.99],
+                        "lr": 1e-4
+                    }
+                },
+                "scheduler": {
+                    "type": "ExponentialLR",
+                    "config": {
+                        "gamma": 0.999996
+                    }
+                }
+            },
+            "discriminator": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "betas": [0.8, 0.99],
+                        "lr": 1e-4
+                    }
+                },
+                "scheduler": {
+                    "type": "ExponentialLR",
+                    "config": {
+                        "gamma": 0.999996
+                    }
+                }
+            }
+        },
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",
@@ -70,7 +94,7 @@
             "time": {
                 "type": "l1",
                 "weights": {
-                    "l1": 0.0
+                    "l1": 0.1
                 }
             }
         },
