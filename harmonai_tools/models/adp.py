@@ -1226,8 +1226,8 @@ class UNetCFG1d(UNet1d):
         embedding_scale: float = 1.0,
         embedding_mask_proba: float = 0.0,
         batch_cfg: bool = False,
-        scale_cfg: bool = False,
-        scale_phi: float = 0.7,
+        rescale_cfg: bool = False,
+        scale_phi: float = 0.4,
         **kwargs,
     ) -> Tensor:
         b, device = embedding.shape[0], embedding.device
@@ -1279,7 +1279,7 @@ class UNetCFG1d(UNet1d):
 
             out_cfg = out_masked + (out - out_masked) * embedding_scale
 
-            if scale_cfg:
+            if rescale_cfg:
 
                 out_std = out.std(dim=1, keepdim=True)
                 out_cfg_std = out_cfg.std(dim=1, keepdim=True)

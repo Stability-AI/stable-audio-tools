@@ -128,13 +128,13 @@ def generate_diffusion_cond(
 
         noise = torch.randn_like(init_audio)
 
-        sampled = sample_k(model.model, noise, steps=steps, init_data=init_audio, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
+        sampled = sample_k(model.model, noise, steps=steps, init_data=init_audio, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
     else:
         if model.pretransform is not None:
             sample_size = sample_size // model.pretransform.downsampling_ratio
 
         noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
-        sampled = sample_k(model.model, noise, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
+        sampled = sample_k(model.model, noise, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
 
     if model.pretransform is not None and not return_latents:
         sampled = model.pretransform.decode(sampled)

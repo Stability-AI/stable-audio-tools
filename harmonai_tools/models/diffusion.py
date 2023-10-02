@@ -87,7 +87,7 @@ class ConditionedDiffusionModel(nn.Module):
                 cfg_scale: float = 1.0,
                 cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = False,
-                scale_cfg: bool = False,
+                rescale_cfg: bool = False,
                 **kwargs):
         raise NotImplementedError()
     
@@ -178,7 +178,7 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
                 cfg_scale=1.0,
                 cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = False,
-                scale_cfg: bool = False,
+                rescale_cfg: bool = False,
                 **kwargs):
         p = Profiler()
 
@@ -198,7 +198,7 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
             embedding_scale=cfg_scale, 
             embedding_mask_proba=cfg_dropout_prob, 
             batch_cfg=batch_cfg,
-            scale_cfg=scale_cfg,
+            rescale_cfg=rescale_cfg,
             **kwargs)
         
         p.tick("UNetCFG1D forward")
@@ -364,10 +364,12 @@ class DiTWrapper(ConditionedDiffusionModel):
                 cfg_scale=6.0,
                 cfg_dropout_prob: float = 0.1,
                 batch_cfg: bool = True,
-                scale_cfg: bool = False,
+                rescale_cfg: bool = False,
                 **kwargs):
 
         assert batch_cfg, "batch_cfg must be True for DiTWrapper"
+        assert input_concat_cond is None, "input_concat_cond is not supported for DiTWrapper"
+        assert global_cond is None, "global_cond is not supported for DiTWrapper"
 
         return self.model(
             x, 
@@ -378,6 +380,26 @@ class DiTWrapper(ConditionedDiffusionModel):
             cfg_dropout_prob=cfg_dropout_prob,
             **kwargs)    
 
+class DiTUncondWrapper(DiffusionModel):
+    def __init__(
+        self, 
+        in_channels,
+        *args,        
+        **kwargs
+    ):
+        super().__init__()
+
+        self.model = DiffusionTransformer(io_channels=in_channels, *args, **kwargs)
+
+        self.io_channels = in_channels
+
+        with torch.no_grad():
+            for param in self.model.parameters():
+                param *= 0.5
+
+    def forward(self, x, t, **kwargs):
+        return self.model(x, t, **kwargs) 
+
 class DiffusionTransformer(nn.Module):
     def __init__(self, 
         io_channels=32, 
@@ -385,7 +407,8 @@ class DiffusionTransformer(nn.Module):
         cond_token_dim=0,
         embed_dim=768,
         depth=12,
-        num_heads=8):
+        num_heads=8,
+        **kwargs):
 
         super().__init__()
         
@@ -421,17 +444,18 @@ class DiffusionTransformer(nn.Module):
                 depth=depth,
                 heads=num_heads,
                 attn_flash = True,
-                cross_attend = True,
+                cross_attend = cond_token_dim > 0,
                 zero_init_branch_output=True,
-                rotary_pos_emb =True,
+                rotary_pos_emb=True,
                 ff_swish = True, # set this to True
-                ff_glu = True 
+                ff_glu = True,
+                **kwargs
             )
         )
 
-        self.preprocess_conv = nn.Conv1d(io_channels, io_channels, 3, padding=1, bias=False)
+        self.preprocess_conv = nn.Conv1d(io_channels, io_channels, 1, bias=False)
         nn.init.zeros_(self.preprocess_conv.weight)
-        self.postprocess_conv = nn.Conv1d(io_channels, io_channels, 3, padding=1, bias=False)
+        self.postprocess_conv = nn.Conv1d(io_channels, io_channels, 1, bias=False)
         nn.init.zeros_(self.postprocess_conv.weight)
 
     def forward(
@@ -539,6 +563,17 @@ def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
                                      sample_rate=sample_rate,
                                      pretransform=pretransform)
     
+    elif model_type == "dit":
+        model = DiTUncondWrapper(
+            **diffusion_config
+        )
+
+        return DiffusionModelWrapper(model,
+                                    io_channels=model.io_channels, 
+                                    sample_size=sample_size, 
+                                    sample_rate=sample_rate,
+                                    pretransform=pretransform)
+
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
     
