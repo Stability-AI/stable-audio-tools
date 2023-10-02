@@ -8,7 +8,7 @@ import os
 from ..training.utils import copy_state_dict
 from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
 
-from audio_diffusion_pytorch_fork import NumberEmbedder
+from .adp import NumberEmbedder
 
 from torch import nn
 

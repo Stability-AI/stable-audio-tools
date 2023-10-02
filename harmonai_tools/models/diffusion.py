@@ -13,7 +13,7 @@ from .conditioners import MultiConditioner, create_multi_conditioner_from_condit
 from .pretransforms import Pretransform
 from ..inference.generation import generate_diffusion_cond
 
-from audio_diffusion_pytorch_fork.modules import UNetCFG1d, UNet1d
+from .adp import UNetCFG1d, UNet1d
 
 from time import time
 

@@ -38,7 +38,20 @@ class SelfAttention1d(nn.Module):
         self.qkv_proj = nn.Conv1d(c_in, c_in * 3, 1)
         self.out_proj = nn.Conv1d(c_in, c_in, 1)
         self.dropout = nn.Dropout(dropout_rate, inplace=True)
-        self.use_flash = version.parse(torch.__version__) >= version.parse('2.0.0')
+
+        self.use_flash = torch.cuda.is_available() and version.parse(torch.__version__) >= version.parse('2.0.0')
+
+        if not self.use_flash:
+            return
+
+        device_properties = torch.cuda.get_device_properties(torch.device('cuda'))
+
+        if device_properties.major == 8 and device_properties.minor == 0:
+            # Use flash attention for A100 GPUs
+            self.sdp_kernel_config = (True, False, False)
+        else:
+            # Don't use flash attention for other GPUs
+            self.sdp_kernel_config = (False, True, True)
 
     def forward(self, input):
         n, c, s = input.shape
@@ -49,7 +62,7 @@ class SelfAttention1d(nn.Module):
         scale = k.shape[3]**-0.25
 
         if self.use_flash:
-            with sdp_kernel(enable_flash = True, enable_math=False, enable_mem_efficient= False):
+            with sdp_kernel(*self.sdp_kernel_config):
                 y = F.scaled_dot_product_attention(q, k, v, is_causal=False).contiguous().view([n, c, s])
         else:
             att = ((q * scale) @ (k.transpose(2, 3) * scale)).softmax(3)
