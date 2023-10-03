@@ -447,7 +447,7 @@ class DiffusionTransformer(nn.Module):
                 cross_attend = cond_token_dim > 0,
                 zero_init_branch_output=True,
                 rotary_pos_emb=True,
-                ff_swish = True, # set this to True
+                ff_swish = True,
                 ff_glu = True,
                 **kwargs
             )
@@ -565,6 +565,19 @@ def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
     
     elif model_type == "dit":
         model = DiTUncondWrapper(
+            **diffusion_config
+        )
+
+        return DiffusionModelWrapper(model,
+                                    io_channels=model.io_channels, 
+                                    sample_size=sample_size, 
+                                    sample_rate=sample_rate,
+                                    pretransform=pretransform)
+
+    elif model_type == "hourglass":
+        from .hourglass import HourglassDiffusionTransformer
+
+        model = HourglassDiffusionTransformer(
             **diffusion_config
         )
 
