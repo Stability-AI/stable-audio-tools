@@ -2,6 +2,7 @@ from prefigure.prefigure import get_all_args, push_wandb_config
 import json
 import torch
 import pytorch_lightning as pl
+import random
 
 from harmonai_tools.data.dataset import create_dataloader_from_configs_and_args
 from harmonai_tools.models import create_model_from_config
@@ -23,6 +24,7 @@ def main():
 
     args = get_all_args()
 
+    random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     #Get JSON config from args.model_config

@@ -2,6 +2,8 @@ from einops import rearrange
 from torch import nn
 from local_attention.transformer import LocalMHA, FeedForward
 
+from .blocks import AdaRMSNorm
+
 # Adapted from https://github.com/lucidrains/local-attention/blob/master/local_attention/transformer.py
 class ContinuousLocalTransformer(nn.Module):
     def __init__(
@@ -18,6 +20,7 @@ class ContinuousLocalTransformer(nn.Module):
         attn_dropout = 0.,
         ff_dropout = 0.,
         use_conv = True,
+        cond_dim = 0,
         **kwargs
     ):
         super().__init__()
@@ -38,7 +41,8 @@ class ContinuousLocalTransformer(nn.Module):
        
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                LocalMHA(dim = dim, dim_head = dim_head, heads = heads, qk_scale=qk_scale, dropout = attn_dropout, causal = causal, window_size = local_attn_window_size, prenorm = True, **kwargs),
+                AdaRMSNorm(dim, cond_dim, eps=1e-8) if cond_dim > 0 else nn.LayerNorm(dim, eps=1e-8),
+                LocalMHA(dim = dim, dim_head = dim_head, heads = heads, qk_scale=qk_scale, dropout = attn_dropout, causal = causal, window_size = local_attn_window_size, prenorm = False, **kwargs),
                 nn.Conv1d(dim, dim, kernel_size=3, padding=1) if use_conv else nn.Identity(),
                 FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
             ]))
@@ -47,11 +51,17 @@ class ContinuousLocalTransformer(nn.Module):
                 # Zero-init conv layers
                 nn.init.zeros_(self.layers[-1][1].weight)
 
-    def forward(self, x, mask = None):
+    def forward(self, x, mask = None, cond = None):
     
         x = self.project_in(x)
 
-        for attn, conv, ff in self.layers:
+        for norm, attn, conv, ff in self.layers:
+
+            if cond is not None:
+                x = norm(x, cond)
+            else:
+                x = norm(x)
+
             x = attn(x, mask = mask) + x
 
             if self.use_conv:

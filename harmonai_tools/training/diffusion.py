@@ -247,9 +247,14 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         p.tick("noise")
 
+        extra_args = {}
+
+        if self.causal_dropout > 0.0:
+            extra_args["causal"] = random.random() < self.causal_dropout
+
         with torch.cuda.amp.autocast():
             p.tick("amp")
-            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1, causal=random.random() < self.causal_dropout)
+            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1, **extra_args)
             p.tick("diffusion")
             mse_loss = F.mse_loss(v, targets)
          
