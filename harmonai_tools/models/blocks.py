@@ -1,3 +1,4 @@
+from functools import reduce
 import math
 import torch
 from torch import nn
@@ -180,3 +181,26 @@ def Upsample1d_2(
             output_padding=factor % 2,
         )
 
+def zero_init(layer):
+    nn.init.zeros_(layer.weight)
+    if layer.bias is not None:
+        nn.init.zeros_(layer.bias)
+    return layer
+
+def rms_norm(x, scale, eps):
+    dtype = reduce(torch.promote_types, (x.dtype, scale.dtype, torch.float32))
+    mean_sq = torch.mean(x.to(dtype)**2, dim=-1, keepdim=True)
+    scale = scale.to(dtype) * torch.rsqrt(mean_sq + eps)
+    return x * scale.to(x.dtype)
+
+class AdaRMSNorm(nn.Module):
+    def __init__(self, features, cond_features, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.linear = zero_init(nn.Linear(cond_features, features, bias=False))
+  
+    def extra_repr(self):
+        return f"eps={self.eps},"
+
+    def forward(self, x, cond):
+        return rms_norm(x, self.linear(cond)[:, None, :] + 1, self.eps)
