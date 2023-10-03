@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='harmonai-tools',
-    version='0.0.6',
+    version='0.0.7',
     url='https://github.com/Harmonai-org/harmonai-tools.git',
     author='Harmonai',
     description='Training and inference tools for generative audio models from Harmonai',
