@@ -8,8 +8,9 @@ from x_transformers import ContinuousTransformerWrapper, Encoder
 from einops import rearrange
 
 from .blocks import ResConvBlock, FourierFeatures, Upsample1d, Upsample1d_2, Downsample1d, Downsample1d_2, SelfAttention1d, SkipBlock, expand_to_planes
-from .factory import create_pretransform_from_config
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
+from .factory import create_pretransform_from_config
+from .hourglass import HourglassDiffusionTransformer
 from .pretransforms import Pretransform
 from ..inference.generation import generate_diffusion_cond
 
@@ -379,6 +380,47 @@ class DiTWrapper(ConditionedDiffusionModel):
             cfg_scale=cfg_scale, 
             cfg_dropout_prob=cfg_dropout_prob,
             **kwargs)    
+    
+class HourglassCondWrapper(ConditionedDiffusionModel):
+    def __init__(
+        self, 
+        *args,
+        **kwargs
+    ):
+        super().__init__(supports_cross_attention=True, supports_global_cond=True, supports_input_concat=False)
+
+        self.model = HourglassDiffusionTransformer(*args, **kwargs)
+
+        with torch.no_grad():
+            for param in self.model.parameters():
+                param *= 0.5
+
+    def forward(self, 
+                x, 
+                t, 
+                cross_attn_cond=None, 
+                cross_attn_masks=None, 
+                input_concat_cond=None, 
+                global_cond=None, 
+                cfg_scale=6.0,
+                cfg_dropout_prob: float = 0.1,
+                batch_cfg: bool = True,
+                rescale_cfg: bool = False,
+                **kwargs):
+
+        assert batch_cfg, "batch_cfg must be True for HourglassCondWrapper"
+        assert input_concat_cond is None, "input_concat_cond is not supported for HourglassCondWrapper"
+        assert rescale_cfg is False, "rescale_cfg is not supported for HourglassCondWrapper"
+
+        return self.model(
+            x, 
+            t, 
+            cond_tokens=cross_attn_cond, 
+            cond_tokens_mask=cross_attn_masks, 
+            mapping_cond=global_cond,
+            cfg_scale=cfg_scale, 
+            cfg_dropout_prob=cfg_dropout_prob,
+            **kwargs)  
 
 class DiTUncondWrapper(DiffusionModel):
     def __init__(
@@ -607,6 +649,8 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
         diffusion_model = UNetCFG1DWrapper(**diffusion_model_config)
     elif diffusion_model_type == 'dit':
         diffusion_model = DiTWrapper(**diffusion_model_config)
+    elif diffusion_model_type == "hourglass":
+        diffusion_model = HourglassCondWrapper(**diffusion_model_config)
 
     io_channels = model_config.get('io_channels', None)
     assert io_channels is not None, "Must specify io_channels in model config"

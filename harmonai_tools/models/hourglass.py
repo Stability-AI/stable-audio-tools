@@ -191,8 +191,8 @@ class HourglassDiffusionTransformer(nn.Module):
             depths: List[int],
             d_heads: List[int],
             window_sizes: List[int],
-            io_channels,  
-            patch_size,
+            io_channels: int,  
+            patch_sizes: List[int],
             cond_token_dim = 0,
             mapping_cond_dim = 0,
             mapping_dim = 1024,
@@ -203,7 +203,7 @@ class HourglassDiffusionTransformer(nn.Module):
         super().__init__()
         self.io_channels = io_channels
         
-        self.patch_in = TokenMerge(self.io_channels, widths[0], patch_size)
+        self.patch_in = TokenMerge(self.io_channels, widths[0], patch_sizes[0])
 
         self.mapping_dim = mapping_dim
 
@@ -216,7 +216,7 @@ class HourglassDiffusionTransformer(nn.Module):
 
         self.mapping = tag_module(MappingNetwork(mapping_depth, mapping_dim, mapping_d_ff), "mapping")
 
-        assert len(widths) == len(depths) == len(d_heads), "widths, depths, and d_heads must have the same length"
+        assert len(widths) == len(depths) == len(d_heads) == len(patch_sizes), "widths, depths, d_heads, and patch_sizes must have the same length"
 
         assert len(window_sizes) == len(widths) - 1, "window_sizes must have one less element than widths"
 
@@ -267,11 +267,11 @@ class HourglassDiffusionTransformer(nn.Module):
 
                 self.to_mid_level_mapping_cond = nn.Linear(mapping_dim, width, bias=False)
 
-        self.merges = nn.ModuleList([TokenMerge(spec_1, spec_2) for spec_1, spec_2 in zip(widths[:-1], widths[1:])])
-        self.splits = nn.ModuleList([TokenSplit(spec_2, spec_1) for spec_1, spec_2 in zip(widths[:-1], widths[1:])])
+        self.merges = nn.ModuleList([TokenMerge(spec_1, spec_2, ps) for spec_1, spec_2, ps in zip(widths[:-1], widths[1:], patch_sizes[1:])])
+        self.splits = nn.ModuleList([TokenSplit(spec_2, spec_1, ps) for spec_1, spec_2, ps in zip(widths[:-1], widths[1:], patch_sizes[1:])])
 
         self.out_norm = RMSNorm(widths[0])
-        self.patch_out = TokenSplitWithoutSkip(widths[0], io_channels, patch_size)
+        self.patch_out = TokenSplitWithoutSkip(widths[0], io_channels, patch_sizes[0])
         nn.init.zeros_(self.patch_out.proj.weight)
 
         if cond_token_dim > 0:
@@ -315,20 +315,21 @@ class HourglassDiffusionTransformer(nn.Module):
                 # Concatenate conditioned and unconditioned inputs on the batch dimension            
                 batch_inputs = torch.cat([x, x], dim=0)
                 
-                null_embed = torch.zeros_like(cond, device=cond.device)
+                null_embed = torch.zeros_like(cond_tokens, device=cond_tokens.device)
 
                 batch_mapping = torch.cat([cond, cond], dim=0)
                 batch_cond_tokens = torch.cat([cond_tokens, null_embed], dim=0)
                 if cond_tokens_mask is not None:
-                    batch_masks = torch.cat([cond_tokens_mask, cond_tokens_mask], dim=0)
+                    batch_masks = torch.cat([cond_tokens_mask, cond_tokens_mask], dim=0).to(torch.bool)
                 else:
                     batch_masks = None
                 
-                output = self.transformer(
+                output = self.mid_level(
                     batch_inputs, 
                     prepend_embeds=self.to_mid_level_mapping_cond(batch_mapping).unsqueeze(1), 
                     context=batch_cond_tokens, 
-                    context_mask=batch_masks)[:, 1:, :]
+                    #context_mask=batch_masks
+                    )[:, 1:, :]
 
                 cond_output, uncond_output = torch.chunk(output, 2, dim=0)
                 output = uncond_output + (cond_output - uncond_output) * cfg_scale
