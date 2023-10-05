@@ -8,7 +8,7 @@ from torch.nn import Parameter
 from torchaudio import transforms as T
 from alias_free_torch import Activation1d
 from dac.nn.layers import WNConv1d, WNConvTranspose1d
-from typing import Literal, Dict, Any, Callable
+from typing import List, Literal, Dict, Any, Callable
 from einops import rearrange
 
 from ..inference.sampling import sample
@@ -20,6 +20,7 @@ from .pretransforms import Pretransform, AutoencoderPretransform
 from .pca import PCA
 
 # Adapted from https://github.com/NVIDIA/BigVGAN/blob/main/activations.py under MIT license
+# License available in LICENSES/LICENSE_NVIDIA.txt
 class SnakeBeta(nn.Module):
 
     def __init__(self, in_features, alpha=1.0, alpha_trainable=True, alpha_logscale=True):

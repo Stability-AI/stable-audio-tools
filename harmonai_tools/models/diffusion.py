@@ -362,8 +362,8 @@ class DiTWrapper(ConditionedDiffusionModel):
                 cross_attn_masks=None, 
                 input_concat_cond=None, 
                 global_cond=None, 
-                cfg_scale=6.0,
-                cfg_dropout_prob: float = 0.1,
+                cfg_scale=1.0,
+                cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = True,
                 rescale_cfg: bool = False,
                 **kwargs):
@@ -402,8 +402,8 @@ class HourglassCondWrapper(ConditionedDiffusionModel):
                 cross_attn_masks=None, 
                 input_concat_cond=None, 
                 global_cond=None, 
-                cfg_scale=6.0,
-                cfg_dropout_prob: float = 0.1,
+                cfg_scale=1.0,
+                cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = True,
                 rescale_cfg: bool = False,
                 **kwargs):
@@ -480,7 +480,7 @@ class DiffusionTransformer(nn.Module):
         self.transformer = ContinuousTransformerWrapper(
             dim_in=io_channels,
             dim_out=io_channels,
-            max_seq_len=input_length + 1, #1 for time conditioning
+            max_seq_len=0, #Not relevant without absolute positional embeds
             attn_layers = Encoder(
                 dim=embed_dim,
                 depth=depth,
@@ -488,6 +488,7 @@ class DiffusionTransformer(nn.Module):
                 attn_flash = True,
                 cross_attend = cond_token_dim > 0,
                 zero_init_branch_output=True,
+                use_abs_pos_emb = False,
                 rotary_pos_emb=True,
                 ff_swish = True,
                 ff_glu = True,

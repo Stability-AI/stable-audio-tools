@@ -300,7 +300,7 @@ class HourglassDiffusionTransformer(nn.Module):
             x = down_level(x, cond=cond)
             skips.append(x)
             x = merge(x)
-
+        
         if self.cond_token_dim > 0:
             cond_tokens = self.to_mid_level_cond_tokens(cond_tokens)
             
@@ -334,14 +334,22 @@ class HourglassDiffusionTransformer(nn.Module):
                 cond_output, uncond_output = torch.chunk(output, 2, dim=0)
                 output = uncond_output + (cond_output - uncond_output) * cfg_scale
 
+            else:
+
+                x = self.mid_level(
+                    x, 
+                    prepend_embeds=self.to_mid_level_mapping_cond(cond).unsqueeze(1),
+                    context=cond_tokens, 
+                    #context_mask=cond_tokens_mask
+                )[:, 1:, :]
+
         else:
 
             x = self.mid_level(
                 x, 
-                prepend_embeds=self.to_mid_level_mapping_cond(cond).unsqueeze(1),
-                context=cond_tokens, 
-                context_mask=cond_tokens_mask
+                prepend_embeds=self.to_mid_level_mapping_cond(cond).unsqueeze(1)
             )[:, 1:, :]
+
 
         for up_level, split, skip in reversed(list(zip(self.up_levels, self.splits, skips))):
             x = split(x, skip)

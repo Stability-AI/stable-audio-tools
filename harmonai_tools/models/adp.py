@@ -1,5 +1,5 @@
 # Copied and modified from https://github.com/archinetai/audio-diffusion-pytorch/blob/v0.0.94/audio_diffusion_pytorch/modules.py under MIT License
-# License can be found in LICENSES/LICENSE_ADP.md
+# License can be found in LICENSES/LICENSE_ADP.txt
 
 from inspect import isfunction
 from math import floor, log, pi, log2
@@ -658,11 +658,15 @@ class DownsampleBlock1d(nn.Module):
 
         if self.use_transformer:
             assert (
-                exists(attention_heads)
+                (exists(attention_heads) or exists(attention_features))
                 and exists(attention_multiplier)
             )
 
-            attention_features = default(attention_features, channels // attention_heads)
+            if attention_features is None and attention_heads is not None:
+                attention_features = channels // attention_heads
+
+            if attention_heads is None and attention_features is not None:
+                attention_heads = channels // attention_features
 
             self.transformer = Transformer1d(
                 num_layers=num_transformer_blocks,
@@ -766,11 +770,15 @@ class UpsampleBlock1d(nn.Module):
 
         if self.use_transformer:
             assert (
-                exists(attention_heads)
+                (exists(attention_heads) or exists(attention_features))
                 and exists(attention_multiplier)
             )
 
-            attention_features = default(attention_features, channels // attention_heads)
+            if attention_features is None and attention_heads is not None:
+                attention_features = channels // attention_heads
+
+            if attention_heads is None and attention_features is not None:
+                attention_heads = channels // attention_features
 
             self.transformer = Transformer1d(
                 num_layers=num_transformer_blocks,
@@ -858,11 +866,15 @@ class BottleneckBlock1d(nn.Module):
 
         if self.use_transformer:
             assert (
-                exists(attention_heads)
+                (exists(attention_heads) or exists(attention_features))
                 and exists(attention_multiplier)
             )
 
-            attention_features = default(attention_features, channels // attention_heads)
+            if attention_features is None and attention_heads is not None:
+                attention_features = channels // attention_heads
+
+            if attention_heads is None and attention_features is not None:
+                attention_heads = channels // attention_features
 
             self.transformer = Transformer1d(
                 num_layers=num_transformer_blocks,

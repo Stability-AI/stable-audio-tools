@@ -83,6 +83,7 @@ class TransformerDownsampleBlock1D(nn.Module):
         downsample_ratio = 2,
         local_attn_window_size = 64,
         use_conv = True,
+        **kwargs
     ):
         super().__init__()
 
@@ -93,7 +94,8 @@ class TransformerDownsampleBlock1D(nn.Module):
             depth=depth,
             heads=heads,
             local_attn_window_size=local_attn_window_size,
-            use_conv=use_conv
+            use_conv=use_conv,
+            **kwargs
         )
 
         self.project_in = nn.Linear(in_channels, embed_dim) if in_channels != embed_dim else nn.Identity()
@@ -129,6 +131,7 @@ class TransformerUpsampleBlock1D(nn.Module):
         upsample_ratio = 2,
         local_attn_window_size = 64,
         use_conv = True,
+        **kwargs
     ):
         super().__init__()
 
@@ -139,7 +142,8 @@ class TransformerUpsampleBlock1D(nn.Module):
             depth=depth,
             heads=heads,
             local_attn_window_size = local_attn_window_size,
-            use_conv=use_conv
+            use_conv=use_conv,
+            **kwargs
         )
 
         self.project_in = nn.Linear(in_channels, embed_dim) if in_channels != embed_dim else nn.Identity()
@@ -179,6 +183,7 @@ class TransformerEncoder1D(nn.Module):
         ratios = [2, 2, 2, 2],
         local_attn_window_size = 64,
         use_conv = True,
+        **kwargs
     ):
         super().__init__()
         
@@ -195,7 +200,8 @@ class TransformerEncoder1D(nn.Module):
                     depth = depths[layer],
                     downsample_ratio = ratios[layer],
                     local_attn_window_size = local_attn_window_size,
-                    use_conv = use_conv
+                    use_conv = use_conv,
+                    **kwargs
                 )
             )
         
@@ -225,6 +231,7 @@ class TransformerDecoder1D(nn.Module):
         ratios = [2, 2, 2, 2],
         local_attn_window_size = 64,
         use_conv = True,
+        **kwargs
     ):
 
         super().__init__()
@@ -242,7 +249,8 @@ class TransformerDecoder1D(nn.Module):
                     depth = depths[layer],
                     upsample_ratio = ratios[layer],
                     local_attn_window_size = local_attn_window_size,
-                    use_conv = use_conv
+                    use_conv = use_conv,
+                    **kwargs
                 )
             )
         
