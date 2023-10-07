@@ -7,7 +7,7 @@ The *decoder* takes in a d-channel latent sequence and upsamples it back to the 
 
 Autoencoders are trained with a combination of reconstruction and adversarial losses in order to create a compact and invertible representation of raw audio data that allows downstream models to work in a data-compressed "latent space", with various desirable and controllable properties such as reduced sequence length, noise resistance, and discretization.
 
-The autoencoder architectures defined in `harmonai-tools` are largely fully-convolutional, which allows autoencoders trained on small lengths to be applied to arbitrary-length sequences. For example, an autoencoder trained on 1-second samples could be used to encode 45-second inputs to a latent diffusion model.
+The autoencoder architectures defined in `stable-audio-tools` are largely fully-convolutional, which allows autoencoders trained on small lengths to be applied to arbitrary-length sequences. For example, an autoencoder trained on 1-second samples could be used to encode 45-second inputs to a latent diffusion model.
 
 # Model configs
 The model config file for an autoencoder should set the `model_type` to `autoencoder`, and the `model` object should have the following properties:
