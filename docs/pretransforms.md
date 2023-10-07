@@ -1,7 +1,7 @@
 # Pretransforms
 Many models require some fixed transform to be applied to the input audio before the audio is passed in to the trainable layers of the model, as well as a corresponding inverse transform to be applied to the outputs of the model. We refer to these as "pretransforms".
 
-At the moment, `harmonai-tools` supports two pretransforms, frozen autoencoders for latent diffusion models and wavelet decompositions.
+At the moment, `stable-audio-tools` supports two pretransforms, frozen autoencoders for latent diffusion models and wavelet decompositions.
 
 Pretransforms have a similar interface to autoencoders with "encode" and "decode" functions defined for each pretransform.
 
@@ -28,7 +28,7 @@ Example:
 The original [Latent Diffusion paper](https://arxiv.org/abs/2112.10752) found that rescaling the latent series to unit variance before performing diffusion improved quality. To this end, we expose a `scale` property on autoencoder pretransforms that will take care of this rescaling. The scale should be set to the original standard deviation of the latents, which can be determined experimentally, or by looking at the `latent_std` value during training. The pretransform code will divide by this scale factor in the `encode` function and multiply by this scale in the `decode` function.
 
 ## Wavelet pretransform
-`harmonai-tools` also exposes wavelet decomposition as a pretransform. Wavelet decomposition is a quick way to trade off sequence length for channels in autoencoders, while maintaining a multi-band implicit bias.
+`stable-audio-tools` also exposes wavelet decomposition as a pretransform. Wavelet decomposition is a quick way to trade off sequence length for channels in autoencoders, while maintaining a multi-band implicit bias.
 
 Wavelet pretransforms take the following properties:
 

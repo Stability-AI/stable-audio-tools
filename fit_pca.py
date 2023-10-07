@@ -2,11 +2,11 @@ from prefigure.prefigure import get_all_args
 import json
 import torch
 import numpy as np
-from harmonai_tools.models.pca import PCA
+from stable_audio_tools.models.pca import PCA
 
-from harmonai_tools.data.dataset import create_dataloader_from_configs_and_args
-from harmonai_tools.models import create_model_from_config
-from harmonai_tools.training.utils import copy_state_dict
+from stable_audio_tools.data.dataset import create_dataloader_from_configs_and_args
+from stable_audio_tools.models import create_model_from_config
+from stable_audio_tools.training.utils import copy_state_dict
 
 
 def main():

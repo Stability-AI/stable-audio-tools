@@ -1,11 +1,11 @@
-# harmonai-tools
+# stable-audio-tools
 Training and inference code for audio generation models
 
 # Install
 
 The library can be installed from PyPI with:
 ```bash
-$ pip install harmonai-tools
+$ pip install stable-audio-tools
 ```
 
 To run the training scripts or inference code, you'll want to clone this repository, navigate to the root, and run:
@@ -37,7 +37,7 @@ $ python3 ./train.py --dataset-config /path/to/dataset/config --model-config /pa
 The `--name` parameter will set the project name for your Weights and Biases run.
 
 ## Training wrappers and model unwrapping
-`harmonai-tools` uses PyTorch Lightning to facilitate multi-GPU and multi-node training. 
+`stable-audio-tools` uses PyTorch Lightning to facilitate multi-GPU and multi-node training. 
 
 When a model is being trained, it is wrapped in a "training wrapper", which is a `pl.LightningModule` that contains all of the relevant objects needed only for training. That includes things like discriminators for autoencoders, EMA copies of models, and all of the optimizer states.
 
@@ -97,7 +97,7 @@ Additional optional flags for `train.py` include:
   - RNG seed for PyTorch, helps with deterministic training
 
 # Configurations
-Training and inference code for `harmonai-tools` is based around JSON configuration files that define model hyperparameters, training settings, and information about your training dataset.
+Training and inference code for `stable-audio-tools` is based around JSON configuration files that define model hyperparameters, training settings, and information about your training dataset.
 
 ## Model config
 The model config file defines all of the information needed to load a model for training or inference. It also contains the training configuration needed to fine-tune a model or train from scratch.
@@ -118,7 +118,7 @@ The following properties are defined in the top level of the model configuration
   - The training configuration for the model, varies based on `model_type`. Provides parameters for training as well as demos.
 
 ## Dataset config
-`harmonai-tools` currently supports two kinds of data sources: local directories of audio files, and WebDataset datasets stored in Amazon S3.
+`stable-audio-tools` currently supports two kinds of data sources: local directories of audio files, and WebDataset datasets stored in Amazon S3.
 
 # Todo
 - [ ] Add documentation for dataset configs

@@ -1,4 +1,4 @@
-from harmonai_tools.interface.gradio import create_ui
+from stable_audio_tools.interface.gradio import create_ui
 import json 
 
 import torch
