@@ -17,7 +17,6 @@ from .bottleneck import Bottleneck
 from .diffusion import DiffusionAttnUnet1D
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform, AutoencoderPretransform
-from .pca import PCA
 
 # Adapted from https://github.com/NVIDIA/BigVGAN/blob/main/activations.py under MIT license
 class SnakeBeta(nn.Module):
@@ -270,8 +269,7 @@ class AudioAutoencoder(nn.Module):
         decode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, decoder: decoder(x),
         pretransform: Pretransform = None,
         in_channels = None,
-        out_channels = None,
-        latent_pca = False
+        out_channels = None
     ):
         super().__init__()
 
@@ -300,11 +298,6 @@ class AudioAutoencoder(nn.Module):
         self.decode_fn = decode_fn
 
         self.pretransform = pretransform
-
-        self.latent_pca = None
-
-        if latent_pca:
-            self.latent_pca = PCA(n_components=latent_dim)
  
     def encode(self, audio, return_info=False, skip_pretransform=False, **kwargs):
 
@@ -324,22 +317,12 @@ class AudioAutoencoder(nn.Module):
 
             info.update(bottleneck_info)
         
-        if self.latent_pca is not None and self.latent_pca.has_fit_.item():
-            latents = rearrange(latents, 'b c t -> b t c')
-            latents = self.latent_pca.transform(latents)
-            latents = rearrange(latents, 'b t c -> b c t')
-        
         if return_info:
             return latents, info
 
         return latents
 
     def decode(self, latents, **kwargs):
-
-        if self.latent_pca is not None and self.latent_pca.has_fit_.item():
-            latents = rearrange(latents, 'b c t -> b t c')
-            latents = self.latent_pca.inverse_transform(latents)
-            latents = rearrange(latents, 'b t c -> b c t')
 
         if self.bottleneck is not None:
             latents = self.bottleneck.decode(latents)
@@ -407,11 +390,6 @@ class DiffusionAutoencoder(AudioAutoencoder):
 
     def decode(self, latents, steps=100):
 
-        if self.latent_pca is not None and self.latent_pca.has_fit_.item():
-            latents = rearrange(latents, 'b c t -> b t c')
-            latents = self.latent_pca.inverse_transform(latents)
-            latents = rearrange(latents, 'b t c -> b c t')
-        
         if self.pretransform is not None:
             upsampled_length = latents.shape[2] * self.downsampling_ratio // self.pretransform.downsampling_ratio 
         else:
@@ -541,8 +519,6 @@ def create_autoencoder_from_config(config: Dict[str, Any]):
 
     if bottleneck is not None:
         bottleneck = create_bottleneck_from_config(bottleneck)
-    
-    latent_pca = ae_config.get("latent_pca", False)
 
     return AudioAutoencoder(
         encoder,
@@ -554,8 +530,7 @@ def create_autoencoder_from_config(config: Dict[str, Any]):
         bottleneck=bottleneck,
         pretransform=pretransform,
         in_channels=in_channels,
-        out_channels=out_channels,
-        latent_pca=latent_pca
+        out_channels=out_channels
     )
 
 def create_diffAE_from_config(config: Dict[str, Any]):

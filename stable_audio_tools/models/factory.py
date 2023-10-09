@@ -114,9 +114,6 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == 'dac_rvq_vae':
         from .bottleneck import DACRVQVAEBottleneck
         return DACRVQVAEBottleneck(**bottleneck_config["config"])
-    elif bottleneck_type == 'memcodes':
-        from .bottleneck import MemcodesBottleneck
-        return MemcodesBottleneck(**bottleneck_config["config"])
     elif bottleneck_type == 'l2_norm':
         from .bottleneck import L2Bottleneck
         return L2Bottleneck()
