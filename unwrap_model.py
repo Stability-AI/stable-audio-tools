@@ -2,7 +2,7 @@ import argparse
 import json
 import torch
 from torch.nn.parameter import Parameter
-from harmonai_tools.models import create_model_from_config
+from stable_audio_tools.models import create_model_from_config
 
 if __name__ == '__main__':
     args = argparse.ArgumentParser()
@@ -24,12 +24,12 @@ if __name__ == '__main__':
     training_config = model_config.get('training', None)
 
     if model_type == 'autoencoder':
-        from harmonai_tools.training.autoencoders import AutoencoderTrainingWrapper
+        from stable_audio_tools.training.autoencoders import AutoencoderTrainingWrapper
         
         ema_copy = None
 
         if training_config.get("use_ema", False):
-            from harmonai_tools.models.factory import create_model_from_config
+            from stable_audio_tools.models.factory import create_model_from_config
             ema_copy = create_model_from_config(model_config)
             ema_copy = create_model_from_config(model_config) # I don't know why this needs to be called twice but it broke when I called it once
         
@@ -51,11 +51,11 @@ if __name__ == '__main__':
             ema_copy=ema_copy if use_ema else None
         )
     elif model_type == 'diffusion_uncond':
-        from harmonai_tools.training.diffusion import DiffusionUncondTrainingWrapper
+        from stable_audio_tools.training.diffusion import DiffusionUncondTrainingWrapper
         training_wrapper = DiffusionUncondTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)
 
     elif model_type == 'diffusion_autoencoder':
-        from harmonai_tools.training.diffusion import DiffusionAutoencoderTrainingWrapper
+        from stable_audio_tools.training.diffusion import DiffusionAutoencoderTrainingWrapper
 
         ema_copy = create_model_from_config(model_config)
         
@@ -67,10 +67,10 @@ if __name__ == '__main__':
 
         training_wrapper = DiffusionAutoencoderTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, ema_copy=ema_copy, strict=False)
     elif model_type == 'diffusion_cond':
-        from harmonai_tools.training.diffusion import DiffusionCondTrainingWrapper
+        from stable_audio_tools.training.diffusion import DiffusionCondTrainingWrapper
         training_wrapper = DiffusionCondTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)
     elif model_type == 'diffusion_cond_inpaint':
-        from harmonai_tools.training.diffusion import DiffusionCondInpaintTrainingWrapper
+        from stable_audio_tools.training.diffusion import DiffusionCondInpaintTrainingWrapper
         training_wrapper = DiffusionCondInpaintTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)
     else:
         raise ValueError(f"Unknown model type {model_type}")
