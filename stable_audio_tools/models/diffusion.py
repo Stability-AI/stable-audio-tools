@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from functools import partial
+import numpy as np
 import typing as tp
 
 from x_transformers import ContinuousTransformerWrapper, Encoder
@@ -102,6 +103,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             conditioner: MultiConditioner,
             io_channels,
             sample_rate,
+            min_input_length: int,
             pretransform: Pretransform = None,
             cross_attn_cond_ids: tp.List[str] = [],
             global_cond_ids: tp.List[str] = [],
@@ -117,6 +119,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.cross_attn_cond_ids = cross_attn_cond_ids
         self.global_cond_ids = global_cond_ids
         self.input_concat_ids = input_concat_ids
+        self.min_input_length = min_input_length
 
     def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any]):
         cross_attention_input = None
@@ -669,12 +672,24 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     input_concat_ids = diffusion_config.get('input_concat_ids', [])
 
     pretransform = model_config.get("pretransform", None)
+    
     if pretransform is not None:
         pretransform = create_pretransform_from_config(pretransform, sample_rate)
+        min_input_length = pretransform.downsampling_ratio
+    else:
+        min_input_length = 1
+
+    if diffusion_model_type == "adp_cfg_1d":
+        min_input_length *= np.prod(diffusion_model_config["factors"])
+    elif diffusion_model_type == "dit":
+        min_input_length = min_input_length # There's no downsampling in DiT
+    elif diffusion_model_type == "hourglass":
+        min_input_length *= np.prod(diffusion_model_config["patch_sizes"])
 
     return ConditionedDiffusionModelWrapper(
         diffusion_model, 
         conditioner, 
+        min_input_length=min_input_length,
         sample_rate=sample_rate,
         cross_attn_cond_ids=cross_attention_ids,
         global_cond_ids=global_cond_ids,
