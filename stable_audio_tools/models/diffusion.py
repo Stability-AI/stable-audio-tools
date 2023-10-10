@@ -369,6 +369,7 @@ class DiTWrapper(ConditionedDiffusionModel):
                 cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = True,
                 rescale_cfg: bool = False,
+                scale_phi: float = 1.0,
                 **kwargs):
 
         assert batch_cfg, "batch_cfg must be True for DiTWrapper"
@@ -409,11 +410,12 @@ class HourglassCondWrapper(ConditionedDiffusionModel):
                 cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = True,
                 rescale_cfg: bool = False,
+                scale_phi: float = 1.0,
                 **kwargs):
 
         assert batch_cfg, "batch_cfg must be True for HourglassCondWrapper"
         assert input_concat_cond is None, "input_concat_cond is not supported for HourglassCondWrapper"
-        assert rescale_cfg is False, "rescale_cfg is not supported for HourglassCondWrapper"
+        #assert rescale_cfg is False, "rescale_cfg is not supported for HourglassCondWrapper"
 
         return self.model(
             x, 
@@ -511,7 +513,10 @@ class DiffusionTransformer(nn.Module):
         cond=None,
         cond_mask=None,
         cfg_scale=1.0,
-        cfg_dropout_prob=0.0):
+        cfg_dropout_prob=0.0,
+        causal=False):
+
+        assert causal == False, "Causal mode is not supported for DiffusionTransformer"
 
         if cond_mask is not None:
             cond_mask = cond_mask.bool()

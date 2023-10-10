@@ -159,7 +159,6 @@ def generate_cond(
         mask_args = mask_args,
         callback = progress_callback if preview_every is not None else None,
         scale_phi = cfg_rescale
-
     )
 
     # Convert to WAV file

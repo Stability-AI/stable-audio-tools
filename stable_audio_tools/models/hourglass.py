@@ -208,6 +208,7 @@ class HourglassDiffusionTransformer(nn.Module):
         self.mapping_dim = mapping_dim
 
         self.cond_token_dim = cond_token_dim
+        self.mapping_cond_dim = mapping_cond_dim
 
         self.time_emb = FourierFeatures(1, mapping_dim)
         
@@ -232,6 +233,7 @@ class HourglassDiffusionTransformer(nn.Module):
                     heads= width // d_heads,
                     use_conv = False,
                     cond_dim = mapping_dim,
+                    cross_attn_cond_dim=cond_token_dim,
                     use_rotary_pos_emb = True,
                     local_attn_window_size = window_sizes[i],
                 ))
@@ -242,6 +244,7 @@ class HourglassDiffusionTransformer(nn.Module):
                     heads = width // d_heads,
                     use_conv = False,
                     cond_dim = mapping_dim,
+                    cross_attn_cond_dim=cond_token_dim,
                     local_attn_window_size = window_sizes[i],
                 ))
 
@@ -274,10 +277,10 @@ class HourglassDiffusionTransformer(nn.Module):
         self.patch_out = TokenSplitWithoutSkip(widths[0], io_channels, patch_sizes[0])
         nn.init.zeros_(self.patch_out.proj.weight)
 
-        if cond_token_dim > 0:
-            self.to_mid_level_cond_tokens = nn.Linear(cond_token_dim, widths[-1], bias=False)
+        
+        self.to_mid_level_cond_tokens = nn.Linear(cond_token_dim, widths[-1], bias=False) if cond_token_dim > 0 else None
 
-    def forward(self, x, t, cond_tokens=None, cond_tokens_mask=None, mapping_cond=None, cfg_dropout_prob=0.0, cfg_scale=1.0):
+    def _forward(self, x, t, cond_tokens=None, cond_tokens_mask=None, mapping_cond=None):
      
         # Patching
         x = rearrange(x, "b c t -> b t c")
@@ -297,51 +300,18 @@ class HourglassDiffusionTransformer(nn.Module):
         # Hourglass transformer
         skips = []
         for down_level, merge in zip(self.down_levels, self.merges):
-            x = down_level(x, cond=cond)
+            x = down_level(x, cond=cond, cross_attn_cond=cond_tokens)
             skips.append(x)
             x = merge(x)
         
         if self.cond_token_dim > 0:
-            cond_tokens = self.to_mid_level_cond_tokens(cond_tokens)
-            
-            # CFG dropout
-            if cfg_dropout_prob > 0.0:
-                null_embed = torch.zeros_like(cond_tokens, device=cond_tokens.device)
-                dropout_mask = torch.bernoulli(torch.full((cond_tokens.shape[0], 1, 1), cfg_dropout_prob, device=cond_tokens.device)).to(torch.bool)
-                cond_tokens = torch.where(dropout_mask, null_embed, cond_tokens)
-
-            if cfg_scale != 1.0:
-                # Classifier-free guidance
-                # Concatenate conditioned and unconditioned inputs on the batch dimension            
-                batch_inputs = torch.cat([x, x], dim=0)
-                
-                null_embed = torch.zeros_like(cond_tokens, device=cond_tokens.device)
-
-                batch_mapping = torch.cat([cond, cond], dim=0)
-                batch_cond_tokens = torch.cat([cond_tokens, null_embed], dim=0)
-                if cond_tokens_mask is not None:
-                    batch_masks = torch.cat([cond_tokens_mask, cond_tokens_mask], dim=0).to(torch.bool)
-                else:
-                    batch_masks = None
-                
-                output = self.mid_level(
-                    batch_inputs, 
-                    prepend_embeds=self.to_mid_level_mapping_cond(batch_mapping).unsqueeze(1), 
-                    context=batch_cond_tokens, 
-                    #context_mask=batch_masks
-                    )[:, 1:, :]
-
-                cond_output, uncond_output = torch.chunk(output, 2, dim=0)
-                output = uncond_output + (cond_output - uncond_output) * cfg_scale
-
-            else:
-
-                x = self.mid_level(
-                    x, 
-                    prepend_embeds=self.to_mid_level_mapping_cond(cond).unsqueeze(1),
-                    context=cond_tokens, 
-                    #context_mask=cond_tokens_mask
-                )[:, 1:, :]
+                        
+            x = self.mid_level(
+                x, 
+                prepend_embeds=self.to_mid_level_mapping_cond(cond).unsqueeze(1),
+                context=self.to_mid_level_cond_tokens(cond_tokens), 
+                #context_mask=cond_tokens_mask
+            )[:, 1:, :]
 
         else:
 
@@ -353,7 +323,7 @@ class HourglassDiffusionTransformer(nn.Module):
 
         for up_level, split, skip in reversed(list(zip(self.up_levels, self.splits, skips))):
             x = split(x, skip)
-            x = up_level(x, cond=cond)
+            x = up_level(x, cond=cond, cross_attn_cond=cond_tokens)
 
         # Unpatching
         x = self.out_norm(x)
@@ -361,3 +331,54 @@ class HourglassDiffusionTransformer(nn.Module):
         x = rearrange(x, "b t c -> b c t")
 
         return x
+
+    def forward(self, 
+                x, 
+                t, 
+                cond_tokens=None, 
+                cond_tokens_mask=None, 
+                mapping_cond=None, 
+                cfg_dropout_prob=0.0, 
+                cfg_scale=1.0,
+                rescale_cfg=False,
+                scale_phi = 1.0):
+     
+        if self.cond_token_dim > 0 or self.mapping_cond_dim > 0:
+            
+            # CFG dropout
+            if cfg_dropout_prob > 0.0:
+                if cond_tokens is not None:
+                    null_embed = torch.zeros_like(cond_tokens, device=cond_tokens.device)
+                    dropout_mask = torch.bernoulli(torch.full((cond_tokens.shape[0], 1, 1), cfg_dropout_prob, device=cond_tokens.device)).to(torch.bool)
+                    cond_tokens = torch.where(dropout_mask, null_embed, cond_tokens)
+
+                if mapping_cond is not None:
+                    null_embed = torch.zeros_like(mapping_cond, device=mapping_cond.device)
+                    dropout_mask = torch.bernoulli(torch.full((mapping_cond.shape[0], 1, 1), cfg_dropout_prob, device=mapping_cond.device)).to(torch.bool)
+                    mapping_cond = torch.where(dropout_mask, null_embed, mapping_cond)
+
+            if cfg_scale != 1.0:
+                # Classifier-free guidance
+                # Concatenate conditioned and unconditioned inputs on the batch dimension            
+                batch_inputs = torch.cat([x, x], dim=0)
+                batch_t = torch.cat([t, t], dim=0)
+                
+                batch_mapping = torch.cat([mapping_cond, torch.zeros_like(mapping_cond)], dim=0) if mapping_cond is not None else None
+                batch_cond_tokens = torch.cat([cond_tokens, torch.zeros_like(cond_tokens, device=cond_tokens.device)], dim=0) if cond_tokens is not None else None
+                # if cond_tokens_mask is not None:
+                #     batch_masks = torch.cat([cond_tokens_mask, cond_tokens_mask], dim=0).to(torch.bool)
+                # else:
+                #     batch_masks = None
+                
+                output = self._forward(batch_inputs, batch_t, cond_tokens=batch_cond_tokens, cond_tokens_mask=cond_tokens_mask, mapping_cond=batch_mapping)
+
+                cond_output, uncond_output = torch.chunk(output, 2, dim=0)
+                return uncond_output + (cond_output - uncond_output) * cfg_scale
+
+            else:
+
+                return self._forward(x, t, cond_tokens=cond_tokens, cond_tokens_mask=cond_tokens_mask, mapping_cond=mapping_cond)
+
+        else:
+
+            return self._forward(x, t)

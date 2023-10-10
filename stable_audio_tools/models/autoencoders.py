@@ -267,8 +267,6 @@ class AudioAutoencoder(nn.Module):
         sample_rate,
         io_channels=2,
         bottleneck: Bottleneck = None,
-        encode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, encoder: encoder(x),
-        decode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, decoder: decoder(x),
         pretransform: Pretransform = None,
         in_channels = None,
         out_channels = None,
@@ -295,10 +293,8 @@ class AudioAutoencoder(nn.Module):
         self.bottleneck = bottleneck
 
         self.encoder = encoder
-        self.encode_fn = encode_fn
 
         self.decoder = decoder
-        self.decode_fn = decode_fn
 
         self.pretransform = pretransform
 
@@ -318,7 +314,7 @@ class AudioAutoencoder(nn.Module):
                 with torch.no_grad():
                     audio = self.pretransform.encode(audio)
 
-        latents = self.encode_fn(audio, self.encoder)
+        latents = self.encoder(audio)
 
         if self.bottleneck is not None:
             latents, bottleneck_info = self.bottleneck.encode(latents, return_info=True, **kwargs)
@@ -345,7 +341,7 @@ class AudioAutoencoder(nn.Module):
         if self.bottleneck is not None:
             latents = self.bottleneck.decode(latents)
 
-        decoded = self.decode_fn(latents, self.decoder, **kwargs)
+        decoded = self.decoder(latents, **kwargs)
 
         if self.pretransform is not None:
             if self.pretransform.enable_grad:
@@ -421,8 +417,8 @@ class DiffusionAutoencoder(AudioAutoencoder):
         if self.bottleneck is not None:
             latents = self.bottleneck.decode(latents)
 
-        if self.decoder:
-            latents = self.decode_fn(latents, self.decoder)
+        if self.decoder is not None:
+            latents = self.decode(latents)
 
         noise = torch.randn(latents.shape[0], self.io_channels, upsampled_length, device=latents.device)
         decoded = sample(self.diffusion, noise, steps, 0, cond=latents)
@@ -565,7 +561,10 @@ def create_diffAE_from_config(config: Dict[str, Any]):
 
     encoder = create_encoder_from_config(diffae_config["encoder"])
 
-    decoder = create_decoder_from_config(diffae_config["decoder"])
+    if "decoder" in diffae_config:
+        decoder = create_decoder_from_config(diffae_config["decoder"])
+    else:
+        decoder = None
 
     diffusion = DiffusionAttnUnet1D(**diffae_config["diffusion"]["config"])
     #create_diffusion_uncond_from_config(diffae_config["diffusion"])
