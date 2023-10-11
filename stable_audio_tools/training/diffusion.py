@@ -686,7 +686,8 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         #Encode reals, skipping the pretransform since it was already applied
         latents = self.diffae.encode(reals, skip_pretransform=True)
 
-        latents_upsampled = self.diffae.decode_fn(latents, self.diffae.decoder)
+        if self.diffae.decoder is not None:
+            latents = self.diffae.decoder(latents)
 
         # Draw uniformly distributed continuous timesteps
         t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
@@ -702,7 +703,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         targets = noise * alphas - reals * sigmas
 
         with torch.cuda.amp.autocast():
-            v = self.diffae.diffusion(noised_reals, t, cond=latents_upsampled)
+            v = self.diffae.diffusion(noised_reals, t, cond=latents)
             mse_loss = F.mse_loss(v, targets)
             loss = mse_loss
 

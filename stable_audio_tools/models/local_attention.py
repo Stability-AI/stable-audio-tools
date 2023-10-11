@@ -2,6 +2,7 @@ from einops import rearrange
 from torch import nn
 from local_attention.transformer import LocalMHA, FeedForward
 
+from .adp import Attention
 from .blocks import AdaRMSNorm
 
 # Adapted from https://github.com/lucidrains/local-attention/blob/master/local_attention/transformer.py
@@ -21,6 +22,7 @@ class ContinuousLocalTransformer(nn.Module):
         ff_dropout = 0.,
         use_conv = True,
         cond_dim = 0,
+        cross_attn_cond_dim = 0,
         **kwargs
     ):
         super().__init__()
@@ -38,11 +40,17 @@ class ContinuousLocalTransformer(nn.Module):
         self.local_attn_window_size = local_attn_window_size
 
         self.use_conv = use_conv
+
+        self.cond_dim = cond_dim
+
+        self.cross_attn_cond_dim = cross_attn_cond_dim
        
         for _ in range(depth):
+
             self.layers.append(nn.ModuleList([
                 AdaRMSNorm(dim, cond_dim, eps=1e-8) if cond_dim > 0 else nn.LayerNorm(dim, eps=1e-8),
                 LocalMHA(dim = dim, dim_head = dim_head, heads = heads, qk_scale=qk_scale, dropout = attn_dropout, causal = causal, window_size = local_attn_window_size, prenorm = False, **kwargs),
+                Attention(features=dim, num_heads=heads, head_features=dim_head, context_features=self.cross_attn_cond_dim) if self.cross_attn_cond_dim > 0 else nn.Identity(),
                 nn.Conv1d(dim, dim, kernel_size=3, padding=1) if use_conv else nn.Identity(),
                 FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
             ]))
@@ -51,11 +59,11 @@ class ContinuousLocalTransformer(nn.Module):
                 # Zero-init conv layers
                 nn.init.zeros_(self.layers[-1][1].weight)
 
-    def forward(self, x, mask = None, cond = None):
+    def forward(self, x, mask = None, cond = None, cross_attn_cond = None):
     
         x = self.project_in(x)
 
-        for norm, attn, conv, ff in self.layers:
+        for norm, attn, xattn, conv, ff in self.layers:
 
             if cond is not None:
                 x = norm(x, cond)
@@ -64,10 +72,14 @@ class ContinuousLocalTransformer(nn.Module):
 
             x = attn(x, mask = mask) + x
 
+            if cross_attn_cond is not None:
+                x = xattn(x, cross_attn_cond) + x
+
             if self.use_conv:
                 x = rearrange(x, "b n c -> b c n")
                 x = conv(x) + x
                 x = rearrange(x, "b c n -> b n c")
+                
             x = ff(x) + x
 
         return self.project_out(x)
