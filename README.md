@@ -118,7 +118,7 @@ The following properties are defined in the top level of the model configuration
   - The training configuration for the model, varies based on `model_type`. Provides parameters for training as well as demos.
 
 ## Dataset config
-`stable-audio-tools` currently supports two kinds of data sources: local directories of audio files, and WebDataset datasets stored in Amazon S3.
+`stable-audio-tools` currently supports two kinds of data sources: local directories of audio files, and WebDataset datasets stored in Amazon S3. More information can be found in [the dataset config documentation](docs/datasets.md)
 
 # Todo
 - [ ] Add documentation for dataset configs
@@ -126,3 +126,4 @@ The following properties are defined in the top level of the model configuration
 - [ ] Add documentation on pretransforms
 - [ ] Add documentation for Gradio interface
 - [ ] Add troubleshooting section
+- [ ] Add contribution guidelines 

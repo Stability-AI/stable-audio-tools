@@ -45,8 +45,6 @@ class IntConditioner(Conditioner):
 
     def forward(self, ints: tp.List[int], device=None) -> tp.Any:
             
-            #self.int_embedder.to(device)
-    
             ints = torch.tensor(ints).to(device)
             ints = ints.clamp(self.min_val, self.max_val)
     
@@ -94,12 +92,12 @@ class CLAPTextConditioner(Conditioner):
                  audio_model_type="HTSAT-base", 
                  enable_fusion=True,
                  project_out: bool = False,
-                 finetune: bool = False):
+                 enable_grad: bool = False):
         super().__init__(768 if use_text_features else 512, output_dim, 1, project_out=project_out)
 
         self.use_text_features = use_text_features
         self.feature_layer_ix = feature_layer_ix
-        self.finetune = finetune
+        self.enable_grad = enable_grad
 
         # Suppress logging from transformers
         previous_level = logging.root.manager.disable
@@ -111,7 +109,7 @@ class CLAPTextConditioner(Conditioner):
                 
                 model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu')
 
-                if self.finetune:
+                if self.enable_grad:
                     self.model = model
                 else: 
                     self.__dict__["model"] = model
@@ -119,7 +117,7 @@ class CLAPTextConditioner(Conditioner):
                 state_dict = clap_load_state_dict(clap_ckpt_path)
                 self.model.model.load_state_dict(state_dict, strict=False)
 
-                if self.finetune:
+                if self.enable_grad:
                     self.model.model.text_branch.requires_grad_(True)
                     self.model.model.text_branch.train()
                 else:
@@ -173,8 +171,11 @@ class CLAPAudioConditioner(Conditioner):
                  clap_ckpt_path,
                  audio_model_type="HTSAT-base", 
                  enable_fusion=True,
-                 project_out: bool = False):
+                 project_out: bool = False,
+                 enable_grad: bool = False):
         super().__init__(512, output_dim, 1, project_out=project_out)
+
+        self.enable_grad = enable_grad
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -188,7 +189,7 @@ class CLAPAudioConditioner(Conditioner):
                 
                 model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu')
 
-                if self.finetune:
+                if self.enable_grad:
                     self.model = model
                 else: 
                     self.__dict__["model"] = model
@@ -196,7 +197,7 @@ class CLAPAudioConditioner(Conditioner):
                 state_dict = clap_load_state_dict(clap_ckpt_path)
                 self.model.model.load_state_dict(state_dict, strict=False)
 
-                if self.finetune:
+                if self.enable_grad:
                     self.model.model.audio_branch.requires_grad_(True)
                     self.model.model.audio_branch.train()
                 else:
