@@ -39,5 +39,21 @@ Wavelet pretransforms take the following properties:
 - `wavelet`
     - The specific wavelet from [PyWavelets](https://pywavelets.readthedocs.io/en/latest/ref/wavelets.html) to use, currently limited to `"bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"`
 
+## STFT pretransform
+`stable-audio-tools` also exposes STFT as a pretransform.
+
+STFT pretransforms take the following properties:
+
+- `frame_length`
+    - Defines the length of each frame for the short-time Fourier transform
+- `hop_length`
+    - Specifies the spacing between adjacent frames
+- `window`
+    - Specifies the type of window function used, such as 'hann' or 'hamming'
+- `n_fft`
+    - Determines the number of points for the FFT (Fast Fourier Transform) used in the computation
+- `power`
+    - Sets the power exponent for the amplitude spectrum, typically set to 2.0 to obtain the amplitude spectrum
+
 ## Future work
 We hope to add more filters and transforms to this list, including PQMF and STFT transforms.
