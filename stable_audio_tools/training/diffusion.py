@@ -219,6 +219,9 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         # Draw uniformly distributed continuous timesteps
         t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
 
+        # Replace 1% of t with ones to ensure training on terminal SNR
+        t = torch.where(torch.rand_like(t) < 0.01, torch.ones_like(t), t)
+
         # Calculate the noise schedule parameters for those timesteps
         alphas, sigmas = get_alphas_sigmas(t)
 

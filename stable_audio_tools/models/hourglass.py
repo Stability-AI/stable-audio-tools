@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from functools import reduce
 import math
-from typing import Union, List
+from typing import Union, List, Literal
 
 from einops import rearrange
 import torch
@@ -14,6 +14,7 @@ from torch.nn import functional as F
 from .blocks import FourierFeatures
 
 from .local_attention import ContinuousLocalTransformer
+from .adp import Conv1d, ConvTranspose1d
 from x_transformers import ContinuousTransformerWrapper, Encoder
 
 use_compile = False
@@ -182,6 +183,83 @@ class TokenSplit(nn.Module):
         x = rearrange(x, "b n (c r) -> b (n r) c", r=self.patch_size)   
         return torch.lerp(skip, x, self.fac.to(x.dtype))
 
+class ConvDownsample(nn.Module):
+    def __init__(self, in_features, out_features, patch_size=2):
+        super().__init__()
+        
+        self.proj = Conv1d(
+            in_channels=in_features,
+            out_channels=out_features,
+            kernel_size=patch_size * 2 + 1,
+            stride=patch_size,
+            bias=False
+        )
+
+    def forward(self, x):
+        x = rearrange(x, "b n c -> b c n")
+        x = self.proj(x)
+        x = rearrange(x, "b c n -> b n c")
+        return x
+
+class ConvUpsampleWithSkip(nn.Module):
+    def __init__(self, in_features, out_features, patch_size=2):
+        super().__init__()
+        
+        self.patch_size = patch_size
+        self.proj = ConvTranspose1d(in_features, out_features, kernel_size=patch_size*2, stride=patch_size, bias=False)
+        self.fac = nn.Parameter(torch.ones(1) * 0.5)
+
+    def forward(self, x, skip):
+        x = rearrange(x, "b n c -> b c n")
+        x = self.proj(x)
+        x = rearrange(x, "b c n -> b n c")
+        return torch.lerp(skip, x, self.fac.to(x.dtype))
+
+class GlobalAttnTransformerLayer(nn.Module):
+    def __init__(self, width, depth, d_heads, mapping_cond_dim=0, cond_token_dim=0, **kwargs):
+        super().__init__()
+        
+        if cond_token_dim > 0:
+            self.cond_tokens_proj = nn.Linear(cond_token_dim, width, bias=False)
+
+        if mapping_cond_dim > 0:
+            self.mapping_cond_proj = nn.Linear(mapping_cond_dim, width, bias=False)
+
+        self.transformer = ContinuousTransformerWrapper(
+                    dim_in=width,
+                    dim_out=width,
+                    max_seq_len=0, #Not needed without absolute positional embeddings
+                    attn_layers = Encoder(
+                        dim=width,
+                        depth=depth,
+                        heads= width // d_heads,
+                        attn_flash = True,
+                        cross_attend = cond_token_dim > 0,
+                        zero_init_branch_output=True,
+                        use_abs_pos_emb = False,
+                        rotary_pos_emb=True,
+                        ff_swish = True,
+                        ff_glu = True,
+                        **kwargs
+                    )
+        )
+
+    def forward(self, x, *args, cond=None, cross_attn_cond=None, **kwargs):
+        
+        if cond is not None:
+            cond = self.mapping_cond_proj(cond)
+
+        if cross_attn_cond is not None:
+            cross_attn_cond = self.cond_tokens_proj(cross_attn_cond)
+
+        return self.transformer(
+            x,
+            prepend_embeds=cond.unsqueeze(1),
+            context=cross_attn_cond,
+            *args,
+            **kwargs
+        )[:, 1:, :] # Take off the prepended token
+
 # Model class
 
 class HourglassDiffusionTransformer(nn.Module):
@@ -190,14 +268,15 @@ class HourglassDiffusionTransformer(nn.Module):
             widths: List[int],
             depths: List[int],
             d_heads: List[int],
-            window_sizes: List[int],
             io_channels: int,  
             patch_sizes: List[int],
+            window_sizes: List[int] = [], # Not needed if use_local_levels = False
             cond_token_dim = 0,
             mapping_cond_dim = 0,
             mapping_dim = 1024,
             mapping_depth = 2,
             mapping_d_ff = 1024,
+            use_local_levels = True,
             **kwargs
         ):
         super().__init__()
@@ -219,7 +298,7 @@ class HourglassDiffusionTransformer(nn.Module):
 
         assert len(widths) == len(depths) == len(d_heads) == len(patch_sizes), "widths, depths, d_heads, and patch_sizes must have the same length"
 
-        assert len(window_sizes) == len(widths) - 1, "window_sizes must have one less element than widths"
+        assert len(window_sizes) == 0 or (len(window_sizes) == len(widths) - 1), "window_sizes must have one less element than widths"
 
         self.down_levels, self.up_levels = nn.ModuleList(), nn.ModuleList()
         for i, spec in enumerate(zip(widths, depths, d_heads)):
@@ -227,59 +306,64 @@ class HourglassDiffusionTransformer(nn.Module):
             width, depth, d_heads = spec
 
             if i < len(widths) - 1:
-                self.down_levels.append(ContinuousLocalTransformer(
-                    dim = width,
-                    depth = depth,
-                    heads= width // d_heads,
-                    use_conv = False,
-                    cond_dim = mapping_dim,
-                    cross_attn_cond_dim=cond_token_dim,
-                    use_rotary_pos_emb = True,
-                    local_attn_window_size = window_sizes[i],
-                ))
-                
-                self.up_levels.append(ContinuousLocalTransformer(
-                    dim = width,
-                    depth = depth,
-                    heads = width // d_heads,
-                    use_conv = False,
-                    cond_dim = mapping_dim,
-                    cross_attn_cond_dim=cond_token_dim,
-                    local_attn_window_size = window_sizes[i],
-                ))
+                if use_local_levels:
+                    self.down_levels.append(ContinuousLocalTransformer(
+                        dim = width,
+                        depth = depth,
+                        heads= width // d_heads,
+                        use_conv = False,
+                        cond_dim = mapping_dim,
+                        cross_attn_cond_dim=cond_token_dim,
+                        use_rotary_pos_emb = True,
+                        local_attn_window_size = window_sizes[i],
+                    ))
+                    
+                    self.up_levels.append(ContinuousLocalTransformer(
+                        dim = width,
+                        depth = depth,
+                        heads = width // d_heads,
+                        use_conv = False,
+                        cond_dim = mapping_dim,
+                        cross_attn_cond_dim=cond_token_dim,
+                        local_attn_window_size = window_sizes[i],
+                    ))
+                else:
+                    self.down_levels.append(GlobalAttnTransformerLayer(
+                        width=width,
+                        depth=depth,
+                        d_heads=d_heads,
+                        mapping_cond_dim=mapping_dim,
+                        cond_token_dim=cond_token_dim,
+                        **kwargs
+                    ))
+
+                    self.up_levels.append(GlobalAttnTransformerLayer(
+                        width=width,
+                        depth=depth,
+                        d_heads=d_heads,
+                        mapping_cond_dim=mapping_dim,
+                        cond_token_dim=cond_token_dim,
+                        **kwargs
+                    ))
 
             else:
-                self.mid_level = ContinuousTransformerWrapper(
-                    dim_in=width,
-                    dim_out=width,
-                    max_seq_len=0, #Not needed without absolute positional embeddings
-                    attn_layers = Encoder(
-                        dim=width,
-                        depth=depth,
-                        heads= width // d_heads,
-                        attn_flash = True,
-                        cross_attend = cond_token_dim > 0,
-                        zero_init_branch_output=True,
-                        use_abs_pos_emb = False,
-                        rotary_pos_emb=True,
-                        ff_swish = True,
-                        ff_glu = True,
-                        **kwargs
-                    )
+                self.mid_level = GlobalAttnTransformerLayer(
+                    width=width,
+                    depth=depth,
+                    d_heads=d_heads,
+                    mapping_cond_dim=mapping_dim,
+                    cond_token_dim=cond_token_dim,
+                    **kwargs
                 )
 
-                self.to_mid_level_mapping_cond = nn.Linear(mapping_dim, width, bias=False)
-
+       
         self.merges = nn.ModuleList([TokenMerge(spec_1, spec_2, ps) for spec_1, spec_2, ps in zip(widths[:-1], widths[1:], patch_sizes[1:])])
         self.splits = nn.ModuleList([TokenSplit(spec_2, spec_1, ps) for spec_1, spec_2, ps in zip(widths[:-1], widths[1:], patch_sizes[1:])])
-
+       
         self.out_norm = RMSNorm(widths[0])
         self.patch_out = TokenSplitWithoutSkip(widths[0], io_channels, patch_sizes[0])
         nn.init.zeros_(self.patch_out.proj.weight)
-
         
-        self.to_mid_level_cond_tokens = nn.Linear(cond_token_dim, widths[-1], bias=False) if cond_token_dim > 0 else None
-
     def _forward(self, x, t, cond_tokens=None, cond_tokens_mask=None, mapping_cond=None):
      
         # Patching
@@ -303,23 +387,8 @@ class HourglassDiffusionTransformer(nn.Module):
             x = down_level(x, cond=cond, cross_attn_cond=cond_tokens)
             skips.append(x)
             x = merge(x)
-        
-        if self.cond_token_dim > 0:
-                        
-            x = self.mid_level(
-                x, 
-                prepend_embeds=self.to_mid_level_mapping_cond(cond).unsqueeze(1),
-                context=self.to_mid_level_cond_tokens(cond_tokens), 
-                #context_mask=cond_tokens_mask
-            )[:, 1:, :]
-
-        else:
-
-            x = self.mid_level(
-                x, 
-                prepend_embeds=self.to_mid_level_mapping_cond(cond).unsqueeze(1)
-            )[:, 1:, :]
-
+                                
+        x = self.mid_level(x, cond=cond, cross_attn_cond=cond_tokens)
 
         for up_level, split, skip in reversed(list(zip(self.up_levels, self.splits, skips))):
             x = split(x, skip)
