@@ -147,10 +147,11 @@ class DiffusionUncondDemoCallback(pl.Callback):
         noise = torch.randn([self.num_demos, module.diffusion.io_channels, demo_samples]).to(module.device)
 
         try:
-            fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0)
+            with torch.cuda.amp.autocast():
+                fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0)
 
-            if module.diffusion.pretransform is not None:
-                fakes = module.diffusion.pretransform.decode(fakes)
+                if module.diffusion.pretransform is not None:
+                    fakes = module.diffusion.pretransform.decode(fakes)
 
             # Put the demos together
             fakes = rearrange(fakes, 'b d n -> d (b n)')
