@@ -10,12 +10,10 @@ import torch
 from torch import nn
 import torch._dynamo
 from torch.nn import functional as F
+from x_transformers import ContinuousTransformerWrapper, Encoder
 
 from .blocks import FourierFeatures
-
 from .local_attention import ContinuousLocalTransformer
-from .adp import Conv1d, ConvTranspose1d
-from x_transformers import ContinuousTransformerWrapper, Encoder
 
 use_compile = False
 
@@ -183,38 +181,6 @@ class TokenSplit(nn.Module):
         x = rearrange(x, "b n (c r) -> b (n r) c", r=self.patch_size)   
         return torch.lerp(skip, x, self.fac.to(x.dtype))
 
-class ConvDownsample(nn.Module):
-    def __init__(self, in_features, out_features, patch_size=2):
-        super().__init__()
-        
-        self.proj = Conv1d(
-            in_channels=in_features,
-            out_channels=out_features,
-            kernel_size=patch_size * 2 + 1,
-            stride=patch_size,
-            bias=False
-        )
-
-    def forward(self, x):
-        x = rearrange(x, "b n c -> b c n")
-        x = self.proj(x)
-        x = rearrange(x, "b c n -> b n c")
-        return x
-
-class ConvUpsampleWithSkip(nn.Module):
-    def __init__(self, in_features, out_features, patch_size=2):
-        super().__init__()
-        
-        self.patch_size = patch_size
-        self.proj = ConvTranspose1d(in_features, out_features, kernel_size=patch_size*2, stride=patch_size, bias=False)
-        self.fac = nn.Parameter(torch.ones(1) * 0.5)
-
-    def forward(self, x, skip):
-        x = rearrange(x, "b n c -> b c n")
-        x = self.proj(x)
-        x = rearrange(x, "b c n -> b n c")
-        return torch.lerp(skip, x, self.fac.to(x.dtype))
-
 class GlobalAttnTransformerLayer(nn.Module):
     def __init__(self, width, depth, d_heads, mapping_cond_dim=0, cond_token_dim=0, **kwargs):
         super().__init__()
@@ -298,7 +264,7 @@ class HourglassDiffusionTransformer(nn.Module):
 
         assert len(widths) == len(depths) == len(d_heads) == len(patch_sizes), "widths, depths, d_heads, and patch_sizes must have the same length"
 
-        assert len(window_sizes) == 0 or (len(window_sizes) == len(widths) - 1), "window_sizes must have one less element than widths"
+        assert use_local_levels == False or (len(window_sizes) == 0 or (len(window_sizes) == len(widths) - 1)), "window_sizes must have one less element than widths"
 
         self.down_levels, self.up_levels = nn.ModuleList(), nn.ModuleList()
         for i, spec in enumerate(zip(widths, depths, d_heads)):
