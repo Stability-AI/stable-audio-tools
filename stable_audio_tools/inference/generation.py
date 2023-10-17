@@ -65,6 +65,8 @@ def generate_diffusion_cond(
         cfg_scale=6,
         conditioning: dict = None,
         conditioning_tensors: tp.Optional[dict] = None,
+        negative_conditioning: dict = None,
+        negative_conditioning_tensors: tp.Optional[dict] = None,
         batch_size: int = 1,
         sample_size: int = 2097152,
         sample_rate: int = 48000,
@@ -116,6 +118,15 @@ def generate_diffusion_cond(
     if conditioning_tensors is None:
         conditioning_tensors = model.conditioner(conditioning, device)
     conditioning_tensors = model.get_conditioning_inputs(conditioning_tensors)
+
+    if negative_conditioning is not None or negative_conditioning_tensors is not None:
+        
+        if negative_conditioning_tensors is None:
+            negative_conditioning_tensors = model.conditioner(negative_conditioning, device)
+            
+        negative_conditioning_tensors = model.get_conditioning_inputs(negative_conditioning_tensors, negative=True)
+    else:
+        negative_conditioning_tensors = {}
 
     if init_audio is not None:
         # The user supplied some initial audio (for inpainting or variation). Let us prepare the input audio.
@@ -170,7 +181,7 @@ def generate_diffusion_cond(
 
     # Now the generative AI part:
     # k-diffusion denoising process go!
-    sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
+    sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, **conditioning_tensors, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
 
     # v-diffusion: 
     #sampled = sample(model.model, noise, steps, 0, **conditioning_tensors, embedding_scale=cfg_scale)

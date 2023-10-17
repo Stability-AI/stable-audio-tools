@@ -46,6 +46,7 @@ def load_model(model_config, model_ckpt_path, pretransform_ckpt_path=None, devic
 
 def generate_cond(
         prompt,
+        negative_prompt=None,
         seconds_start=0,
         seconds_total=30,
         cfg_scale=6.0,
@@ -78,6 +79,11 @@ def generate_cond(
     # Return fake stereo audio
     conditioning = [{"prompt": prompt, "seconds_start": seconds_start, "seconds_total": seconds_total}] * batch_size
 
+    if negative_prompt:
+        negative_conditioning = [{"prompt": negative_prompt, "seconds_start": seconds_start, "seconds_total": seconds_total}] * batch_size
+    else:
+        negative_conditioning = None
+        
     #Get the device from the model
     device = next(model.parameters()).device
 
@@ -144,6 +150,7 @@ def generate_cond(
     audio = generate_diffusion_cond(
         model, 
         conditioning=conditioning,
+        negative_conditioning=negative_conditioning,
         steps=steps,
         cfg_scale=cfg_scale,
         batch_size=batch_size,
@@ -306,7 +313,9 @@ def create_uncond_sampling_ui(model_config):
 
 def create_sampling_ui(model_config, inpainting=False):
     with gr.Row():
-        prompt = gr.Textbox(show_label=False, placeholder="Prompt", scale=6)
+        with gr.Column(scale=6):
+            prompt = gr.Textbox(show_label=False, placeholder="Prompt")
+            negative_prompt = gr.Textbox(show_label=False, placeholder="Negative prompt")
         generate_button = gr.Button("Generate", variant='primary', scale=1)
     
     model_conditioning_config = model_config["model"].get("conditioning", None)
@@ -370,6 +379,7 @@ def create_sampling_ui(model_config, inpainting=False):
                     mask_marination_slider = gr.Slider(minimum=0.0, maximum=1, step=0.0001, value=0, label="Marination level", visible=False) # still working on the usefulness of this 
 
                     inputs = [prompt, 
+                        negative_prompt,
                         seconds_start_slider, 
                         seconds_total_slider, 
                         cfg_scale_slider, 
@@ -400,6 +410,7 @@ def create_sampling_ui(model_config, inpainting=False):
                     init_noise_level_slider = gr.Slider(minimum=0.1, maximum=100.0, step=0.01, value=0.1, label="Init noise level")
 
                     inputs = [prompt, 
+                        negative_prompt,
                         seconds_start_slider, 
                         seconds_total_slider, 
                         cfg_scale_slider, 

@@ -121,7 +121,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.input_concat_ids = input_concat_ids
         self.min_input_length = min_input_length
 
-    def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any]):
+    def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any], negative=False):
         cross_attention_input = None
         cross_attention_masks = None
         global_cond = None
@@ -145,12 +145,20 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             # Assumes that the input concat conditioning inputs are of shape (batch, channels, seq)
             input_concat_cond = torch.cat([cond[key][0] for key in self.input_concat_ids], dim=1)
 
-        return {
-            "cross_attn_cond": cross_attention_input,
-            "cross_attn_masks": cross_attention_masks,
-            "global_cond": global_cond,
-            "input_concat_cond": input_concat_cond
-        }
+        if negative:
+            return {
+                "negative_cross_attn_cond": cross_attention_input,
+                "negative_cross_attn_masks": cross_attention_masks,
+                "negative_global_cond": global_cond,
+                "negative_input_concat_cond": input_concat_cond
+            }
+        else:
+            return {
+                "cross_attn_cond": cross_attention_input,
+                "cross_attn_masks": cross_attention_masks,
+                "global_cond": global_cond,
+                "input_concat_cond": input_concat_cond
+            }
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
         return self.model(x, t, **self.get_conditioning_inputs(cond), **kwargs)
@@ -183,6 +191,10 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
                 cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = False,
                 rescale_cfg: bool = False,
+                negative_cross_attn_cond=None,
+                negative_cross_attn_masks=None,
+                negative_global_cond=None,
+                negative_input_concat_cond=None,
                 **kwargs):
         p = Profiler()
 
@@ -203,6 +215,8 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
             embedding_mask_proba=cfg_dropout_prob, 
             batch_cfg=batch_cfg,
             rescale_cfg=rescale_cfg,
+            negative_embedding=negative_cross_attn_cond,
+            negative_embedding_mask=negative_cross_attn_masks,
             **kwargs)
         
         p.tick("UNetCFG1D forward")

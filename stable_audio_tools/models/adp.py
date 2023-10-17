@@ -1273,6 +1273,8 @@ class UNetCFG1d(UNet1d):
         batch_cfg: bool = False,
         rescale_cfg: bool = False,
         scale_phi: float = 0.4,
+        negative_embedding: Optional[Tensor] = None,
+        negative_embedding_mask: Optional[Tensor] = None,
         **kwargs,
     ) -> Tensor:
         b, device = embedding.shape[0], embedding.device
@@ -1296,7 +1298,18 @@ class UNetCFG1d(UNet1d):
             if batch_cfg:
                 batch_x = torch.cat([x, x], dim=0)
                 batch_time = torch.cat([time, time], dim=0)
-                batch_embed = torch.cat([embedding, fixed_embedding], dim=0)
+
+                if negative_embedding is not None:
+                    if negative_embedding_mask is not None:
+                        negative_embedding_mask = negative_embedding_mask.to(torch.bool).unsqueeze(2)
+
+                        negative_embedding = torch.where(negative_embedding_mask, negative_embedding, fixed_embedding)
+                    
+                    batch_embed = torch.cat([embedding, negative_embedding], dim=0)
+
+                else:
+                    batch_embed = torch.cat([embedding, fixed_embedding], dim=0)
+
                 batch_mask = None
                 if embedding_mask is not None:
                     batch_mask = torch.cat([embedding_mask, embedding_mask], dim=0)
