@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from einops import rearrange
-from vector_quantize_pytorch import ResidualVQ
+from vector_quantize_pytorch import ResidualVQ, FSQ
 from nwt_pytorch import Memcodes
 from dac.nn.quantize import ResidualVectorQuantize as DACResidualVQ
 
@@ -256,6 +256,28 @@ class DACRVQVAEBottleneck(Bottleneck):
         if self.quantize_on_decode:
             x = self.quantizer(x)["z"]
 
+        return x
+    
+class FSQBottleneck(Bottleneck):
+    def __init__(self, dim, levels):
+        super().__init__()
+        self.quantizer = FSQ(levels=[levels] * dim)
+
+    def encode(self, x, return_info=False):
+        info = {}
+
+        x = rearrange(x, "b c n -> b n c")
+        x, indices = self.quantizer(x)
+        x = rearrange(x, "b n c -> b c n")
+
+        info["quantizer_indices"] = indices
+
+        if return_info:
+            return x, info
+        else:
+            return x
+        
+    def decode(self, x):
         return x
 
 class MemcodesBottleneck(Bottleneck):

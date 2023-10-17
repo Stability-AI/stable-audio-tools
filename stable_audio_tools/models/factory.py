@@ -129,5 +129,8 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == "wasserstein":
         from .bottleneck import WassersteinBottleneck
         return WassersteinBottleneck(**bottleneck_config.get("config", {}))
+    elif bottleneck_type == "fsq":
+        from .bottleneck import FSQBottleneck
+        return FSQBottleneck(**bottleneck_config["config"])
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')
