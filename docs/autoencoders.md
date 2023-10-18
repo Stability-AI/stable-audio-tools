@@ -56,7 +56,7 @@ The `training` config in the autoencoder model config file should have the follo
 ## Loss configs
 There are few different types of losses that are used for autoencoder training, including spectral losses, time-domain losses, adversarial losses, and bottleneck-specific losses.
 
-Hyperparameters fo these losses as well as loss weighting factors can be configured in the `loss_configs` property in the `training` config.
+Hyperparameters for these losses as well as loss weighting factors can be configured in the `loss_configs` property in the `training` config.
 
 ### Spectral losses
 Multi-resolution STFT losses are the main reconstruction loss used for our audio autoencoders. We use the [auraloss](https://github.com/csteinmetz1/auraloss/tree/main/auraloss) library for our spectral loss functions. 
@@ -269,7 +269,7 @@ The Wasserstein bottleneck implements the WAE-MMD regularization method from the
 
 The Wasserstein bottleneck also exposes the `noise_augment_dim` property, which concatenates `noise_augment_dim` channels of Gaussian noise to the latent series before passing into the decoder. This adds some stochasticity to the latents which can be helpful for adversarial training, while keeping the encoder outputs deterministic.
 
-**Note: The MMD calculation is very VRAM-intensive for longer sequence lengths, so training a Wasserstein autoencoder is best done on autoencoders with a decent downsampling factor, or on short sequence lengths. For inference, the MMD calculation is disabled.**
+**Note: The MMD calculation is highly VRAM-intensive for longer sequence lengths. So, training a Wasserstein autoencoder is best done on autoencoders with a decent downsampling factor, or on short sequence lengths. For inference, the MMD calculation is disabled.**
 
 ### Example config
 ```json
