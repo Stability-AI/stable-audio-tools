@@ -106,7 +106,7 @@ class PretrainedDACPretransform(Pretransform):
         if self.quantize_on_decode:
             output = latents
         else:
-            z, _, latents, _, _ = self.model.quantizer(z, n_quantizers=self.model.n_codebooks)
+            z, _, _, _, _ = self.model.quantizer(latents, n_quantizers=self.model.n_codebooks)
             output = z
         
         if self.scale != 1.0:
