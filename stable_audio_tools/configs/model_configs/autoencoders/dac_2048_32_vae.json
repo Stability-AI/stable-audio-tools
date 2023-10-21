@@ -30,7 +30,39 @@
     "training": {
         "learning_rate": 1e-4,
         "warmup_steps": 0,
-        "use_ema": false,
+        "use_ema": true,
+        "optimizer_configs": {
+            "autoencoder": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "betas": [0.8, 0.99],
+                        "lr": 1e-4
+                    }
+                },
+                "scheduler": {
+                    "type": "ExponentialLR",
+                    "config": {
+                        "gamma": 0.999996
+                    }
+                }
+            },
+            "discriminator": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "betas": [0.8, 0.99],
+                        "lr": 5e-5
+                    }
+                },
+                "scheduler": {
+                    "type": "ExponentialLR",
+                    "config": {
+                        "gamma": 0.999996
+                    }
+                }
+            }
+        },
         "loss_configs": {
             "discriminator": {
                 "type": "encodec",
@@ -61,6 +93,11 @@
                 "type": "l1",
                 "weights": {
                     "l1": 0.0
+                }
+            },
+            "bottleneck": {
+                "weights": {
+                    "kl": 1e-6
                 }
             }
         },
