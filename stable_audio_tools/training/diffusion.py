@@ -55,7 +55,8 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
             beta=0.9999,
             power=3/4,
             update_every=1,
-            update_after_step=1
+            update_after_step=1,
+            include_online_model=False
         )
 
         self.lr = lr
@@ -197,7 +198,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             beta=0.9999,
             power=3/4,
             update_every=1,
-            update_after_step=1
+            update_after_step=1,
+            include_online_model=False
         )
 
         self.lr = lr
@@ -411,7 +413,8 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
             beta=0.9999,
             power=3/4,
             update_every=1,
-            update_after_step=1
+            update_after_step=1,
+            include_online_model=False
         )
 
         self.lr = lr

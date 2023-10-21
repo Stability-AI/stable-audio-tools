@@ -303,20 +303,39 @@ class AudioAutoencoder(nn.Module):
         if latent_pca:
             self.latent_pca = PCA(n_components=latent_dim)
  
-    def encode(self, audio, return_info=False, skip_pretransform=False, **kwargs):
+    def encode(self, audio, return_info=False, skip_pretransform=False, iterate_batch=False, **kwargs):
 
         info = {}
 
         if self.pretransform is not None and not skip_pretransform:
             if self.pretransform.enable_grad:
-                audio = self.pretransform.encode(audio)
+                if iterate_batch:
+                    audio = []
+                    for i in range(audio.shape[0]):
+                        audio.append(self.pretransform.encode(audio[i:i+1]))
+                    audio = torch.cat(audio, dim=0)
+                else:
+                    audio = self.pretransform.encode(audio)
             else:
                 with torch.no_grad():
-                    audio = self.pretransform.encode(audio)
+                    if iterate_batch:
+                        audio = []
+                        for i in range(audio.shape[0]):
+                            audio.append(self.pretransform.encode(audio[i:i+1]))
+                        audio = torch.cat(audio, dim=0)
+                    else:
+                        audio = self.pretransform.encode(audio)
 
-        latents = self.encoder(audio)
+        if iterate_batch:
+            latents = []
+            for i in range(audio.shape[0]):
+                latents.append(self.encoder(audio[i:i+1]))
+            latents = torch.cat(latents, dim=0)
+        else:
+            latents = self.encoder(audio)
 
         if self.bottleneck is not None:
+            # TODO: Add iterate batch logic, needs to merge the info dicts
             latents, bottleneck_info = self.bottleneck.encode(latents, return_info=True, **kwargs)
 
             info.update(bottleneck_info)
@@ -331,7 +350,7 @@ class AudioAutoencoder(nn.Module):
 
         return latents
 
-    def decode(self, latents, **kwargs):
+    def decode(self, latents, iterate_batch=False, **kwargs):
 
         if self.latent_pca is not None and self.latent_pca.has_fit_.item():
             latents = rearrange(latents, 'b c t -> b t c')
@@ -339,16 +358,40 @@ class AudioAutoencoder(nn.Module):
             latents = rearrange(latents, 'b t c -> b c t')
 
         if self.bottleneck is not None:
-            latents = self.bottleneck.decode(latents)
+            if iterate_batch:
+                decoded = []
+                for i in range(latents.shape[0]):
+                    decoded.append(self.bottleneck.decode(latents[i:i+1]))
+                decoded = torch.cat(decoded, dim=0)
+            else:
+                latents = self.bottleneck.decode(latents)
 
-        decoded = self.decoder(latents, **kwargs)
+        if iterate_batch:
+            decoded = []
+            for i in range(latents.shape[0]):
+                decoded.append(self.decoder(latents[i:i+1]))
+            decoded = torch.cat(decoded, dim=0)
+        else:
+            decoded = self.decoder(latents, **kwargs)
 
         if self.pretransform is not None:
             if self.pretransform.enable_grad:
-                decoded = self.pretransform.decode(decoded)
+                if iterate_batch:
+                    decoded = []
+                    for i in range(latents.shape[0]):
+                        decoded.append(self.pretransform.decode(decoded[i:i+1]))
+                    decoded = torch.cat(decoded, dim=0)
+                else:
+                    decoded = self.pretransform.decode(decoded)
             else:
                 with torch.no_grad():
-                    decoded = self.pretransform.decode(decoded)
+                    if iterate_batch:
+                        decoded = []
+                        for i in range(latents.shape[0]):
+                            decoded.append(self.pretransform.decode(decoded[i:i+1]))
+                        decoded = torch.cat(decoded, dim=0)
+                    else:
+                        decoded = self.pretransform.decode(decoded)
         
         return decoded
     

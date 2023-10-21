@@ -37,8 +37,9 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
 
         scale = pretransform_config.get("scale", 1.0)
         model_half = pretransform_config.get("model_half", False)
+        iterate_batch = pretransform_config.get("iterate_batch", False)
 
-        pretransform = AutoencoderPretransform(autoencoder, scale=scale, model_half=model_half)
+        pretransform = AutoencoderPretransform(autoencoder, scale=scale, model_half=model_half, iterate_batch=iterate_batch)
     elif pretransform_type == 'wavelet':
         from .pretransforms import WaveletPretransform
 
