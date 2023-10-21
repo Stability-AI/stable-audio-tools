@@ -55,8 +55,7 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
             beta=0.9999,
             power=3/4,
             update_every=1,
-            update_after_step=1,
-            include_online_model=False
+            update_after_step=1
         )
 
         self.lr = lr
