@@ -1,5 +1,6 @@
 from prefigure.prefigure import get_all_args, push_wandb_config
 import json
+import os
 import torch
 import pytorch_lightning as pl
 
@@ -44,14 +45,20 @@ def main():
                  
     training_wrapper = create_training_wrapper_from_config(model_config, model)
 
+    wandb_logger = pl.loggers.WandbLogger(project=args.name)
+    wandb_logger.watch(training_wrapper)
+
     exc_callback = ExceptionCallback()
-    ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, save_top_k=-1)
+    
+    if args.save_dir and isinstance(wandb_logger.experiment.id, str):
+        checkpoint_dir = os.path.join(args.save_dir, wandb_logger.experiment.project, wandb_logger.experiment.id, "checkpoints") 
+    else:
+        checkpoint_dir = None
+
+    ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_top_k=-1)
     save_model_config_callback = ModelConfigEmbedderCallback(model_config)
 
     demo_callback = create_demo_callback_from_config(model_config, demo_dl=train_dl)
-
-    wandb_logger = pl.loggers.WandbLogger(project=args.name)
-    wandb_logger.watch(training_wrapper)
 
     #Combine args and config dicts
     args_dict = vars(args)
@@ -74,7 +81,7 @@ def main():
         else:
             strategy = args.strategy
     else:
-        strategy = 'ddp_find_unused_parameters_true' if args.num_gpus > 1 else None 
+        strategy = 'ddp_find_unused_parameters_true' if args.num_gpus > 1 else "auto" 
 
     trainer = pl.Trainer(
         devices=args.num_gpus,
