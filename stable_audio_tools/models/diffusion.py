@@ -377,26 +377,35 @@ class DiTWrapper(ConditionedDiffusionModel):
                 t, 
                 cross_attn_cond=None, 
                 cross_attn_masks=None, 
+                negative_cross_attn_cond=None,
+                negative_cross_attn_masks=None,
                 input_concat_cond=None, 
+                negative_input_concat_cond=None,
                 global_cond=None, 
+                negative_global_cond=None,
                 cfg_scale=1.0,
                 cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = True,
                 rescale_cfg: bool = False,
-                scale_phi: float = 1.0,
+                scale_phi: float = 0.0,
                 **kwargs):
 
         assert batch_cfg, "batch_cfg must be True for DiTWrapper"
         assert input_concat_cond is None, "input_concat_cond is not supported for DiTWrapper"
+        assert negative_input_concat_cond is None, "negative_input_concat_cond is not supported for DiTWrapper"
         assert global_cond is None, "global_cond is not supported for DiTWrapper"
+        assert negative_global_cond is None, "negative_global_cond is not supported for DiTWrapper"
 
         return self.model(
             x, 
             t, 
-            cond=cross_attn_cond, 
-            cond_mask=cross_attn_masks, 
+            cross_attn_cond=cross_attn_cond, 
+            cross_attn_cond_mask=cross_attn_masks, 
+            negative_cross_attn_cond=negative_cross_attn_cond,
+            negative_cross_attn_mask=negative_cross_attn_masks,
             cfg_scale=cfg_scale, 
             cfg_dropout_prob=cfg_dropout_prob,
+            scale_phi=scale_phi,
             **kwargs)    
     
 class HourglassCondWrapper(ConditionedDiffusionModel):
@@ -424,7 +433,7 @@ class HourglassCondWrapper(ConditionedDiffusionModel):
                 cfg_dropout_prob: float = 0.0,
                 batch_cfg: bool = True,
                 rescale_cfg: bool = False,
-                scale_phi: float = 1.0,
+                scale_phi: float = 0.0,
                 **kwargs):
 
         assert batch_cfg, "batch_cfg must be True for HourglassCondWrapper"
@@ -439,6 +448,7 @@ class HourglassCondWrapper(ConditionedDiffusionModel):
             mapping_cond=global_cond,
             cfg_scale=cfg_scale, 
             cfg_dropout_prob=cfg_dropout_prob,
+            scale_phi=scale_phi,
             **kwargs)  
 
 class DiTUncondWrapper(DiffusionModel):
@@ -520,69 +530,110 @@ class DiffusionTransformer(nn.Module):
         self.postprocess_conv = nn.Conv1d(io_channels, io_channels, 1, bias=False)
         nn.init.zeros_(self.postprocess_conv.weight)
 
-    def forward(
+    def _forward(
         self, 
         x, 
         t, 
-        cond=None,
-        cond_mask=None,
-        cfg_scale=1.0,
-        cfg_dropout_prob=0.0,
-        causal=False):
+        cross_attn_cond=None,
+        cross_attn_cond_mask=None):
 
-        assert causal == False, "Causal mode is not supported for DiffusionTransformer"
+        if cross_attn_cond is not None:
+            cross_attn_cond = self.to_cond_embed(cross_attn_cond)
 
-        if cond_mask is not None:
-            cond_mask = cond_mask.bool()
+        if cross_attn_cond_mask is not None:
+            cross_attn_cond_mask = cross_attn_cond_mask.bool()
 
-            cond_mask = None # Temporarily disabling conditioning masks due to kernel issue for flash attention
+            cross_attn_cond_mask = None # Temporarily disabling conditioning masks due to kernel issue for flash attention
 
         # Get the batch of timestep embeddings
         timestep_embed = self.to_timestep_embed(self.timestep_features(t[:, None])) # (b, embed_dim)
 
         timestep_embed = timestep_embed.unsqueeze(1)
 
-        if cond is not None:
-
-            cond = self.to_cond_embed(cond)
-
-            # CFG dropout
-            if cfg_dropout_prob > 0.0:
-                null_embed = torch.zeros_like(cond, device=cond.device)
-                dropout_mask = torch.bernoulli(torch.full((cond.shape[0], 1, 1), cfg_dropout_prob, device=cond.device)).to(torch.bool)
-                cond = torch.where(dropout_mask, null_embed, cond)
-
         x = self.preprocess_conv(x) + x
 
         x = rearrange(x, "b c t -> b t c")
 
-        if cond is not None and cfg_scale != 1.0:
-            # Classifier-free guidance
-            # Concatenate conditioned and unconditioned inputs on the batch dimension            
-            batch_inputs = torch.cat([x, x], dim=0)
-            
-            null_embed = torch.zeros_like(cond, device=cond.device)
-
-            batch_timestep = torch.cat([timestep_embed, timestep_embed], dim=0)
-            batch_cond = torch.cat([cond, null_embed], dim=0)
-            if cond_mask is not None:
-                batch_masks = torch.cat([cond_mask, cond_mask], dim=0)
-            else:
-                batch_masks = None
-            
-            output = self.transformer(batch_inputs, prepend_embeds=batch_timestep, context=batch_cond, context_mask=batch_masks)
-
-            cond_output, uncond_output = torch.chunk(output, 2, dim=0)
-            output = uncond_output + (cond_output - uncond_output) * cfg_scale
-            
-        else:
-            output = self.transformer(x, prepend_embeds=timestep_embed, context=cond, context_mask=cond_mask)
+        output = self.transformer(x, prepend_embeds=timestep_embed, context=cross_attn_cond, context_mask=cross_attn_cond_mask)
 
         output = rearrange(output, "b t c -> b c t")[:,:,1:]
 
         output = self.postprocess_conv(output) + output
 
         return output
+
+    def forward(
+        self, 
+        x, 
+        t, 
+        cross_attn_cond=None,
+        cross_attn_cond_mask=None,
+        negative_cross_attn_cond=None,
+        negative_cross_attn_mask=None,
+        cfg_scale=1.0,
+        cfg_dropout_prob=0.0,
+        causal=False,
+        scale_phi=0.0):
+
+        assert causal == False, "Causal mode is not supported for DiffusionTransformer"
+
+        if cross_attn_cond_mask is not None:
+            cross_attn_cond_mask = cross_attn_cond_mask.bool()
+
+            cross_attn_cond_mask = None # Temporarily disabling conditioning masks due to kernel issue for flash attention
+
+
+        if cross_attn_cond is not None:
+
+            # CFG dropout
+            if cfg_dropout_prob > 0.0:
+                null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
+                dropout_mask = torch.bernoulli(torch.full((cross_attn_cond.shape[0], 1, 1), cfg_dropout_prob, device=cross_attn_cond.device)).to(torch.bool)
+                cross_attn_cond = torch.where(dropout_mask, null_embed, cross_attn_cond)
+
+        if cross_attn_cond is not None and cfg_scale != 1.0:
+            # Classifier-free guidance
+            # Concatenate conditioned and unconditioned inputs on the batch dimension            
+            batch_inputs = torch.cat([x, x], dim=0)
+            
+            null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
+
+            batch_timestep = torch.cat([t, t], dim=0)
+
+            if negative_cross_attn_cond is not None:
+                if negative_cross_attn_mask is not None:
+                    negative_cross_attn_mask = negative_cross_attn_mask.to(torch.bool).unsqueeze(2)
+
+                    negative_cross_attn_cond = torch.where(negative_cross_attn_mask, negative_cross_attn_cond, null_embed)
+                
+                batch_cond = torch.cat([cross_attn_cond, negative_cross_attn_cond], dim=0)
+
+            else:
+                batch_cond = torch.cat([cross_attn_cond, null_embed], dim=0)
+
+            if cross_attn_cond_mask is not None:
+                batch_masks = torch.cat([cross_attn_cond_mask, cross_attn_cond_mask], dim=0)
+            else:
+                batch_masks = None
+            
+            batch_output = self._forward(batch_inputs, batch_timestep, cross_attn_cond=batch_cond, cross_attn_cond_mask=batch_masks)
+
+            cond_output, uncond_output = torch.chunk(batch_output, 2, dim=0)
+            cfg_output = uncond_output + (cond_output - uncond_output) * cfg_scale
+
+            if scale_phi != 0.0:
+
+                cond_out_std = cond_output.std(dim=1, keepdim=True)
+                out_cfg_std = cfg_output.std(dim=1, keepdim=True)
+
+                return scale_phi * (cfg_output * (cond_out_std/out_cfg_std)) + (1-scale_phi) * cfg_output
+
+            else:
+
+                return cfg_output
+            
+        else:
+            return self._forward(x, t, cross_attn_cond=cross_attn_cond, cross_attn_cond_mask=cross_attn_cond_mask)
 
 def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
     diffusion_uncond_config = config["model"]
