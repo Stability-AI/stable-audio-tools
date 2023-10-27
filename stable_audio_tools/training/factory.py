@@ -64,7 +64,8 @@ def create_training_wrapper_from_config(model_config, model):
         return DiffusionCondTrainingWrapper(
             model, 
             lr=training_config["learning_rate"],
-            causal_dropout=training_config.get("causal_dropout", 0.0)
+            causal_dropout=training_config.get("causal_dropout", 0.0),
+            mask_padding=training_config.get("mask_padding", False),
         )
     elif model_type == 'diffusion_cond_inpaint':
         from .diffusion import DiffusionCondInpaintTrainingWrapper

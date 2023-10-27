@@ -534,8 +534,10 @@ class DiffusionTransformer(nn.Module):
         self, 
         x, 
         t, 
+        mask=None,
         cross_attn_cond=None,
-        cross_attn_cond_mask=None):
+        cross_attn_cond_mask=None,
+        **kwargs):
 
         if cross_attn_cond is not None:
             cross_attn_cond = self.to_cond_embed(cross_attn_cond)
@@ -554,7 +556,7 @@ class DiffusionTransformer(nn.Module):
 
         x = rearrange(x, "b c t -> b t c")
 
-        output = self.transformer(x, prepend_embeds=timestep_embed, context=cross_attn_cond, context_mask=cross_attn_cond_mask)
+        output = self.transformer(x, prepend_embeds=timestep_embed, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, **kwargs)
 
         output = rearrange(output, "b t c -> b c t")[:,:,1:]
 
@@ -573,7 +575,9 @@ class DiffusionTransformer(nn.Module):
         cfg_scale=1.0,
         cfg_dropout_prob=0.0,
         causal=False,
-        scale_phi=0.0):
+        scale_phi=0.0,
+        mask=None,
+        **kwargs):
 
         assert causal == False, "Causal mode is not supported for DiffusionTransformer"
 
@@ -612,11 +616,16 @@ class DiffusionTransformer(nn.Module):
                 batch_cond = torch.cat([cross_attn_cond, null_embed], dim=0)
 
             if cross_attn_cond_mask is not None:
-                batch_masks = torch.cat([cross_attn_cond_mask, cross_attn_cond_mask], dim=0)
+                batch_cond_masks = torch.cat([cross_attn_cond_mask, cross_attn_cond_mask], dim=0)
+            else:
+                batch_cond_masks = None
+
+            if mask is not None:
+                batch_masks = torch.cat([mask, mask], dim=0)
             else:
                 batch_masks = None
             
-            batch_output = self._forward(batch_inputs, batch_timestep, cross_attn_cond=batch_cond, cross_attn_cond_mask=batch_masks)
+            batch_output = self._forward(batch_inputs, batch_timestep, cross_attn_cond=batch_cond, cross_attn_cond_mask=batch_cond_masks, mask = batch_masks, **kwargs)
 
             cond_output, uncond_output = torch.chunk(batch_output, 2, dim=0)
             cfg_output = uncond_output + (cond_output - uncond_output) * cfg_scale

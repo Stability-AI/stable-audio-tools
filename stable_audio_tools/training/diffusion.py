@@ -187,6 +187,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             model: ConditionedDiffusionModelWrapper,
             lr: float = 1e-4,
             causal_dropout: float = 0.0,
+            mask_padding: bool = False
     ):
         super().__init__()
 
@@ -200,6 +201,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             update_after_step=1,
             include_online_model=False
         )
+
+        self.mask_padding = mask_padding
 
         self.lr = lr
 
@@ -235,13 +238,23 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             conditioning = self.diffusion.conditioner(metadata, self.device)
             
 
+        # Create batch tensor of attention masks from the "mask" field of the metadata array
+        if self.mask_padding:
+            padding_masks = torch.stack([md["padding_mask"] for md in metadata], dim=0).to(self.device)
+
         p.tick("conditioning")
 
         if self.diffusion.pretransform is not None:
             self.diffusion.pretransform.to(self.device)
+
             with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                 p.tick("pretransform")
+
+                # If mask_padding is on, interpolate the padding masks to the size of the pretransformed input
+                if self.mask_padding:
+                    padding_masks = F.interpolate(padding_masks.float(), size=diffusion_input.shape[2], mode="nearest").bool()
+
 
         # Combine the ground truth images and the noise
         alphas = alphas[:, None, None]
@@ -256,6 +269,9 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         if self.causal_dropout > 0.0:
             extra_args["causal"] = random.random() < self.causal_dropout
+
+        if self.mask_padding:
+            extra_args["mask"] = padding_masks
 
         with torch.cuda.amp.autocast():
             p.tick("amp")

@@ -168,7 +168,7 @@ class SampleDataset(torch.utils.data.Dataset):
             start_time = time.time()
             audio = self.load_file(audio_filename)
 
-            audio, t_start, t_end, seconds_start, seconds_total = self.pad_crop(audio)
+            audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio)
 
             # Run augmentations on this sample (including random crop)
             if self.augs is not None:
@@ -190,6 +190,7 @@ class SampleDataset(torch.utils.data.Dataset):
             info["timestamps"] = (t_start, t_end)
             info["seconds_start"] = seconds_start
             info["seconds_total"] = seconds_total
+            info["padding_mask"] = padding_mask
 
             end_time = time.time()
 
@@ -446,10 +447,11 @@ class S3WebDataLoader():
             # Pad/crop and get the relative timestamp
             pad_crop = PadCrop_Normalized_T(
                 self.sample_size, randomize=self.random_crop, sample_rate=self.sample_rate)
-            audio, t_start, t_end, seconds_start, seconds_total = pad_crop(
+            audio, t_start, t_end, seconds_start, seconds_total, padding_mask = pad_crop(
                 audio)
             sample["json"]["seconds_start"] = seconds_start
             sample["json"]["seconds_total"] = seconds_total
+            sample["json"]["padding_mask"] = padding_mask
         else:
             t_start, t_end = 0, 1
 
