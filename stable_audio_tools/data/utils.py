@@ -37,7 +37,7 @@ class PadCrop_Normalized_T(nn.Module):
         
         offset = 0
         if(self.randomize and n_samples > self.n_samples):
-            offset = random.randint(0, upper_bound + 1)
+            offset = random.randint(0, upper_bound)
 
         t_start = offset / (upper_bound + self.n_samples)
         t_end = (offset + self.n_samples) / (upper_bound + self.n_samples)
