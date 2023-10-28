@@ -200,6 +200,9 @@ class SampleDataset(torch.utils.data.Dataset):
                 custom_metadata = self.custom_metadata_fn(info, audio)
                 info.update(custom_metadata)
 
+                if "__reject__" in info and info["__reject__"]:
+                    return self[random.randrange(len(self))]
+
             return (audio, info)
         except Exception as e:
             print(f'Couldn\'t load file {audio_filename}: {e}')
@@ -340,8 +343,12 @@ def log_and_continue(exn):
 
 
 def is_valid_sample(sample):
-    return "json" in sample and "audio" in sample and not is_silence(sample["audio"])
+    has_json = "json" in sample
+    has_audio = "audio" in sample
+    is_silent = is_silence(sample["audio"])
+    is_rejected = "__reject__" in sample["json"] and sample["json"]["__reject__"]
 
+    return has_json and has_audio and not is_silent and not is_rejected
 
 class S3DatasetConfig:
     def __init__(
