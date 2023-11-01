@@ -187,7 +187,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             model: ConditionedDiffusionModelWrapper,
             lr: float = 1e-4,
             causal_dropout: float = 0.0,
-            mask_padding: bool = False
+            mask_padding: bool = False,
+            mask_padding_dropout: float = 0.2
     ):
         super().__init__()
 
@@ -203,6 +204,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         )
 
         self.mask_padding = mask_padding
+        self.mask_padding_dropout = mask_padding_dropout
 
         self.lr = lr
 
@@ -237,9 +239,11 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         with torch.cuda.amp.autocast():
             conditioning = self.diffusion.conditioner(metadata, self.device)
             
+        # If mask_padding is on, randomly drop the padding masks to allow for learning silence padding
+        use_padding_mask = self.mask_padding and random.random() > self.mask_padding_dropout
 
         # Create batch tensor of attention masks from the "mask" field of the metadata array
-        if self.mask_padding:
+        if use_padding_mask:
             padding_masks = torch.stack([md["padding_mask"] for md in metadata], dim=0).to(self.device)
 
         p.tick("conditioning")
@@ -252,7 +256,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
                 p.tick("pretransform")
 
                 # If mask_padding is on, interpolate the padding masks to the size of the pretransformed input
-                if self.mask_padding:
+                if use_padding_mask:
                     padding_masks = F.interpolate(padding_masks.float(), size=diffusion_input.shape[2], mode="nearest").bool()
 
 
@@ -270,15 +274,22 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         if self.causal_dropout > 0.0:
             extra_args["causal"] = random.random() < self.causal_dropout
 
-        if self.mask_padding:
+        if use_padding_mask:
             extra_args["mask"] = padding_masks
 
         with torch.cuda.amp.autocast():
             p.tick("amp")
             v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1, **extra_args)
             p.tick("diffusion")
-            mse_loss = F.mse_loss(v, targets)
+
+            mse_loss = F.mse_loss(v, targets, reduction='none')
+
+            if use_padding_mask:
+
+                mse_loss = mse_loss[padding_masks.repeat(1, diffusion_input.shape[1], 1)]
          
+            mse_loss = mse_loss.mean()
+
             loss = mse_loss
 
         log_dict = {

@@ -55,9 +55,9 @@ class PadCrop_Normalized_T(nn.Module):
         seconds_start = math.floor(offset / self.sample_rate)
         seconds_total = math.ceil(n_samples / self.sample_rate)
 
-        # Create a mask the same size as the chunk with 1s where the audio is and 0s where it isn't
-        padding_mask = torch.zeros([n_channels, self.n_samples])
-        padding_mask[:, :min(n_samples, self.n_samples)] = 1
+        # Create a mask the same length as the chunk with 1s where the audio is and 0s where it isn't
+        padding_mask = torch.zeros([self.n_samples])
+        padding_mask[:min(n_samples, self.n_samples)] = 1
         
         
         return (
