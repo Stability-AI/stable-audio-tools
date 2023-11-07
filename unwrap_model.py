@@ -78,6 +78,6 @@ if __name__ == '__main__':
     
     print(f"Loaded model from {args.ckpt_path}")
 
-    training_wrapper.export_model(f"{args.name}.ckpt")
+    training_wrapper.export_model(f"{args.name}.safetensors")
 
-    print(f"Exported model to {args.name}.ckpt")
+    print(f"Exported model to {args.name}.safetensors")

@@ -28,6 +28,7 @@ setup(
         'prefigure==0.0.9',
         'pytorch_lightning==2.1.0', 
         'PyWavelets==1.4.1',
+        'safetensors',
         'sentencepiece==0.1.99',
         's3fs',
         'torch>=2.0.1',

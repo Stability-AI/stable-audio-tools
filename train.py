@@ -7,6 +7,7 @@ import random
 
 from stable_audio_tools.data.dataset import create_dataloader_from_configs_and_args
 from stable_audio_tools.models import create_model_from_config
+from stable_audio_tools.models.utils import load_ckpt_state_dict
 from stable_audio_tools.training import create_training_wrapper_from_config, create_demo_callback_from_config
 from stable_audio_tools.training.utils import copy_state_dict
 
@@ -40,10 +41,10 @@ def main():
     model = create_model_from_config(model_config)
 
     if args.pretrained_ckpt_path:
-        copy_state_dict(model, torch.load(args.pretrained_ckpt_path, map_location="cpu")["state_dict"])
+        copy_state_dict(model, load_ckpt_state_dict(args.pretrained_ckpt_path))
     
     if args.pretransform_ckpt_path:
-        model.pretransform.load_state_dict(torch.load(args.pretransform_ckpt_path, map_location="cpu")["state_dict"])
+        model.pretransform.load_state_dict(load_ckpt_state_dict(args.pretransform_ckpt_path, map_location="cpu"))
                  
     training_wrapper = create_training_wrapper_from_config(model_config, model)
 

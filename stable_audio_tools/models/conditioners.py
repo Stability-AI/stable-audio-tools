@@ -4,8 +4,6 @@ import torch
 import logging, warnings
 import typing as tp
 import gc
-import os
-from ..training.utils import copy_state_dict
 from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
 
 from .adp import NumberEmbedder

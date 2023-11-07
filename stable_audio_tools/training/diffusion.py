@@ -9,6 +9,7 @@ import wandb
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 from ema_pytorch import EMA
 from einops import rearrange
+from safetensors.torch import save_file
 from torch import optim
 from torch.nn import functional as F
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
@@ -110,10 +111,8 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
     def export_model(self, path):
 
         self.diffusion.model = self.diffusion_ema.ema_model
-
-        export_state_dict = {"state_dict": self.diffusion.state_dict()}
         
-        torch.save(export_state_dict, path)
+        save_file(self.diffusion.state_dict(), path)
 
 class DiffusionUncondDemoCallback(pl.Callback):
     def __init__(self, 
@@ -308,9 +307,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
     def export_model(self, path):
         self.diffusion.model = self.diffusion_ema.ema_model
-        export_state_dict = {"state_dict": self.diffusion.state_dict()}
         
-        torch.save(export_state_dict, path)
+        save_file(self.diffusion.state_dict(), path)
 
 class DiffusionCondDemoCallback(pl.Callback):
     def __init__(self, 
@@ -574,9 +572,8 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
 
     def export_model(self, path):
         self.diffusion.model = self.diffusion_ema.ema_model
-        export_state_dict = {"state_dict": self.diffusion.state_dict()}
         
-        torch.save(export_state_dict, path)
+        save_file(self.diffusion.state_dict(), path)
 
 class DiffusionCondInpaintDemoCallback(pl.Callback):
     def __init__(
@@ -753,10 +750,8 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
     def on_before_zero_grad(self, *args, **kwargs):
         self.diffae_ema.update()
 
-    def export_model(self, path):
-        export_state_dict = {"state_dict": self.diffae_ema.ema_model.state_dict()}
-        
-        torch.save(export_state_dict, path)
+    def export_model(self, path):        
+        save_file(self.diffae_ema.ema_model.state_dict(), path)
 
 class DiffusionAutoencoderDemoCallback(pl.Callback):
     def __init__(

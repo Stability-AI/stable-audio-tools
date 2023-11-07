@@ -2,6 +2,7 @@ import torch
 import torchaudio
 import wandb
 from einops import rearrange
+from safetensors.torch import save_file
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.nn.parameter import Parameter
@@ -343,11 +344,11 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
     
     def export_model(self, path):
         if self.autoencoder_ema is not None:
-            export_state_dict = {"state_dict": self.autoencoder_ema.ema_model.state_dict()}
+            export_state_dict = self.autoencoder_ema.ema_model.state_dict()
         else:
-            export_state_dict = {"state_dict": self.autoencoder.state_dict()}
+            export_state_dict = self.autoencoder.state_dict()
             
-        torch.save(export_state_dict, path)
+        save_file(export_state_dict, path)
         
 
 class AutoencoderDemoCallback(pl.Callback):

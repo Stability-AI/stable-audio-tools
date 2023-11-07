@@ -5,14 +5,15 @@ import torch
 import torchaudio
 
 from aeiou.viz import audio_spectrogram_image
-
+from einops import rearrange
+from safetensors.torch import load_file
 from torch.nn import functional as F
 from torchaudio import transforms as T
 
-from einops import rearrange
 
 from ..inference.generation import generate_diffusion_cond, generate_diffusion_uncond
 from ..models.factory import create_model_from_config
+from ..models.utils import load_ckpt_state_dict
 from ..inference.utils import prepare_audio
 from ..training.utils import copy_state_dict
 
@@ -34,12 +35,13 @@ def load_model(model_config, model_ckpt_path, pretransform_ckpt_path=None, devic
     print(f"Loading model checkpoint from {model_ckpt_path}")
     
     # Load checkpoint
-    copy_state_dict(model, torch.load(model_ckpt_path)["state_dict"])
-    #model.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
+    copy_state_dict(model, load_ckpt_state_dict(model_ckpt_path))
+    
+    #model.load_state_dict(load_ckpt_state_dict(model_ckpt_path))
 
     if pretransform_ckpt_path is not None:
         print(f"Loading pretransform checkpoint from {pretransform_ckpt_path}")
-        model.pretransform.load_state_dict(torch.load(pretransform_ckpt_path)["state_dict"], strict=False)
+        model.pretransform.load_state_dict(load_ckpt_state_dict(pretransform_ckpt_path), strict=False)
         print(f"Done loading pretransform")
 
     print(f"Done loading model")
