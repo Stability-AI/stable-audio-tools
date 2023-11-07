@@ -15,6 +15,11 @@ def alpha_sigma_to_t(alpha, sigma):
     the noise."""
     return torch.atan2(sigma, alpha) / math.pi * 2
 
+def t_to_alpha_sigma(t):
+    """Returns the scaling factors for the clean image and for the noise, given
+    a timestep."""
+    return torch.cos(t * math.pi / 2), torch.sin(t * math.pi / 2)
+
 @torch.no_grad()
 def sample(model, x, steps, eta, **extra_args):
     """Draws samples from a model given starting noise. v-diffusion"""
@@ -64,6 +69,16 @@ def get_bmask(i, steps, mask):
     bmask = torch.where(mask<=strength,1,0)
     return bmask
 
+def make_cond_model_fn(model, cond_fn):
+    def cond_model_fn(x, sigma, **kwargs):
+        with torch.enable_grad():
+            x = x.detach().requires_grad_()
+            denoised = model(x, sigma, **kwargs)
+            cond_grad = cond_fn(x, sigma, denoised=denoised, **kwargs).detach()
+            cond_denoised = denoised.detach() + cond_grad * K.utils.append_dims(sigma**2, x.ndim)
+        return cond_denoised
+    return cond_model_fn
+
 # Uses k-diffusion from https://github.com/crowsonkb/k-diffusion
 # init_data is init_audio as latents (if this is latent diffusion)
 # For sampling, set both init_data and mask to None
@@ -80,10 +95,14 @@ def sample_k(
         sigma_max=50, 
         rho=1.0, device="cuda", 
         callback=None, 
+        cond_fn=None,
         **extra_args
     ):
 
     denoiser = K.external.VDenoiser(model_fn)
+
+    if cond_fn is not None:
+        denoiser = make_cond_model_fn(denoiser, cond_fn)
 
     # Make the list of sigmas. Sigma values are scalars related to the amount of noise each denoising step has
     sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)

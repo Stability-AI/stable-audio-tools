@@ -205,9 +205,10 @@ def generate_uncond(
     if not use_init:
         init_audio = None
     
+    input_sample_size = sample_size
+
     if init_audio is not None:
         in_sr, init_audio = init_audio
-
         # Turn into torch tensor, converting from int16 to float32
         init_audio = torch.from_numpy(init_audio).float().div(32767)
         
@@ -216,7 +217,17 @@ def generate_uncond(
         elif init_audio.dim() == 2:
             init_audio = init_audio.transpose(0, 1) # [n, 2] -> [2, n]
 
-        init_audio = (in_sr, init_audio)
+        if in_sr != sample_rate:
+            resample_tf = T.Resample(in_sr, sample_rate).to(init_audio.device)
+            init_audio = resample_tf(init_audio)
+
+        audio_length = init_audio.shape[-1]
+
+        if audio_length > sample_size:
+
+            input_sample_size = audio_length + (model.min_input_length - (audio_length % model.min_input_length)) % model.min_input_length
+
+        init_audio = (sample_rate, init_audio)
 
     def progress_callback(callback_info):
         global preview_images
@@ -241,7 +252,7 @@ def generate_uncond(
         model, 
         steps=steps,
         batch_size=batch_size,
-        sample_size=sample_size,
+        sample_size=input_sample_size,
         seed=seed,
         device=device,
         sampler_type=sampler_type,

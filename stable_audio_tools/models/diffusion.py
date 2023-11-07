@@ -50,12 +50,14 @@ class DiffusionModelWrapper(nn.Module):
                 io_channels,
                 sample_size,
                 sample_rate,
-                pretransform: Pretransform = None
+                min_input_length,
+                pretransform: Pretransform = None,
     ):
         super().__init__()
         self.io_channels = io_channels
         self.sample_size = sample_size
         self.sample_rate = sample_rate
+        self.min_input_length = min_input_length
 
         self.model = model
 
@@ -663,6 +665,9 @@ def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
 
     if pretransform is not None:
         pretransform = create_pretransform_from_config(pretransform, sample_rate)
+        min_input_length = pretransform.downsampling_ratio
+    else:
+        min_input_length = 1
 
     if model_type == 'DAU1d':
 
@@ -670,34 +675,18 @@ def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
             **diffusion_config
         )
 
-        return DiffusionModelWrapper(model, 
-                                     io_channels=model.io_channels, 
-                                     sample_size=sample_size, 
-                                     sample_rate=sample_rate,
-                                     pretransform=pretransform)
+        
     
     elif model_type == "adp_uncond_1d":
 
         model = UNet1DUncondWrapper(
             **diffusion_config
         )
-
-        return DiffusionModelWrapper(model, 
-                                     io_channels=model.io_channels, 
-                                     sample_size=sample_size, 
-                                     sample_rate=sample_rate,
-                                     pretransform=pretransform)
     
     elif model_type == "dit":
         model = DiTUncondWrapper(
             **diffusion_config
         )
-
-        return DiffusionModelWrapper(model,
-                                    io_channels=model.io_channels, 
-                                    sample_size=sample_size, 
-                                    sample_rate=sample_rate,
-                                    pretransform=pretransform)
 
     elif model_type == "hourglass":
         from .hourglass import HourglassDiffusionTransformer
@@ -706,14 +695,15 @@ def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
             **diffusion_config
         )
 
-        return DiffusionModelWrapper(model,
-                                    io_channels=model.io_channels, 
-                                    sample_size=sample_size, 
-                                    sample_rate=sample_rate,
-                                    pretransform=pretransform)
-
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
+
+    return DiffusionModelWrapper(model, 
+                                io_channels=model.io_channels, 
+                                sample_size=sample_size, 
+                                sample_rate=sample_rate,
+                                pretransform=pretransform,
+                                min_input_length=min_input_length)
     
 def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 

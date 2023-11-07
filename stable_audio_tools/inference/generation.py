@@ -20,11 +20,24 @@ def generate_diffusion_uncond(
         return_latents = False,
         **sampler_kwargs
         ) -> torch.Tensor:
-    seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1)
+    
+    # The length of the output in audio samples 
+    audio_sample_size = sample_size
 
+    # If this is latent diffusion, change sample_size instead to the downsampled latent size
+    if model.pretransform is not None:
+        sample_size = sample_size // model.pretransform.downsampling_ratio
+        
+    # Seed
+    # The user can explicitly set the seed to deterministically generate the same output. Otherwise, use a random seed.
+    seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1)
+    print(seed)
     torch.manual_seed(seed)
+    # Define the initial noise immediately after setting the seed
+    noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
 
     if init_audio is not None:
+        # The user supplied some initial audio (for inpainting or variation). Let us prepare the input audio.
         in_sr, init_audio = init_audio
 
         io_channels = model.io_channels
@@ -34,28 +47,37 @@ def generate_diffusion_uncond(
             io_channels = model.pretransform.io_channels
 
         # Prepare the initial audio for use by the model
-        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=sample_size, target_channels=io_channels, device=device)
+        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=audio_sample_size, target_channels=io_channels, device=device)
 
         # For latent models, encode the initial audio into latents
         if model.pretransform is not None:
             init_audio = model.pretransform.encode(init_audio)
 
         init_audio = init_audio.repeat(batch_size, 1, 1)
-
-        sampler_kwargs["sigma_max"] = init_noise_level
-
-        noise = torch.randn_like(init_audio)
     else:
-        if model.pretransform is not None:
-            sample_size = sample_size // model.pretransform.downsampling_ratio
+        # The user did not supply any initial audio for inpainting or variation. Generate new output from scratch. 
+        init_audio = None
+        init_noise_level = None
 
-        noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
+    # Inpainting mask
     
-    sampled = sample_k(model.model, noise, init_audio=init_audio, mask=None, steps=steps, **sampler_kwargs, device=device)
+    if init_audio is not None:
+        # variations
+        sampler_kwargs["sigma_max"] = init_noise_level
+        mask = None 
+    else:
+        mask = None
 
+    # Now the generative AI part:
+    # k-diffusion denoising process go!
+    sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, device=device)
+
+    # Denoising process done. 
+    # If this is latent diffusion, decode latents back into audio
     if model.pretransform is not None and not return_latents:
         sampled = model.pretransform.decode(sampled)
 
+    # Return audio
     return sampled
 
 
