@@ -13,49 +13,24 @@ from torch import optim
 from torch.nn import functional as F
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
-from audiocraft.models import MusicGen
-from audiocraft.modules.conditioners import ClassifierFreeGuidanceDropout, ConditioningAttributes
+from ..models.lm import AudioLanguageModelWrapper
 
-from time import time
-
-class Profiler:
-
-    def __init__(self):
-        self.ticks = [[time(), None]]
-
-    def tick(self, msg):
-        self.ticks.append([time(), msg])
-
-    def __repr__(self):
-        rep = 80 * "=" + "\n"
-        for i in range(1, len(self.ticks)):
-            msg = self.ticks[i][1]
-            ellapsed = self.ticks[i][0] - self.ticks[i - 1][0]
-            rep += msg + f": {ellapsed*1000:.2f}ms\n"
-        rep += 80 * "=" + "\n\n\n"
-        return rep
-
-
-class MusicGenTrainingWrapper(pl.LightningModule):
-    def __init__(self, musicgen_model, lr = 1e-4, ema_copy=None):
+class AudioLanguageModelTrainingWrapper(pl.LightningModule):
+    def __init__(self, model: AudioLanguageModelWrapper, lr = 1e-4, use_ema=False, ema_copy=None):
         super().__init__()
 
-        self.musicgen_model: MusicGen = musicgen_model
+        self.model = model
 
-        self.musicgen_model.compression_model.requires_grad_(False)
+        self.model.pretransform.requires_grad_(False)
 
-        self.lm = self.musicgen_model.lm
-
-        self.lm.to(torch.float32).train().requires_grad_(True)
-
-        self.lm_ema = EMA(self.lm, ema_model=ema_copy, beta=0.99, update_every=10)
-
-        self.cfg_dropout = ClassifierFreeGuidanceDropout(0.1)
+        self.model_ema = None
+        if use_ema:
+            self.model_ema = EMA(self.model, ema_model=ema_copy, beta=0.99, update_every=10)
 
         self.lr = lr
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW([*self.lm.parameters()], lr=self.lr, betas=(0.9, 0.95), weight_decay=0.1)
+        optimizer = optim.AdamW([*self.model.parameters()], lr=self.lr, betas=(0.9, 0.95), weight_decay=0.1)
 
         return optimizer
     
@@ -102,34 +77,17 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        # Convert reals to mono if necessary
-        if self.musicgen_model.audio_channels == 1:
-            reals = reals.mean(dim=1, keepdim=True)
-
-        self.musicgen_model.compression_model.to(self.device).eval()
-        self.lm.to(self.device).train()
-        self.lm.condition_provider.to(self.device).eval()
-
-        self.lm.condition_provider.conditioners["description"].device = self.device
-        self.lm.condition_provider.conditioners["description"].t5.to(self.device).eval()
-
         with torch.cuda.amp.autocast():
 
-            codes, _ = self.musicgen_model.compression_model.encode(reals) # [b, k, t]
-
-            attributes = [ConditioningAttributes(text={'description': md["prompt"][0][:512]}) for md in metadata]
-            attributes = self.lm.cfg_dropout(attributes)
-            attributes = self.lm.att_dropout(attributes)
-            tokenized = self.lm.condition_provider.tokenize(attributes)
+            codes = self.model.pretransform.tokenize(reals)
      
-            with torch.cuda.amp.autocast(enabled=False):
-                condition_tensors = self.lm.condition_provider(tokenized)
-                
-            lm_output = self.lm.compute_predictions(
-                codes=codes,
-                conditions = [],
-                condition_tensors = condition_tensors,
-            )
+            condition_tensors = None
+
+            # If the model is conditioned, get the conditioning tensors
+            if self.model.conditioner is not None:
+                condition_tensors = self.model.conditioner(metadata, self.device)
+
+            lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.1)
 
             logits = lm_output.logits # [b, k, t, c]
             logits_mask = lm_output.mask # [b, k, t]
@@ -152,15 +110,18 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         return loss
 
     def on_before_zero_grad(self, *args, **kwargs):
-        self.lm_ema.update()
+        if self.model_ema is not None:
+            self.model_ema.update()
 
     def export_model(self, path):
-        self.musicgen_model.lm = self.lm_ema.ema_model
-        export_state_dict = {"state_dict": self.musicgen_model.state_dict()}
+        
+        model = self.model_ema.ema_model if self.model_ema is not None else self.model
+
+        export_state_dict = {"state_dict": model.state_dict()}
         
         torch.save(export_state_dict, path)
 
-class MusicGenDemoCallback(pl.Callback):
+class AudioLanguageModelDemoCallback(pl.Callback):
     def __init__(self, 
                  demo_every=2000,
                  num_demos=8,
@@ -182,7 +143,7 @@ class MusicGenDemoCallback(pl.Callback):
 
     @rank_zero_only
     @torch.no_grad()
-    def on_train_batch_end(self, trainer, module: MusicGenTrainingWrapper, outputs, batch, batch_idx):        
+    def on_train_batch_end(self, trainer, module: AudioLanguageModelTrainingWrapper, outputs, batch, batch_idx):        
 
         if (trainer.global_step - 1) % self.demo_every != 0 or self.last_demo_step == trainer.global_step:
             return
@@ -192,20 +153,34 @@ class MusicGenDemoCallback(pl.Callback):
         print(f"Generating demo")
         self.last_demo_step = trainer.global_step
 
-        demo_length_sec = self.demo_samples // self.sample_rate
+        demo_length_tokens = self.demo_samples // module.model.pretransform.downsampling_ratio
+
+        demo_reals = batch[0][:self.num_demos]
+
+        demo_reals_tokens = module.model.pretransform.tokenize(demo_reals)
+
+        print(f"Demo reals tokens shape: {demo_reals_tokens.shape}")
+
+        # Limit to first 50 tokens
+        demo_reals_tokens = demo_reals_tokens[:, :, :50]
 
         try:
             print("Getting conditioning")
 
-            prompts = [md["prompt"][:512] for md in self.demo_conditioning]
-
             for cfg_scale in self.demo_cfg_scales:
 
-                module.musicgen_model.set_generation_params(duration=demo_length_sec, cfg_coef=cfg_scale)
+                model = module.model # module.model_ema.ema_model if module.model_ema is not None else module.model
 
                 with torch.cuda.amp.autocast():
                     print(f"Generating demo for cfg scale {cfg_scale}")
-                    fakes = module.musicgen_model.generate(prompts, progress=True)
+                    fakes = model.generate_audio(
+                        #batch_size=self.num_demos,
+                        max_gen_len=demo_length_tokens, 
+                        conditioning=self.demo_conditioning, 
+                        init_data = demo_reals_tokens,
+                        cfg_scale=cfg_scale,
+                        temp=0
+                    )
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')

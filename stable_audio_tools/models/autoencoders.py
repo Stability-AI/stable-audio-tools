@@ -13,7 +13,7 @@ from einops import rearrange
 
 from ..inference.sampling import sample
 from ..inference.utils import prepare_audio
-from .bottleneck import Bottleneck
+from .bottleneck import Bottleneck, DiscreteBottleneck
 from .diffusion import ConditionedDiffusionModel, DAU1DCondWrapper, UNet1DCondWrapper, DiTWrapper
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform, AutoencoderPretransform
@@ -307,6 +307,8 @@ class AudioAutoencoder(nn.Module):
 
         self.soft_clip = soft_clip
  
+        self.is_discrete = self.bottleneck is not None and self.bottleneck.is_discrete
+
     def encode(self, audio, return_info=False, skip_pretransform=False, iterate_batch=False, **kwargs):
 
         info = {}
@@ -394,6 +396,19 @@ class AudioAutoencoder(nn.Module):
             decoded = torch.tanh(decoded)
         
         return decoded
+
+    def decode_tokens(self, tokens, **kwargs):
+        '''
+        Decode discrete tokens to audio
+        Only works with discrete autoencoders
+        '''
+
+        assert isinstance(self.bottleneck, DiscreteBottleneck), "decode_tokens only works with discrete autoencoders"
+
+        latents = self.bottleneck.decode_tokens(tokens, **kwargs)
+
+        return self.decode(latents, **kwargs)
+        
     
     def encode_audio(self, audio, in_sr, **kwargs):
         '''
