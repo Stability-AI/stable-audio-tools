@@ -9,7 +9,7 @@ def create_model_from_config(model_config):
     elif model_type == 'diffusion_uncond':
         from .diffusion import create_diffusion_uncond_from_config
         return create_diffusion_uncond_from_config(model_config)
-    elif model_type == 'diffusion_cond' or model_type == 'diffusion_cond_inpaint':
+    elif model_type == 'diffusion_cond' or model_type == 'diffusion_cond_inpaint' or model_type == "diffusion_prior":
         from .diffusion import create_diffusion_cond_from_config
         return create_diffusion_cond_from_config(model_config)
     elif model_type == 'diffusion_autoencoder':
@@ -37,8 +37,9 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
 
         scale = pretransform_config.get("scale", 1.0)
         model_half = pretransform_config.get("model_half", False)
+        iterate_batch = pretransform_config.get("iterate_batch", False)
 
-        pretransform = AutoencoderPretransform(autoencoder, scale=scale, model_half=model_half)
+        pretransform = AutoencoderPretransform(autoencoder, scale=scale, model_half=model_half, iterate_batch=iterate_batch)
     elif pretransform_type == 'wavelet':
         from .pretransforms import WaveletPretransform
 
@@ -48,6 +49,10 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         wavelet = wavelet_config["wavelet"]
 
         pretransform = WaveletPretransform(channels, levels, wavelet)
+    elif pretransform_type == 'pqmf':
+        from .pretransforms import PQMFPretransform
+        pqmf_config = pretransform_config["config"]
+        pretransform = PQMFPretransform(**pqmf_config)
     elif pretransform_type == 'dac_pretrained':
         from .pretransforms import PretrainedDACPretransform
         pretrained_dac_config = pretransform_config["config"]
@@ -120,5 +125,8 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == "wasserstein":
         from .bottleneck import WassersteinBottleneck
         return WassersteinBottleneck(**bottleneck_config.get("config", {}))
+    elif bottleneck_type == "fsq":
+        from .bottleneck import FSQBottleneck
+        return FSQBottleneck(**bottleneck_config["config"])
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')

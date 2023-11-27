@@ -1,11 +1,12 @@
 import numpy as np
 import torch 
 import typing as tp
-
+import math 
 from torchaudio import transforms as T
 
-from .sampling import sample_k
 from .utils import prepare_audio
+from .sampling import sample, sample_k
+from ..data.utils import PadCrop
 
 def generate_diffusion_uncond(
         model,
@@ -19,11 +20,24 @@ def generate_diffusion_uncond(
         return_latents = False,
         **sampler_kwargs
         ) -> torch.Tensor:
-    seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1)
+    
+    # The length of the output in audio samples 
+    audio_sample_size = sample_size
 
+    # If this is latent diffusion, change sample_size instead to the downsampled latent size
+    if model.pretransform is not None:
+        sample_size = sample_size // model.pretransform.downsampling_ratio
+        
+    # Seed
+    # The user can explicitly set the seed to deterministically generate the same output. Otherwise, use a random seed.
+    seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1)
+    print(seed)
     torch.manual_seed(seed)
+    # Define the initial noise immediately after setting the seed
+    noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
 
     if init_audio is not None:
+        # The user supplied some initial audio (for inpainting or variation). Let us prepare the input audio.
         in_sr, init_audio = init_audio
 
         io_channels = model.io_channels
@@ -33,29 +47,37 @@ def generate_diffusion_uncond(
             io_channels = model.pretransform.io_channels
 
         # Prepare the initial audio for use by the model
-        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=sample_size, target_channels=io_channels, device=device)
+        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=audio_sample_size, target_channels=io_channels, device=device)
 
         # For latent models, encode the initial audio into latents
         if model.pretransform is not None:
             init_audio = model.pretransform.encode(init_audio)
 
         init_audio = init_audio.repeat(batch_size, 1, 1)
-
-        sampler_kwargs["sigma_max"] = init_noise_level
-
-        noise = torch.randn_like(init_audio)
-
-        sampled = sample_k(model.model, noise, steps=steps, init_data=init_audio, **sampler_kwargs, device=device)
     else:
-        if model.pretransform is not None:
-            sample_size = sample_size // model.pretransform.downsampling_ratio
+        # The user did not supply any initial audio for inpainting or variation. Generate new output from scratch. 
+        init_audio = None
+        init_noise_level = None
 
-        noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
-        sampled = sample_k(model.model, noise, steps, **sampler_kwargs, device=device)
+    # Inpainting mask
+    
+    if init_audio is not None:
+        # variations
+        sampler_kwargs["sigma_max"] = init_noise_level
+        mask = None 
+    else:
+        mask = None
 
+    # Now the generative AI part:
+    # k-diffusion denoising process go!
+    sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, device=device)
+
+    # Denoising process done. 
+    # If this is latent diffusion, decode latents back into audio
     if model.pretransform is not None and not return_latents:
         sampled = model.pretransform.decode(sampled)
 
+    # Return audio
     return sampled
 
 
@@ -65,6 +87,8 @@ def generate_diffusion_cond(
         cfg_scale=6,
         conditioning: dict = None,
         conditioning_tensors: tp.Optional[dict] = None,
+        negative_conditioning: dict = None,
+        negative_conditioning_tensors: tp.Optional[dict] = None,
         batch_size: int = 1,
         sample_size: int = 2097152,
         sample_rate: int = 48000,
@@ -72,6 +96,7 @@ def generate_diffusion_cond(
         device: str = "cuda",
         init_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
         init_noise_level: float = 1.0,
+        mask_args: dict = None,
         return_latents = False,
         **sampler_kwargs
         ) -> torch.Tensor: 
@@ -95,18 +120,38 @@ def generate_diffusion_cond(
         **sampler_kwargs: Additional keyword arguments to pass to the sampler.    
     """
 
+    # The length of the output in audio samples 
+    audio_sample_size = sample_size
+
+    # If this is latent diffusion, change sample_size instead to the downsampled latent size
+    if model.pretransform is not None:
+        sample_size = sample_size // model.pretransform.downsampling_ratio
+        
+    # Seed
+    # The user can explicitly set the seed to deterministically generate the same output. Otherwise, use a random seed.
     seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1)
-
+    print(seed)
     torch.manual_seed(seed)
+    # Define the initial noise immediately after setting the seed
+    noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
 
+    # Conditioning
     assert conditioning is not None or conditioning_tensors is not None, "Must provide either conditioning or conditioning_tensors"
-
     if conditioning_tensors is None:
         conditioning_tensors = model.conditioner(conditioning, device)
-    
     conditioning_tensors = model.get_conditioning_inputs(conditioning_tensors)
 
+    if negative_conditioning is not None or negative_conditioning_tensors is not None:
+        
+        if negative_conditioning_tensors is None:
+            negative_conditioning_tensors = model.conditioner(negative_conditioning, device)
+            
+        negative_conditioning_tensors = model.get_conditioning_inputs(negative_conditioning_tensors, negative=True)
+    else:
+        negative_conditioning_tensors = {}
+
     if init_audio is not None:
+        # The user supplied some initial audio (for inpainting or variation). Let us prepare the input audio.
         in_sr, init_audio = init_audio
 
         io_channels = model.io_channels
@@ -116,28 +161,81 @@ def generate_diffusion_cond(
             io_channels = model.pretransform.io_channels
 
         # Prepare the initial audio for use by the model
-        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=sample_size, target_channels=io_channels, device=device)
+        init_audio = prepare_audio(init_audio, in_sr=in_sr, target_sr=model.sample_rate, target_length=audio_sample_size, target_channels=io_channels, device=device)
 
         # For latent models, encode the initial audio into latents
         if model.pretransform is not None:
             init_audio = model.pretransform.encode(init_audio)
 
         init_audio = init_audio.repeat(batch_size, 1, 1)
-
-        sampler_kwargs["sigma_max"] = init_noise_level
-
-        noise = torch.randn_like(init_audio)
-
-        sampled = sample_k(model.model, noise, steps=steps, init_data=init_audio, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
     else:
-        if model.pretransform is not None:
-            sample_size = sample_size // model.pretransform.downsampling_ratio
+        # The user did not supply any initial audio for inpainting or variation. Generate new output from scratch. 
+        init_audio = None
+        init_noise_level = None
+        mask_args = None
 
-        noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
-        sampled = sample_k(model.model, noise, steps, **sampler_kwargs, **conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, scale_cfg=True, device=device)
+    # Inpainting mask
+    if init_audio is not None and mask_args is not None:
+        # Cut and paste init_audio according to cropfrom, pastefrom, pasteto
+        # This is helpful for forward and reverse outpainting
+        cropfrom = math.floor(mask_args["cropfrom"]/100.0 * sample_size)
+        pastefrom = math.floor(mask_args["pastefrom"]/100.0 * sample_size)
+        pasteto = math.ceil(mask_args["pasteto"]/100.0 * sample_size)
+        assert pastefrom < pasteto, "Paste From should be less than Paste To"
+        croplen = pasteto - pastefrom
+        if cropfrom + croplen > sample_size:
+            croplen = sample_size - cropfrom 
+        cropto = cropfrom + croplen
+        pasteto = pastefrom + croplen
+        cutpaste = init_audio.new_zeros(init_audio.shape)
+        cutpaste[:, :, pastefrom:pasteto] = init_audio[:,:,cropfrom:cropto]
+        #print(cropfrom, cropto, pastefrom, pasteto)
+        init_audio = cutpaste
+        # Build a soft mask (list of floats 0 to 1, the size of the latent) from the given args
+        mask = build_mask(sample_size, mask_args)
+        mask = mask.to(device)
+    elif init_audio is not None and mask_args is None:
+        # variations
+        sampler_kwargs["sigma_max"] = init_noise_level
+        mask = None 
+    else:
+        mask = None
 
+    # Now the generative AI part:
+    # k-diffusion denoising process go!
+    sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, **conditioning_tensors, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
+
+    # v-diffusion: 
+    #sampled = sample(model.model, noise, steps, 0, **conditioning_tensors, embedding_scale=cfg_scale)
+
+    # Denoising process done. 
+    # If this is latent diffusion, decode latents back into audio
     if model.pretransform is not None and not return_latents:
         sampled = model.pretransform.decode(sampled)
 
+    # Return audio
     return sampled
 
+# builds a softmask given the parameters
+# returns array of values 0 to 1, size sample_size, where 0 means noise / fresh generation, 1 means keep the input audio, 
+# and anything between is a mixture of old/new
+# ideally 0.5 is half/half mixture but i haven't figured this out yet
+def build_mask(sample_size, mask_args):
+    maskstart = math.floor(mask_args["maskstart"]/100.0 * sample_size)
+    maskend = math.ceil(mask_args["maskend"]/100.0 * sample_size)
+    softnessL = round(mask_args["softnessL"]/100.0 * sample_size)
+    softnessR = round(mask_args["softnessR"]/100.0 * sample_size)
+    marination = mask_args["marination"]
+    # use hann windows for softening the transition (i don't know if this is correct)
+    hannL = torch.hann_window(softnessL*2, periodic=False)[:softnessL]
+    hannR = torch.hann_window(softnessR*2, periodic=False)[softnessR:]
+    # build the mask. 
+    mask = torch.zeros((sample_size))
+    mask[maskstart:maskend] = 1
+    mask[maskstart:maskstart+softnessL] = hannL
+    mask[maskend-softnessR:maskend] = hannR
+    # marination finishes the inpainting early in the denoising schedule, and lets audio get changed in the final rounds
+    if marination > 0:        
+        mask = mask * (1-marination) 
+    #print(mask)
+    return mask

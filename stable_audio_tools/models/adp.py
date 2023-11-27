@@ -1,8 +1,8 @@
 # Copied and modified from https://github.com/archinetai/audio-diffusion-pytorch/blob/v0.0.94/audio_diffusion_pytorch/modules.py under MIT License
-# License can be found in LICENSES/LICENSE_ADP.md
+# License can be found in LICENSES/LICENSE_ADP.txt
 
 from inspect import isfunction
-from math import floor, log, pi, log2
+from math import ceil, floor, log, pi, log2
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar, Union
 from packaging import version
 
@@ -15,6 +15,8 @@ from torch import Tensor, einsum
 from torch.backends.cuda import sdp_kernel
 from torch.nn import functional as F
 from dac.nn.layers import Snake1d
+
+from audiocraft.modules.conv import get_extra_padding_for_conv1d, pad1d, unpad1d
 
 """
 Utils
@@ -65,14 +67,53 @@ def groupby(prefix: str, d: Dict, keep_prefix: bool = False) -> Tuple[Dict, Dict
 Convolutional Blocks
 """
 
+class Conv1d(nn.Conv1d):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def forward(self, x: Tensor, causal=False) -> Tensor:
+        kernel_size = self.kernel_size[0]
+        stride = self.stride[0]
+        dilation = self.dilation[0]
+        kernel_size = (kernel_size - 1) * dilation + 1  # effective kernel size with dilations
+        padding_total = kernel_size - stride
+        extra_padding = get_extra_padding_for_conv1d(x, kernel_size, stride, padding_total)
+        if causal:
+            # Left padding for causal
+            x = pad1d(x, (padding_total, extra_padding))
+        else:
+            # Asymmetric padding required for odd strides
+            padding_right = padding_total // 2
+            padding_left = padding_total - padding_right
+            x = pad1d(x, (padding_left, padding_right + extra_padding))
+        return super().forward(x)
+        
+class ConvTranspose1d(nn.ConvTranspose1d):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-def Conv1d(*args, **kwargs) -> nn.Module:
-    return nn.Conv1d(*args, **kwargs)
+    def forward(self, x: Tensor, causal=False) -> Tensor:
+        kernel_size = self.kernel_size[0]
+        stride = self.stride[0]
+        padding_total = kernel_size - stride
 
+        y = super().forward(x)
 
-def ConvTranspose1d(*args, **kwargs) -> nn.Module:
-    return nn.ConvTranspose1d(*args, **kwargs)
-
+        # We will only trim fixed padding. Extra padding from `pad_for_conv1d` would be
+        # removed at the very end, when keeping only the right length for the output,
+        # as removing it here would require also passing the length at the matching layer
+        # in the encoder.
+        if causal:
+            padding_right = ceil(padding_total)
+            padding_left = padding_total - padding_right
+            y = unpad1d(y, (padding_left, padding_right))
+        else:
+            # Asymmetric padding required for odd strides
+            padding_right = padding_total // 2
+            padding_left = padding_total - padding_right
+            y = unpad1d(y, (padding_left, padding_right))
+        return y
+    
 
 def Downsample1d(
     in_channels: int, out_channels: int, factor: int, kernel_multiplier: int = 2
@@ -83,8 +124,7 @@ def Downsample1d(
         in_channels=in_channels,
         out_channels=out_channels,
         kernel_size=factor * kernel_multiplier + 1,
-        stride=factor,
-        padding=factor * (kernel_multiplier // 2),
+        stride=factor
     )
 
 
@@ -94,7 +134,7 @@ def Upsample1d(
 
     if factor == 1:
         return Conv1d(
-            in_channels=in_channels, out_channels=out_channels, kernel_size=3, padding=1
+            in_channels=in_channels, out_channels=out_channels, kernel_size=3
         )
 
     if use_nearest:
@@ -103,8 +143,7 @@ def Upsample1d(
             Conv1d(
                 in_channels=in_channels,
                 out_channels=out_channels,
-                kernel_size=3,
-                padding=1,
+                kernel_size=3
             ),
         )
     else:
@@ -112,9 +151,7 @@ def Upsample1d(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=factor * 2,
-            stride=factor,
-            padding=factor // 2 + factor % 2,
-            output_padding=factor % 2,
+            stride=factor
         )
 
 
@@ -126,7 +163,6 @@ class ConvBlock1d(nn.Module):
         *,
         kernel_size: int = 3,
         stride: int = 1,
-        padding: int = 1,
         dilation: int = 1,
         num_groups: int = 8,
         use_norm: bool = True,
@@ -150,19 +186,18 @@ class ConvBlock1d(nn.Module):
             out_channels=out_channels,
             kernel_size=kernel_size,
             stride=stride,
-            padding=padding,
             dilation=dilation,
         )
 
     def forward(
-        self, x: Tensor, scale_shift: Optional[Tuple[Tensor, Tensor]] = None
+        self, x: Tensor, scale_shift: Optional[Tuple[Tensor, Tensor]] = None, causal=False
     ) -> Tensor:
         x = self.groupnorm(x)
         if exists(scale_shift):
             scale, shift = scale_shift
             x = x * (scale + 1) + shift
         x = self.activation(x)
-        return self.project(x)
+        return self.project(x, causal=causal)
 
 
 class MappingToScaleShift(nn.Module):
@@ -193,7 +228,6 @@ class ResnetBlock1d(nn.Module):
         *,
         kernel_size: int = 3,
         stride: int = 1,
-        padding: int = 1,
         dilation: int = 1,
         use_norm: bool = True,
         use_snake: bool = False,
@@ -209,7 +243,6 @@ class ResnetBlock1d(nn.Module):
             out_channels=out_channels,
             kernel_size=kernel_size,
             stride=stride,
-            padding=padding,
             dilation=dilation,
             use_norm=use_norm,
             num_groups=num_groups,
@@ -236,17 +269,17 @@ class ResnetBlock1d(nn.Module):
             else nn.Identity()
         )
 
-    def forward(self, x: Tensor, mapping: Optional[Tensor] = None) -> Tensor:
+    def forward(self, x: Tensor, mapping: Optional[Tensor] = None, causal=False) -> Tensor:
         assert_message = "context mapping required if context_mapping_features > 0"
         assert not (self.use_mapping ^ exists(mapping)), assert_message
 
-        h = self.block1(x)
+        h = self.block1(x, causal=causal)
 
         scale_shift = None
         if self.use_mapping:
             scale_shift = self.to_scale_shift(mapping)
 
-        h = self.block2(h, scale_shift=scale_shift)
+        h = self.block2(h, scale_shift=scale_shift, causal=causal)
 
         return h + self.to_out(x)
 
@@ -273,8 +306,8 @@ class Patcher(nn.Module):
             use_snake=use_snake
         )
 
-    def forward(self, x: Tensor, mapping: Optional[Tensor] = None) -> Tensor:
-        x = self.block(x, mapping)
+    def forward(self, x: Tensor, mapping: Optional[Tensor] = None, causal=False) -> Tensor:
+        x = self.block(x, mapping, causal=causal)
         x = rearrange(x, "b c (l p) -> b (c p) l", p=self.patch_size)
         return x
 
@@ -301,9 +334,9 @@ class Unpatcher(nn.Module):
             use_snake=use_snake
         )
 
-    def forward(self, x: Tensor, mapping: Optional[Tensor] = None) -> Tensor:
+    def forward(self, x: Tensor, mapping: Optional[Tensor] = None, causal=False) -> Tensor:
         x = rearrange(x, " b (c p) l -> b c (l p) ", p=self.patch_size)
-        x = self.block(x, mapping)
+        x = self.block(x, mapping, causal=causal)
         return x
 
 
@@ -658,11 +691,15 @@ class DownsampleBlock1d(nn.Module):
 
         if self.use_transformer:
             assert (
-                exists(attention_heads)
+                (exists(attention_heads) or exists(attention_features))
                 and exists(attention_multiplier)
             )
 
-            attention_features = default(attention_features, channels // attention_heads)
+            if attention_features is None and attention_heads is not None:
+                attention_features = channels // attention_heads
+
+            if attention_heads is None and attention_features is not None:
+                attention_heads = channels // attention_features
 
             self.transformer = Transformer1d(
                 num_layers=num_transformer_blocks,
@@ -701,7 +738,7 @@ class DownsampleBlock1d(nn.Module):
 
         skips = []
         for block in self.blocks:
-            x = block(x, mapping=mapping)
+            x = block(x, mapping=mapping, causal=causal)
             skips += [x] if self.use_skip else []
 
         if self.use_transformer:
@@ -766,11 +803,15 @@ class UpsampleBlock1d(nn.Module):
 
         if self.use_transformer:
             assert (
-                exists(attention_heads)
+                (exists(attention_heads) or exists(attention_features))
                 and exists(attention_multiplier)
             )
 
-            attention_features = default(attention_features, channels // attention_heads)
+            if attention_features is None and attention_heads is not None:
+                attention_features = channels // attention_heads
+
+            if attention_heads is None and attention_features is not None:
+                attention_heads = channels // attention_features
 
             self.transformer = Transformer1d(
                 num_layers=num_transformer_blocks,
@@ -816,7 +857,7 @@ class UpsampleBlock1d(nn.Module):
 
         for block in self.blocks:
             x = self.add_skip(x, skip=skips.pop()) if exists(skips) else x
-            x = block(x, mapping=mapping)
+            x = block(x, mapping=mapping, causal=causal)
 
         if self.use_transformer:
             x = self.transformer(x, context=embedding, context_mask=embedding_mask, causal=causal)
@@ -858,11 +899,15 @@ class BottleneckBlock1d(nn.Module):
 
         if self.use_transformer:
             assert (
-                exists(attention_heads)
+                (exists(attention_heads) or exists(attention_features))
                 and exists(attention_multiplier)
             )
 
-            attention_features = default(attention_features, channels // attention_heads)
+            if attention_features is None and attention_heads is not None:
+                attention_features = channels // attention_heads
+
+            if attention_heads is None and attention_features is not None:
+                attention_heads = channels // attention_features
 
             self.transformer = Transformer1d(
                 num_layers=num_transformer_blocks,
@@ -890,10 +935,10 @@ class BottleneckBlock1d(nn.Module):
         embedding_mask: Optional[Tensor] = None,
         causal: Optional[bool] = False
     ) -> Tensor:
-        x = self.pre_block(x, mapping=mapping)
+        x = self.pre_block(x, mapping=mapping, causal=causal)
         if self.use_transformer:
             x = self.transformer(x, context=embedding, context_mask=embedding_mask, causal=causal)
-        x = self.post_block(x, mapping=mapping)
+        x = self.post_block(x, mapping=mapping, causal=causal)
         return x
 
 
@@ -1133,7 +1178,7 @@ class UNet1d(nn.Module):
         x = torch.cat([x, channels], dim=1) if exists(channels) else x
         # Compute mapping from time and features
         mapping = self.get_mapping(time, features)
-        x = self.to_in(x, mapping)
+        x = self.to_in(x, mapping, causal=causal)
         skips_list = [x]
 
         for i, downsample in enumerate(self.downsamples):
@@ -1150,7 +1195,7 @@ class UNet1d(nn.Module):
             x = upsample(x, skips=skips, mapping=mapping, embedding=embedding, embedding_mask=embedding_mask, causal=causal)
 
         x += skips_list.pop()
-        x = self.to_out(x, mapping)
+        x = self.to_out(x, mapping, causal=causal)
         x = self.stft.decode1d(x) if self.use_stft else x
 
         return x
@@ -1226,8 +1271,10 @@ class UNetCFG1d(UNet1d):
         embedding_scale: float = 1.0,
         embedding_mask_proba: float = 0.0,
         batch_cfg: bool = False,
-        scale_cfg: bool = False,
-        scale_phi: float = 0.7,
+        rescale_cfg: bool = False,
+        scale_phi: float = 0.4,
+        negative_embedding: Optional[Tensor] = None,
+        negative_embedding_mask: Optional[Tensor] = None,
         **kwargs,
     ) -> Tensor:
         b, device = embedding.shape[0], embedding.device
@@ -1251,7 +1298,18 @@ class UNetCFG1d(UNet1d):
             if batch_cfg:
                 batch_x = torch.cat([x, x], dim=0)
                 batch_time = torch.cat([time, time], dim=0)
-                batch_embed = torch.cat([embedding, fixed_embedding], dim=0)
+
+                if negative_embedding is not None:
+                    if negative_embedding_mask is not None:
+                        negative_embedding_mask = negative_embedding_mask.to(torch.bool).unsqueeze(2)
+
+                        negative_embedding = torch.where(negative_embedding_mask, negative_embedding, fixed_embedding)
+                    
+                    batch_embed = torch.cat([embedding, negative_embedding], dim=0)
+
+                else:
+                    batch_embed = torch.cat([embedding, fixed_embedding], dim=0)
+
                 batch_mask = None
                 if embedding_mask is not None:
                     batch_mask = torch.cat([embedding_mask, embedding_mask], dim=0)
@@ -1279,7 +1337,7 @@ class UNetCFG1d(UNet1d):
 
             out_cfg = out_masked + (out - out_masked) * embedding_scale
 
-            if scale_cfg:
+            if rescale_cfg:
 
                 out_std = out.std(dim=1, keepdim=True)
                 out_cfg_std = out_cfg.std(dim=1, keepdim=True)

@@ -8,17 +8,26 @@ from torch.nn import Parameter
 from torchaudio import transforms as T
 from alias_free_torch import Activation1d
 from dac.nn.layers import WNConv1d, WNConvTranspose1d
-from typing import Literal, Dict, Any, Callable
+from typing import List, Literal, Dict, Any, Callable
 from einops import rearrange
 
 from ..inference.sampling import sample
 from ..inference.utils import prepare_audio
 from .bottleneck import Bottleneck
-from .diffusion import DiffusionAttnUnet1D
+from .diffusion import ConditionedDiffusionModel, DAU1DCondWrapper, UNet1DCondWrapper, DiTWrapper
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform, AutoencoderPretransform
 
+def snake_beta(x, alpha, beta):
+    return x + (1.0 / (beta + 0.000000001)) * pow(sin(x * alpha), 2)
+
+try:
+    snake_beta = torch.compile(snake_beta)
+except RuntimeError:
+    pass
+
 # Adapted from https://github.com/NVIDIA/BigVGAN/blob/main/activations.py under MIT license
+# License available in LICENSES/LICENSE_NVIDIA.txt
 class SnakeBeta(nn.Module):
 
     def __init__(self, in_features, alpha=1.0, alpha_trainable=True, alpha_logscale=True):
@@ -45,7 +54,7 @@ class SnakeBeta(nn.Module):
         if self.alpha_logscale:
             alpha = torch.exp(alpha)
             beta = torch.exp(beta)
-        x = x + (1.0 / (beta + self.no_div_by_zero)) * pow(sin(x * alpha), 2)
+        x = snake_beta(x, alpha, beta)
 
         return x
     
@@ -265,8 +274,6 @@ class AudioAutoencoder(nn.Module):
         sample_rate,
         io_channels=2,
         bottleneck: Bottleneck = None,
-        encode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, encoder: encoder(x),
-        decode_fn: Callable[[torch.Tensor, nn.Module], torch.Tensor] = lambda x, decoder: decoder(x),
         pretransform: Pretransform = None,
         in_channels = None,
         out_channels = None
@@ -292,49 +299,93 @@ class AudioAutoencoder(nn.Module):
         self.bottleneck = bottleneck
 
         self.encoder = encoder
-        self.encode_fn = encode_fn
 
         self.decoder = decoder
-        self.decode_fn = decode_fn
 
         self.pretransform = pretransform
  
-    def encode(self, audio, return_info=False, skip_pretransform=False, **kwargs):
+    def encode(self, audio, return_info=False, skip_pretransform=False, iterate_batch=False, **kwargs):
 
         info = {}
 
         if self.pretransform is not None and not skip_pretransform:
             if self.pretransform.enable_grad:
-                audio = self.pretransform.encode(audio)
+                if iterate_batch:
+                    audio = []
+                    for i in range(audio.shape[0]):
+                        audio.append(self.pretransform.encode(audio[i:i+1]))
+                    audio = torch.cat(audio, dim=0)
+                else:
+                    audio = self.pretransform.encode(audio)
             else:
                 with torch.no_grad():
-                    audio = self.pretransform.encode(audio)
+                    if iterate_batch:
+                        audio = []
+                        for i in range(audio.shape[0]):
+                            audio.append(self.pretransform.encode(audio[i:i+1]))
+                        audio = torch.cat(audio, dim=0)
+                    else:
+                        audio = self.pretransform.encode(audio)
 
-        latents = self.encode_fn(audio, self.encoder)
+        if self.encoder is not None:
+            if iterate_batch:
+                latents = []
+                for i in range(audio.shape[0]):
+                    latents.append(self.encoder(audio[i:i+1]))
+                latents = torch.cat(latents, dim=0)
+            else:
+                latents = self.encoder(audio)
+        else:
+            latents = audio
 
         if self.bottleneck is not None:
+            # TODO: Add iterate batch logic, needs to merge the info dicts
             latents, bottleneck_info = self.bottleneck.encode(latents, return_info=True, **kwargs)
 
             info.update(bottleneck_info)
-        
+                
         if return_info:
             return latents, info
 
         return latents
 
-    def decode(self, latents, **kwargs):
+    def decode(self, latents, iterate_batch=False, **kwargs):
 
         if self.bottleneck is not None:
-            latents = self.bottleneck.decode(latents)
+            if iterate_batch:
+                decoded = []
+                for i in range(latents.shape[0]):
+                    decoded.append(self.bottleneck.decode(latents[i:i+1]))
+                decoded = torch.cat(decoded, dim=0)
+            else:
+                latents = self.bottleneck.decode(latents)
 
-        decoded = self.decode_fn(latents, self.decoder, **kwargs)
+        if iterate_batch:
+            decoded = []
+            for i in range(latents.shape[0]):
+                decoded.append(self.decoder(latents[i:i+1]))
+            decoded = torch.cat(decoded, dim=0)
+        else:
+            decoded = self.decoder(latents, **kwargs)
 
         if self.pretransform is not None:
             if self.pretransform.enable_grad:
-                decoded = self.pretransform.decode(decoded)
+                if iterate_batch:
+                    decoded = []
+                    for i in range(latents.shape[0]):
+                        decoded.append(self.pretransform.decode(decoded[i:i+1]))
+                    decoded = torch.cat(decoded, dim=0)
+                else:
+                    decoded = self.pretransform.decode(decoded)
             else:
                 with torch.no_grad():
-                    decoded = self.pretransform.decode(decoded)
+                    if iterate_batch:
+                        decoded = []
+                        for i in range(latents.shape[0]):
+                            decoded.append(self.pretransform.decode(decoded[i:i+1]))
+                        decoded = torch.cat(decoded, dim=0)
+                    else:
+                        decoded = self.pretransform.decode(decoded)
         
         return decoded
     
@@ -372,7 +423,7 @@ class AudioAutoencoder(nn.Module):
 class DiffusionAutoencoder(AudioAutoencoder):
     def __init__(
         self,
-        diffusion,
+        diffusion: ConditionedDiffusionModel,
         diffusion_downsampling_ratio,
         *args,
         **kwargs
@@ -383,26 +434,28 @@ class DiffusionAutoencoder(AudioAutoencoder):
 
         self.min_length = self.downsampling_ratio * diffusion_downsampling_ratio
 
-        # Shrink the initial encoder parameters to avoid saturated latents
-        with torch.no_grad():
-            for param in self.encoder.parameters():
-                param *= 0.5
+        if self.encoder is not None:
+            # Shrink the initial encoder parameters to avoid saturated latents
+            with torch.no_grad():
+                for param in self.encoder.parameters():
+                    param *= 0.5
 
     def decode(self, latents, steps=100):
-
-        if self.pretransform is not None:
-            upsampled_length = latents.shape[2] * self.downsampling_ratio // self.pretransform.downsampling_ratio 
-        else:
-            upsampled_length = latents.shape[2] * self.downsampling_ratio
+        
+        upsampled_length = latents.shape[2] * self.downsampling_ratio
 
         if self.bottleneck is not None:
             latents = self.bottleneck.decode(latents)
 
-        if self.decoder:
-            latents = self.decode_fn(latents, self.decoder)
+        if self.decoder is not None:
+            latents = self.decode(latents)
+    
+        # Upsample latents to match diffusion length
+        if latents.shape[2] != upsampled_length:
+            latents = F.interpolate(latents, size=upsampled_length, mode='nearest')
 
         noise = torch.randn(latents.shape[0], self.io_channels, upsampled_length, device=latents.device)
-        decoded = sample(self.diffusion, noise, steps, 0, cond=latents)
+        decoded = sample(self.diffusion, noise, steps, 0, input_concat_cond=latents)
 
         if self.pretransform is not None:
             if self.pretransform.enable_grad:
@@ -519,7 +572,7 @@ def create_autoencoder_from_config(config: Dict[str, Any]):
 
     if bottleneck is not None:
         bottleneck = create_bottleneck_from_config(bottleneck)
-
+    
     return AudioAutoencoder(
         encoder,
         decoder,
@@ -537,12 +590,24 @@ def create_diffAE_from_config(config: Dict[str, Any]):
     
     diffae_config = config["model"]
 
-    encoder = create_encoder_from_config(diffae_config["encoder"])
+    if "encoder" in diffae_config:
+        encoder = create_encoder_from_config(diffae_config["encoder"])
+    else:
+        encoder = None
 
-    decoder = create_decoder_from_config(diffae_config["decoder"])
+    if "decoder" in diffae_config:
+        decoder = create_decoder_from_config(diffae_config["decoder"])
+    else:
+        decoder = None
 
-    diffusion = DiffusionAttnUnet1D(**diffae_config["diffusion"]["config"])
-    #create_diffusion_uncond_from_config(diffae_config["diffusion"])
+    diffusion_model_type = diffae_config["diffusion"]["type"]
+
+    if diffusion_model_type == "DAU1d":
+        diffusion = DAU1DCondWrapper(**diffae_config["diffusion"]["config"])
+    elif diffusion_model_type == "adp_1d":
+        diffusion = UNet1DCondWrapper(**diffae_config["diffusion"]["config"])
+    elif diffusion_model_type == "dit":
+        diffusion = DiTWrapper(**diffae_config["diffusion"]["config"])
 
     latent_dim = diffae_config.get("latent_dim", None)
     assert latent_dim is not None, "latent_dim must be specified in model config"
@@ -565,8 +630,12 @@ def create_diffAE_from_config(config: Dict[str, Any]):
 
     diffusion_downsampling_ratio = None,
 
-    if diffae_config["diffusion"]["type"] == "DAU1d":
+    if diffusion_model_type == "DAU1d":
         diffusion_downsampling_ratio = np.prod(diffae_config["diffusion"]["config"]["strides"])
+    elif diffusion_model_type == "adp_1d":
+        diffusion_downsampling_ratio = np.prod(diffae_config["diffusion"]["config"]["factors"])
+    elif diffusion_model_type == "dit":
+        diffusion_downsampling_ratio = 1
 
     return DiffusionAutoencoder(
         encoder=encoder,

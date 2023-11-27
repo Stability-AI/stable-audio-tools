@@ -57,14 +57,33 @@ def create_training_wrapper_from_config(model_config, model):
         from .diffusion import DiffusionUncondTrainingWrapper
         return DiffusionUncondTrainingWrapper(
             model, 
-            lr=training_config["learning_rate"]
+            lr=training_config["learning_rate"],
         )
     elif model_type == 'diffusion_cond':
         from .diffusion import DiffusionCondTrainingWrapper
         return DiffusionCondTrainingWrapper(
             model, 
             lr=training_config["learning_rate"],
-            causal_dropout=training_config.get("causal_dropout", 0.0)
+            causal_dropout=training_config.get("causal_dropout", 0.0),
+            mask_padding=training_config.get("mask_padding", False),
+        )
+    elif model_type == 'diffusion_prior':
+        from .diffusion import DiffusionPriorTrainingWrapper
+
+        ema_copy = create_model_from_config(model_config)
+        
+        # Copy each weight to the ema copy
+        for name, param in model.state_dict().items():
+            if isinstance(param, Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            ema_copy.state_dict()[name].copy_(param)
+
+        return DiffusionPriorTrainingWrapper(
+            model, 
+            lr=training_config["learning_rate"],
+            ema_copy=ema_copy,
+            prior_type=training_config.get("prior_type", "mono_stereo"),
         )
     elif model_type == 'diffusion_cond_inpaint':
         from .diffusion import DiffusionCondInpaintTrainingWrapper
@@ -87,7 +106,8 @@ def create_training_wrapper_from_config(model_config, model):
         return DiffusionAutoencoderTrainingWrapper(
             model,
             ema_copy=ema_copy,
-            lr=training_config["learning_rate"]
+            lr=training_config["learning_rate"],
+            use_reconstruction_loss=training_config.get("use_reconstruction_loss", False)
         )
     elif model_type == 'musicgen':
         from .musicgen import MusicGenTrainingWrapper
@@ -135,6 +155,15 @@ def create_demo_callback_from_config(model_config, **kwargs):
     elif model_type == "diffusion_autoencoder":
         from .diffusion import DiffusionAutoencoderDemoCallback
         return DiffusionAutoencoderDemoCallback(
+            demo_every=demo_config.get("demo_every", 2000), 
+            demo_steps=demo_config.get("demo_steps", 250),
+            sample_size=model_config["sample_size"],
+            sample_rate=model_config["sample_rate"],
+            **kwargs
+        )
+    elif model_type == "diffusion_prior":
+        from .diffusion import DiffusionPriorDemoCallback
+        return DiffusionPriorDemoCallback(
             demo_every=demo_config.get("demo_every", 2000), 
             demo_steps=demo_config.get("demo_steps", 250),
             sample_size=model_config["sample_size"],
