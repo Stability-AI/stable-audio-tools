@@ -9,6 +9,7 @@ if __name__ == '__main__':
     args.add_argument('--model-config', type=str, default=None)
     args.add_argument('--ckpt-path', type=str, default=None)
     args.add_argument('--name', type=str, default='exported_model')
+    args.add_argument('--use-safetensors', action='store_true')
 
     args = args.parse_args()
 
@@ -78,6 +79,11 @@ if __name__ == '__main__':
     
     print(f"Loaded model from {args.ckpt_path}")
 
-    training_wrapper.export_model(f"{args.name}.ckpt")
+    if args.use_safetensors:
+        ckpt_path = f"{args.name}.safetensors"
+    else:
+        ckpt_path = f"{args.name}.ckpt"
 
-    print(f"Exported model to {args.name}.ckpt")
+    training_wrapper.export_model(ckpt_path, use_safetensors=args.use_safetensors)
+
+    print(f"Exported model to {ckpt_path}")
