@@ -142,6 +142,8 @@ class SampleDataset(torch.utils.data.Dataset):
 
         self.custom_metadata_fn = custom_metadata_fn
 
+        torchaudio.set_audio_backend('soundfile')
+
     def load_file(self, filename):
         ext = filename.split(".")[-1]
 
