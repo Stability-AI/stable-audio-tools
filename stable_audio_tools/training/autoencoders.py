@@ -127,6 +127,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         if self.autoencoder.out_channels == 2:
             self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+            self.lrstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
         else:
             self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
 
@@ -161,6 +162,18 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         else:
 
             # Reconstruction loss
+            self.gen_loss_modules += [
+                AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss', weight=self.loss_config['spectral']['weights']['mrstft']),
+            ]
+
+            if self.autoencoder.out_channels == 2:
+
+                # Add left and right channel reconstruction losses in addition to the sum and difference
+                self.gen_loss_modules += [
+                    AuralossLoss(self.lrstft, 'reals_left', 'decoded_left', name='stft_loss_left', weight=self.loss_config['spectral']['weights']['mrstft']/2),
+                    AuralossLoss(self.lrstft, 'reals_right', 'decoded_right', name='stft_loss_right', weight=self.loss_config['spectral']['weights']['mrstft']/2),
+                ]
+
             self.gen_loss_modules += [
                 AuralossLoss(self.sdstft, 'reals', 'decoded', name='mrstft_loss', weight=self.loss_config['spectral']['weights']['mrstft']),
             ]
@@ -255,6 +268,12 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         decoded = self.autoencoder.decode(latents)
 
         loss_info["decoded"] = decoded
+
+        if self.autoencoder.out_channels == 2:
+            loss_info["decoded_left"] = decoded[:, 0:1, :]
+            loss_info["decoded_right"] = decoded[:, 1:2, :]
+            loss_info["reals_left"] = reals[:, 0:1, :]
+            loss_info["reals_right"] = reals[:, 1:2, :]
 
         # Distillation
         if self.teacher_model is not None:

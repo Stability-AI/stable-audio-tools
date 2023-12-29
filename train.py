@@ -97,7 +97,8 @@ def main():
         logger=wandb_logger,
         log_every_n_steps=1,
         max_epochs=10000000,
-        default_root_dir=args.save_dir
+        default_root_dir=args.save_dir,
+        gradient_clip_val=args.gradient_clip_val
     )
 
     trainer.fit(training_wrapper, train_dl, ckpt_path=args.ckpt_path if args.ckpt_path else None)

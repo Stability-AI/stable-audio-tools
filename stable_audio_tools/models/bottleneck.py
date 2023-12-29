@@ -4,7 +4,6 @@ from torch.nn import functional as F
 
 from einops import rearrange
 from vector_quantize_pytorch import ResidualVQ, FSQ
-from nwt_pytorch import Memcodes
 from dac.nn.quantize import ResidualVectorQuantize as DACResidualVQ
 
 class Bottleneck(nn.Module):

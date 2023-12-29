@@ -6,6 +6,7 @@ class Pretransform(nn.Module):
         super().__init__()
 
         self.io_channels = io_channels
+        self.encoded_channels = None
         self.downsampling_ratio = None
 
         self.enable_grad = enable_grad
@@ -28,6 +29,8 @@ class AutoencoderPretransform(Pretransform):
         
         self.model_half = model_half
         self.iterate_batch = iterate_batch
+
+        self.encoded_channels = model.latent_dim
 
         if self.model_half:
             self.model.half()
@@ -71,6 +74,7 @@ class WaveletPretransform(Pretransform):
 
         self.downsampling_ratio = 2 ** levels
         self.io_channels = channels
+        self.encoded_channels = channels * self.downsampling_ratio
     
     def encode(self, x):
         return self.encoder(x)
@@ -120,6 +124,8 @@ class PretrainedDACPretransform(Pretransform):
         self.scale = scale
 
         self.chunked = chunked
+
+        self.encoded_channels = self.model.latent_dim
 
     def encode(self, x):
 

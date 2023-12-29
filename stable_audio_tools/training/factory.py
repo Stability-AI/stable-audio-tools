@@ -66,6 +66,7 @@ def create_training_wrapper_from_config(model_config, model):
             lr=training_config["learning_rate"],
             causal_dropout=training_config.get("causal_dropout", 0.0),
             mask_padding=training_config.get("mask_padding", False),
+            use_ema = training_config.get("use_ema", True),
         )
     elif model_type == 'diffusion_prior':
         from .diffusion import DiffusionPriorTrainingWrapper
@@ -79,11 +80,13 @@ def create_training_wrapper_from_config(model_config, model):
                 param = param.data
             ema_copy.state_dict()[name].copy_(param)
 
+        prior_type = training_config.get("prior_type", "mono_stereo")
+
         return DiffusionPriorTrainingWrapper(
             model, 
             lr=training_config["learning_rate"],
             ema_copy=ema_copy,
-            prior_type=training_config.get("prior_type", "mono_stereo"),
+            prior_type=prior_type
         )
     elif model_type == 'diffusion_cond_inpaint':
         from .diffusion import DiffusionCondInpaintTrainingWrapper

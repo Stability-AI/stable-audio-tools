@@ -1,5 +1,6 @@
 import importlib
 import numpy as np
+import io
 import os
 import posixpath
 import random
@@ -17,6 +18,8 @@ from torchaudio import transforms as T
 from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
+
+AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
 
 # fast_scandir implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
 
@@ -91,7 +94,7 @@ def keyword_scandir(
 def get_audio_filenames(
     paths: list,  # directories in which to search
     keywords=None,
-    exts=['.wav', '.mp3', '.flac', '.ogg', '.aif']
+    exts=['.wav', '.mp3', '.flac', '.ogg', '.aif', '.opus']
 ):
     "recursively get a list of audio filenames"
     filenames = []
@@ -374,6 +377,15 @@ class S3DatasetConfig:
 
         return self.urls
 
+def audio_decoder(key, value):
+    # Get file extension from key
+    ext = key.split(".")[-1]
+
+    if ext in AUDIO_KEYS:
+        return torchaudio.load(io.BytesIO(value))
+    else:
+        return None
+
 def collation_fn(samples):
         batched = list(zip(*samples))
         result = []
@@ -420,7 +432,7 @@ class S3WebDataLoader():
         self.dataset = wds.DataPipeline(
             wds.ResampledShards(urls),
             wds.tarfile_to_samples(handler=log_and_continue),
-            wds.decode(wds.torch_audio, handler=log_and_continue),
+            wds.decode(audio_decoder, handler=log_and_continue),
             wds.map(self.wds_preprocess, handler=log_and_continue),
             wds.select(is_valid_sample),
             wds.to_tuple("audio", "json", handler=log_and_continue),
@@ -431,11 +443,9 @@ class S3WebDataLoader():
 
     def wds_preprocess(self, sample):
 
-        audio_keys = ("flac", "wav", "mp3", "m4a", "ogg")
-
         found_key, rewrite_key = '', ''
         for k, v in sample.items():  # print the all entries in dict
-            for akey in audio_keys:
+            for akey in AUDIO_KEYS:
                 if k.endswith(akey):
                     # to rename long/weird key with its simpler counterpart
                     found_key, rewrite_key = k, akey

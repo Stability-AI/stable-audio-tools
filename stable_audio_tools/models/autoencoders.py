@@ -276,7 +276,8 @@ class AudioAutoencoder(nn.Module):
         bottleneck: Bottleneck = None,
         pretransform: Pretransform = None,
         in_channels = None,
-        out_channels = None
+        out_channels = None,
+        soft_clip = False
     ):
         super().__init__()
 
@@ -303,6 +304,8 @@ class AudioAutoencoder(nn.Module):
         self.decoder = decoder
 
         self.pretransform = pretransform
+
+        self.soft_clip = soft_clip
  
     def encode(self, audio, return_info=False, skip_pretransform=False, iterate_batch=False, **kwargs):
 
@@ -311,19 +314,19 @@ class AudioAutoencoder(nn.Module):
         if self.pretransform is not None and not skip_pretransform:
             if self.pretransform.enable_grad:
                 if iterate_batch:
-                    audio = []
+                    audios = []
                     for i in range(audio.shape[0]):
-                        audio.append(self.pretransform.encode(audio[i:i+1]))
-                    audio = torch.cat(audio, dim=0)
+                        audios.append(self.pretransform.encode(audio[i:i+1]))
+                    audio = torch.cat(audios, dim=0)
                 else:
                     audio = self.pretransform.encode(audio)
             else:
                 with torch.no_grad():
                     if iterate_batch:
-                        audio = []
+                        audios = []
                         for i in range(audio.shape[0]):
-                            audio.append(self.pretransform.encode(audio[i:i+1]))
-                        audio = torch.cat(audio, dim=0)
+                            audios.append(self.pretransform.encode(audio[i:i+1]))
+                        audio = torch.cat(audios, dim=0)
                     else:
                         audio = self.pretransform.encode(audio)
 
@@ -343,7 +346,7 @@ class AudioAutoencoder(nn.Module):
             latents, bottleneck_info = self.bottleneck.encode(latents, return_info=True, **kwargs)
 
             info.update(bottleneck_info)
-                
+        
         if return_info:
             return latents, info
 
@@ -371,21 +374,24 @@ class AudioAutoencoder(nn.Module):
         if self.pretransform is not None:
             if self.pretransform.enable_grad:
                 if iterate_batch:
-                    decoded = []
-                    for i in range(latents.shape[0]):
-                        decoded.append(self.pretransform.decode(decoded[i:i+1]))
-                    decoded = torch.cat(decoded, dim=0)
+                    decodeds = []
+                    for i in range(decoded.shape[0]):
+                        decodeds.append(self.pretransform.decode(decoded[i:i+1]))
+                    decoded = torch.cat(decodeds, dim=0)
                 else:
                     decoded = self.pretransform.decode(decoded)
             else:
                 with torch.no_grad():
                     if iterate_batch:
-                        decoded = []
+                        decodeds = []
                         for i in range(latents.shape[0]):
-                            decoded.append(self.pretransform.decode(decoded[i:i+1]))
-                        decoded = torch.cat(decoded, dim=0)
+                            decodeds.append(self.pretransform.decode(decoded[i:i+1]))
+                        decoded = torch.cat(decodeds, dim=0)
                     else:
                         decoded = self.pretransform.decode(decoded)
+
+        if self.soft_clip:
+            decoded = torch.tanh(decoded)
         
         return decoded
     
@@ -441,7 +447,7 @@ class DiffusionAutoencoder(AudioAutoencoder):
                     param *= 0.5
 
     def decode(self, latents, steps=100):
-        
+
         upsampled_length = latents.shape[2] * self.downsampling_ratio
 
         if self.bottleneck is not None:
@@ -572,7 +578,9 @@ def create_autoencoder_from_config(config: Dict[str, Any]):
 
     if bottleneck is not None:
         bottleneck = create_bottleneck_from_config(bottleneck)
-    
+
+    soft_clip = ae_config["decoder"].get("soft_clip", False)
+
     return AudioAutoencoder(
         encoder,
         decoder,
@@ -583,7 +591,8 @@ def create_autoencoder_from_config(config: Dict[str, Any]):
         bottleneck=bottleneck,
         pretransform=pretransform,
         in_channels=in_channels,
-        out_channels=out_channels
+        out_channels=out_channels,
+        soft_clip=soft_clip
     )
 
 def create_diffAE_from_config(config: Dict[str, Any]):
