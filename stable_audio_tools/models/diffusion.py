@@ -12,6 +12,7 @@ from einops import rearrange
 from .blocks import ResConvBlock, FourierFeatures, Upsample1d, Upsample1d_2, Downsample1d, Downsample1d_2, SelfAttention1d, SkipBlock, expand_to_planes
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .factory import create_pretransform_from_config
+from .local_attention import ContinuousLocalTransformer
 from .pretransforms import Pretransform
 from ..inference.generation import generate_diffusion_cond
 
@@ -51,7 +52,7 @@ class DiffusionModelWrapper(nn.Module):
                 sample_size,
                 sample_rate,
                 min_input_length,
-                pretransform: Pretransform = None,
+                pretransform: tp.Optional[Pretransform] = None,
     ):
         super().__init__()
         self.io_channels = io_channels
@@ -110,7 +111,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             io_channels,
             sample_rate,
             min_input_length: int,
-            pretransform: Pretransform = None,
+            pretransform: tp.Optional[Pretransform] = None,
             cross_attn_cond_ids: tp.List[str] = [],
             global_cond_ids: tp.List[str] = [],
             input_concat_ids: tp.List[str] = [],
@@ -263,10 +264,27 @@ class UNet1DCondWrapper(ConditionedDiffusionModel):
                 t, 
                 input_concat_cond=None, 
                 global_cond=None, 
+                cross_attn_cond=None,
+                cross_attn_mask=None,
+                prepend_cond=None,
+                prepend_cond_mask=None,
+                cfg_scale=1.0,
+                cfg_dropout_prob: float = 0.0,
+                batch_cfg: bool = False,
+                rescale_cfg: bool = False,
+                negative_cross_attn_cond=None,
+                negative_cross_attn_mask=None,
+                negative_global_cond=None,
+                negative_input_concat_cond=None,
                 **kwargs):
 
         channels_list = None
         if input_concat_cond is not None:
+            
+            # Interpolate input_concat_cond to the same length as x
+            if input_concat_cond.shape[2] != x.shape[2]:
+                input_concat_cond = F.interpolate(input_concat_cond, (x.shape[2], ), mode='nearest')
+
             channels_list = [input_concat_cond]
 
         outputs = self.model(
@@ -531,6 +549,7 @@ class DiffusionTransformer(nn.Module):
         prepend_cond_dim=0,
         depth=12,
         num_heads=8,
+        transformer_type: tp.Literal["local_attn", "x-transformers"] = "x-transformers",
         **kwargs):
 
         super().__init__()
@@ -576,55 +595,43 @@ class DiffusionTransformer(nn.Module):
 
         dim_in = io_channels + self.input_concat_dim
 
-        # RoPE monkey patch fix
-
-        def rotate_half(x):
-            x = rearrange(x, '... (j d) -> ... j d', j = 2)
-            x1, x2 = x.unbind(dim = -2)
-            return torch.cat((-x2, x1), dim = -1)
-
-        def apply_rotary_pos_emb(t, freqs, scale = 1):
-            out_dtype = t.dtype
-            dtype = reduce(torch.promote_types, (t.dtype, freqs.dtype, torch.float32))
-
-            rot_dim, seq_len = freqs.shape[-1], t.shape[-2]
-            freqs = freqs[-seq_len:, :]
-
-            if t.ndim == 4 and freqs.ndim == 3:
-                freqs = rearrange(freqs, 'b n d -> b 1 n d')
-
-            t, freqs = t.to(dtype), freqs.to(dtype)
-
-            # partial rotary embeddings, Wang et al. GPT-J
-            t, t_unrotated = t[..., :rot_dim], t[..., rot_dim:]
-            t = (t * freqs.cos() * scale) + (rotate_half(t) * freqs.sin() * scale)
-
-            t, t_unrotated = t.to(out_dtype), t_unrotated.to(out_dtype)
-
-            return torch.cat((t, t_unrotated), dim = -1) 
-
-        x_transformers.x_transformers.apply_rotary_pos_emb = torch.compile(apply_rotary_pos_emb)
-
         # Transformer
 
-        self.transformer = ContinuousTransformerWrapper(
-            dim_in=dim_in,
-            dim_out=io_channels,
-            max_seq_len=0, #Not relevant without absolute positional embeds
-            attn_layers = Encoder(
+        self.transformer_type = transformer_type
+
+        if self.transformer_type == "local_attn":
+            self.transformer = ContinuousLocalTransformer(
                 dim=embed_dim,
+                dim_in=dim_in,
+                dim_out=io_channels,
                 depth=depth,
                 heads=num_heads,
-                attn_flash = True,
-                cross_attend = cond_token_dim > 0,
-                zero_init_branch_output=True,
-                use_abs_pos_emb = False,
-                rotary_pos_emb=True,
-                ff_swish = True,
-                ff_glu = True,
+                cond_dim=embed_dim if global_cond_dim > 0 else 0,
+                cross_attn_cond_dim=embed_dim if cond_token_dim > 0 else 0,
                 **kwargs
             )
-        )
+
+        elif self.transformer_type == "x-transformers":
+            self.transformer = ContinuousTransformerWrapper(
+                dim_in=dim_in,
+                dim_out=io_channels,
+                max_seq_len=0, #Not relevant without absolute positional embeds
+                attn_layers = Encoder(
+                    dim=embed_dim,
+                    depth=depth,
+                    heads=num_heads,
+                    attn_flash = True,
+                    cross_attend = cond_token_dim > 0,
+                    zero_init_branch_output=True,
+                    use_abs_pos_emb = False,
+                    rotary_pos_emb=True,
+                    ff_swish = True,
+                    ff_glu = True,
+                    **kwargs
+                )
+            )
+        else:
+            raise ValueError(f"Unknown transformer type: {self.transformer_type}")
 
         self.preprocess_conv = nn.Conv1d(dim_in, dim_in, 1, bias=False)
         nn.init.zeros_(self.preprocess_conv.weight)
@@ -681,13 +688,23 @@ class DiffusionTransformer(nn.Module):
         prepend_length = prepend_inputs.shape[1]
 
         if input_concat_cond is not None:
+
+            # Interpolate input_concat_cond to the same length as x
+            if input_concat_cond.shape[2] != x.shape[2]:
+                input_concat_cond = F.interpolate(input_concat_cond, (x.shape[2], ), mode='nearest')
+
             x = torch.cat([x, input_concat_cond], dim=1)
 
         x = self.preprocess_conv(x) + x
 
         x = rearrange(x, "b c t -> b t c")
 
-        output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, **kwargs)
+        if self.transformer_type == "local_attn":
+            if mask is not None:
+                mask = torch.cat([prepend_mask, mask], dim=1)
+            output = self.transformer(x, prepend_cond=prepend_inputs, cross_attn_cond=cross_attn_cond, cross_attn_cond_mask=cross_attn_cond_mask, mask=mask, **kwargs)
+        else:
+            output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, **kwargs)
 
         output = rearrange(output, "b t c -> b c t")[:,:,prepend_length:]
 
@@ -724,21 +741,23 @@ class DiffusionTransformer(nn.Module):
         if prepend_cond_mask is not None:
             prepend_cond_mask = prepend_cond_mask.bool()
 
-        if cross_attn_cond is not None:
-
-            # CFG dropout
-            if cfg_dropout_prob > 0.0:
+        # CFG dropout
+        if cfg_dropout_prob > 0.0:
+            if cross_attn_cond is not None:
                 null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
                 dropout_mask = torch.bernoulli(torch.full((cross_attn_cond.shape[0], 1, 1), cfg_dropout_prob, device=cross_attn_cond.device)).to(torch.bool)
                 cross_attn_cond = torch.where(dropout_mask, null_embed, cross_attn_cond)
 
-        if cross_attn_cond is not None and cfg_scale != 1.0:
+            if prepend_cond is not None:
+                null_embed = torch.zeros_like(prepend_cond, device=prepend_cond.device)
+                dropout_mask = torch.bernoulli(torch.full((prepend_cond.shape[0], 1, 1), cfg_dropout_prob, device=prepend_cond.device)).to(torch.bool)
+                prepend_cond = torch.where(dropout_mask, null_embed, prepend_cond)
+
+
+        if cfg_scale != 1.0 and (cross_attn_cond is not None or prepend_cond is not None):
             # Classifier-free guidance
             # Concatenate conditioned and unconditioned inputs on the batch dimension            
             batch_inputs = torch.cat([x, x], dim=0)
-            
-            null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
-
             batch_timestep = torch.cat([t, t], dim=0)
 
             if global_embed is not None:
@@ -746,31 +765,48 @@ class DiffusionTransformer(nn.Module):
             else:
                 batch_global_cond = None
 
+            if input_concat_cond is not None:
+                batch_input_concat_cond = torch.cat([input_concat_cond, input_concat_cond], dim=0)
+            else:
+                batch_input_concat_cond = None
+
+            batch_cond = None
+            batch_cond_masks = None
+            
+            # Handle CFG for cross-attention conditioning
+            if cross_attn_cond is not None:
+
+                null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
+
+                # For negative cross-attention conditioning, replace the null embed with the negative cross-attention conditioning
+                if negative_cross_attn_cond is not None:
+
+                    # If there's a negative cross-attention mask, set the masked tokens to the null embed
+                    if negative_cross_attn_mask is not None:
+                        negative_cross_attn_mask = negative_cross_attn_mask.to(torch.bool).unsqueeze(2)
+
+                        negative_cross_attn_cond = torch.where(negative_cross_attn_mask, negative_cross_attn_cond, null_embed)
+                    
+                    batch_cond = torch.cat([cross_attn_cond, negative_cross_attn_cond], dim=0)
+
+                else:
+                    batch_cond = torch.cat([cross_attn_cond, null_embed], dim=0)
+
+                if cross_attn_cond_mask is not None:
+                    batch_cond_masks = torch.cat([cross_attn_cond_mask, cross_attn_cond_mask], dim=0)
+               
+            batch_prepend_cond = None
+            batch_prepend_cond_mask = None
+
             if prepend_cond is not None:
-                batch_prepend_cond = torch.cat([prepend_cond, prepend_cond], dim=0)
-            else:
-                batch_prepend_cond = None
 
-            if prepend_cond_mask is not None:
-                batch_prepend_cond_mask = torch.cat([prepend_cond_mask, prepend_cond_mask], dim=0)
-            else:
-                batch_prepend_cond_mask = None
+                null_embed = torch.zeros_like(prepend_cond, device=prepend_cond.device)
 
-            if negative_cross_attn_cond is not None:
-                if negative_cross_attn_mask is not None:
-                    negative_cross_attn_mask = negative_cross_attn_mask.to(torch.bool).unsqueeze(2)
-
-                    negative_cross_attn_cond = torch.where(negative_cross_attn_mask, negative_cross_attn_cond, null_embed)
-                
-                batch_cond = torch.cat([cross_attn_cond, negative_cross_attn_cond], dim=0)
-
-            else:
-                batch_cond = torch.cat([cross_attn_cond, null_embed], dim=0)
-
-            if cross_attn_cond_mask is not None:
-                batch_cond_masks = torch.cat([cross_attn_cond_mask, cross_attn_cond_mask], dim=0)
-            else:
-                batch_cond_masks = None
+                batch_prepend_cond = torch.cat([prepend_cond, null_embed], dim=0)
+                           
+                if prepend_cond_mask is not None:
+                    batch_prepend_cond_mask = torch.cat([prepend_cond_mask, prepend_cond_mask], dim=0)
+         
 
             if mask is not None:
                 batch_masks = torch.cat([mask, mask], dim=0)
@@ -783,7 +819,7 @@ class DiffusionTransformer(nn.Module):
                 cross_attn_cond=batch_cond, 
                 cross_attn_cond_mask=batch_cond_masks, 
                 mask = batch_masks, 
-                input_concat_cond=input_concat_cond, 
+                input_concat_cond=batch_input_concat_cond, 
                 global_embed = batch_global_cond,
                 prepend_cond = batch_prepend_cond,
                 prepend_cond_mask = batch_prepend_cond_mask,
@@ -884,6 +920,8 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 
     if diffusion_model_type == 'adp_cfg_1d':
         diffusion_model = UNetCFG1DWrapper(**diffusion_model_config)
+    elif diffusion_model_type == 'adp_1d':
+        diffusion_model = UNet1DCondWrapper(**diffusion_model_config)
     elif diffusion_model_type == 'dit':
         diffusion_model = DiTWrapper(**diffusion_model_config)
 
@@ -912,7 +950,7 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     else:
         min_input_length = 1
 
-    if diffusion_model_type == "adp_cfg_1d":
+    if diffusion_model_type == "adp_cfg_1d" or diffusion_model_type == "adp_1d":
         min_input_length *= np.prod(diffusion_model_config["factors"])
     elif diffusion_model_type == "dit":
         min_input_length = min_input_length # There's no downsampling in DiT

@@ -1,3 +1,5 @@
+import torch
+
 from einops import rearrange
 from torch import nn
 from local_attention.transformer import LocalMHA, FeedForward
@@ -23,6 +25,7 @@ class ContinuousLocalTransformer(nn.Module):
         use_conv = True,
         cond_dim = 0,
         cross_attn_cond_dim = 0,
+        use_rotary_pos_emb = False,
         **kwargs
     ):
         super().__init__()
@@ -49,19 +52,28 @@ class ContinuousLocalTransformer(nn.Module):
 
             self.layers.append(nn.ModuleList([
                 AdaRMSNorm(dim, cond_dim, eps=1e-8) if cond_dim > 0 else nn.LayerNorm(dim, eps=1e-8),
-                LocalMHA(dim = dim, dim_head = dim_head, heads = heads, qk_scale=qk_scale, dropout = attn_dropout, causal = causal, window_size = local_attn_window_size, prenorm = False, **kwargs),
+                LocalMHA(
+                    dim = dim, 
+                    dim_head = dim_head, 
+                    heads = heads, 
+                    qk_scale=qk_scale, 
+                    dropout = attn_dropout, 
+                    causal = causal, 
+                    window_size = local_attn_window_size, 
+                    prenorm = False, 
+                    use_rotary_pos_emb = use_rotary_pos_emb,
+                    **kwargs),
                 Attention(features=dim, num_heads=heads, head_features=dim_head, context_features=self.cross_attn_cond_dim) if self.cross_attn_cond_dim > 0 else nn.Identity(),
                 nn.Conv1d(dim, dim, kernel_size=3, padding=1) if use_conv else nn.Identity(),
                 FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
             ]))
 
-            if use_conv:
-                # Zero-init conv layers
-                nn.init.zeros_(self.layers[-1][1].weight)
-
-    def forward(self, x, mask = None, cond = None, cross_attn_cond = None):
-    
+    def forward(self, x, mask = None, cond = None, cross_attn_cond = None, cross_attn_cond_mask = None, prepend_cond = None):
+ 
         x = self.project_in(x)
+
+        if prepend_cond is not None:
+            x = torch.cat([prepend_cond, x], dim=1)
 
         for norm, attn, xattn, conv, ff in self.layers:
 
@@ -73,7 +85,7 @@ class ContinuousLocalTransformer(nn.Module):
             x = attn(x, mask = mask) + x
 
             if cross_attn_cond is not None:
-                x = xattn(x, cross_attn_cond) + x
+                x = xattn(x, context=cross_attn_cond, context_mask=cross_attn_cond_mask) + x
 
             if self.use_conv:
                 x = rearrange(x, "b n c -> b c n")

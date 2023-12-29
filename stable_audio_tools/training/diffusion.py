@@ -100,7 +100,7 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
                 diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                 loss_info["reals"] = diffusion_input
 
-        # Combine the ground truth images and the noise
+        # Combine the ground truth data and the noise
         alphas = alphas[:, None, None]
         sigmas = sigmas[:, None, None]
         noise = torch.randn_like(diffusion_input)
@@ -213,20 +213,24 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             lr: float = 1e-4,
             causal_dropout: float = 0.0,
             mask_padding: bool = False,
-            mask_padding_dropout: float = 0.2
+            mask_padding_dropout: float = 0.2,
+            use_ema: bool = True
     ):
         super().__init__()
 
         self.diffusion = model
         
-        self.diffusion_ema = EMA(
-            self.diffusion.model,
-            beta=0.9999,
-            power=3/4,
-            update_every=1,
-            update_after_step=1,
-            include_online_model=False
-        )
+        if use_ema:
+            self.diffusion_ema = EMA(
+                self.diffusion.model,
+                beta=0.9999,
+                power=3/4,
+                update_every=1,
+                update_after_step=1,
+                include_online_model=False
+            )
+        else:
+            self.diffusion_ema = None
 
         self.mask_padding = mask_padding
         self.mask_padding_dropout = mask_padding_dropout
@@ -296,7 +300,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
                     padding_masks = F.interpolate(padding_masks.unsqueeze(1).float(), size=diffusion_input.shape[2], mode="nearest").squeeze(1).bool()
 
 
-        # Combine the ground truth images and the noise
+        # Combine the ground truth data and the noise
         alphas = alphas[:, None, None]
         sigmas = sigmas[:, None, None]
         noise = torch.randn_like(diffusion_input)
@@ -340,10 +344,12 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         return loss
     
     def on_before_zero_grad(self, *args, **kwargs):
-        self.diffusion_ema.update()
+        if self.diffusion_ema is not None:
+            self.diffusion_ema.update()
 
     def export_model(self, path, use_safetensors=False):
-        self.diffusion.model = self.diffusion_ema.ema_model
+        if self.diffusion_ema is not None:
+            self.diffusion.model = self.diffusion_ema.ema_model
         
         if use_safetensors:
             save_file(self.diffusion.state_dict(), path)
@@ -429,7 +435,9 @@ class DiffusionCondDemoCallback(pl.Callback):
                 print(f"Generating demo for cfg scale {cfg_scale}")
                 
                 with torch.cuda.amp.autocast():
-                    fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
+                    model = module.diffusion_ema.model if module.diffusion_ema is not None else module.diffusion.model
+
+                    fakes = sample(model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
                     if module.diffusion.pretransform is not None:
                         fakes = module.diffusion.pretransform.decode(fakes)
 
@@ -467,6 +475,7 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
             self,
             model: ConditionedDiffusionModelWrapper,
             lr: float = 1e-4,
+            max_mask_segments = 10
     ):
         super().__init__()
 
@@ -482,6 +491,7 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         )
 
         self.lr = lr
+        self.max_mask_segments = max_mask_segments
 
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
@@ -489,7 +499,6 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
             MSELoss("v", 
                    "targets", 
                    weight=1.0, 
-                   mask_key="padding_mask" if self.mask_padding else None, 
                    name="mse_loss"
             )
         ]
@@ -500,49 +509,43 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
 
     def random_mask(self, sequence, max_mask_length):
-
         b, _, sequence_length = sequence.size()
 
         # Create a mask tensor for each batch element
         masks = []
-       # for i in range(b):
-        mask_type = random.randint(0, 2)
 
-        if mask_type == 0: # Random mask
-            # Randomly choose the length and starting index of the mask
-            mask_length = random.randint(1, max_mask_length)
-            mask_start = random.randint(0, sequence_length-mask_length)
+        for i in range(b):
+            mask_type = random.randint(0, 2)
 
-            # Create the mask tensor
-            mask = torch.ones((1, 1, sequence_length))
-            mask[:, :, mask_start:mask_start+mask_length] = 0
+            if mask_type == 0:  # Random mask with multiple segments
+                num_segments = random.randint(1, self.max_mask_segments)
+                max_segment_length = max_mask_length // num_segments
+
+                segment_lengths = random.sample(range(1, max_segment_length + 1), num_segments)
+               
+                mask = torch.ones((1, 1, sequence_length))
+                for length in segment_lengths:
+                    mask_start = random.randint(0, sequence_length - length)
+                    mask[:, :, mask_start:mask_start + length] = 0
+
+            elif mask_type == 1:  # Full mask
+                mask = torch.zeros((1, 1, sequence_length))
+
+            elif mask_type == 2:  # Causal mask
+                mask = torch.ones((1, 1, sequence_length))
+                mask_length = random.randint(1, max_mask_length)
+                mask[:, :, -mask_length:] = 0
+
             mask = mask.to(sequence.device)
-
             masks.append(mask)
-            causal = False
 
-        elif mask_type == 1: # Full mask
-            mask = torch.zeros((1, 1, sequence_length)).to(sequence.device)
-            masks.append(mask)
-            causal = False
-
-        elif mask_type == 2: # Causal mask
-            mask = torch.ones((1, 1, sequence_length)).to(sequence.device)
-            mask_length = random.randint(1, max_mask_length)
-            mask[:, :, -mask_length:] = 0
-            masks.append(mask)
-            causal = True
-                
-        # Repeat masks to batch size
-        masks = masks * b
-        
         # Concatenate the mask tensors into a single tensor
         mask = torch.cat(masks, dim=0).to(sequence.device)
 
         # Apply the mask to the sequence tensor for each batch element
         masked_sequence = sequence * mask
 
-        return masked_sequence, mask, causal
+        return masked_sequence, mask
 
     def training_step(self, batch, batch_idx):
         reals, metadata = batch
@@ -577,12 +580,12 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
         max_mask_length = diffusion_input.shape[2]
 
         # Create a mask of random length for a random slice of the input
-        masked_input, mask, causal = self.random_mask(diffusion_input, max_mask_length)
+        masked_input, mask = self.random_mask(diffusion_input, max_mask_length)
 
         conditioning['inpaint_mask'] = [mask]
         conditioning['inpaint_masked_input'] = [masked_input]
 
-        # Combine the ground truth images and the noise
+        # Combine the ground truth data and the noise
         alphas = alphas[:, None, None]
         sigmas = sigmas[:, None, None]
         noise = torch.randn_like(diffusion_input)
@@ -593,7 +596,7 @@ class DiffusionCondInpaintTrainingWrapper(pl.LightningModule):
 
         with torch.cuda.amp.autocast():
             p.tick("amp")
-            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1, causal=causal)
+            v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1)
             p.tick("diffusion")
 
             loss_info = {
@@ -677,7 +680,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             # Get conditioning
             conditioning = module.diffusion.conditioner(metadata, module.device)
 
-            masked_input, mask, causal = module.random_mask(demo_reals, demo_reals.shape[2])
+            masked_input, mask = module.random_mask(demo_reals, demo_reals.shape[2])
 
             conditioning['inpaint_mask'] = [mask]
             conditioning['inpaint_masked_input'] = [masked_input]
@@ -696,7 +699,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
             for cfg_scale in self.demo_cfg_scales:
                 
                 print(f"Generating demo for cfg scale {cfg_scale}")
-                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True, causal=causal)
+                fakes = sample(module.diffusion_ema.model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, batch_cfg=True)
 
                 if module.diffusion.pretransform is not None:
                     with torch.cuda.amp.autocast():
@@ -835,7 +838,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         # Calculate the noise schedule parameters for those timesteps
         alphas, sigmas = get_alphas_sigmas(t)
 
-        # Combine the ground truth images and the noise
+        # Combine the ground truth data and the noise
         alphas = alphas[:, None, None]
         sigmas = sigmas[:, None, None]
         noise = torch.randn_like(reals)
@@ -876,8 +879,14 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
     def on_before_zero_grad(self, *args, **kwargs):
         self.diffae_ema.update()
 
-    def export_model(self, path):        
-        save_file(self.diffae_ema.ema_model.state_dict(), path)
+    def export_model(self, path, use_safetensors=False):
+
+        model = self.diffae_ema.ema_model
+        
+        if use_safetensors:
+            save_file(model.state_dict(), path)
+        else:
+            torch.save({"state_dict": model.state_dict()}, path)
 
 class DiffusionAutoencoderDemoCallback(pl.Callback):
     def __init__(
@@ -965,6 +974,8 @@ class DiffusionAutoencoderDemoCallback(pl.Callback):
 class DiffusionPriorTrainingWrapper(pl.LightningModule):
     '''
     Wrapper for training a diffusion prior for inverse problems
+    Prior types:
+        mono_stereo: The prior is conditioned on a mono version of the audio to generate a stereo version
     '''
     def __init__(
             self,
@@ -988,8 +999,6 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
         )
 
         self.lr = lr
-
-        self.prior_type = prior_type
 
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
@@ -1023,7 +1032,9 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
         if self.diffusion.pretransform is not None:
             with torch.no_grad():
                 reals = self.diffusion.pretransform.encode(reals)
-                source = self.diffusion.pretransform.encode(source)
+
+                if self.prior_type == "mono_stereo":
+                    source = self.diffusion.pretransform.encode(source)
 
         loss_info["reals"] = reals
 
@@ -1033,7 +1044,7 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
         # Calculate the noise schedule parameters for those timesteps
         alphas, sigmas = get_alphas_sigmas(t)
 
-        # Combine the ground truth images and the noise
+        # Combine the ground truth data and the noise
         alphas = alphas[:, None, None]
         sigmas = sigmas[:, None, None]
         noise = torch.randn_like(reals)
@@ -1065,8 +1076,15 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
     def on_before_zero_grad(self, *args, **kwargs):
         self.diffusion_ema.update()
 
-    def export_model(self, path):        
-        save_file(self.diffusion_ema.ema_model.state_dict(), path)
+    def export_model(self, path, use_safetensors=False):
+
+        #model = self.diffusion_ema.ema_model
+        model = self.diffusion
+        
+        if use_safetensors:
+            save_file(model.state_dict(), path)
+        else:
+            torch.save({"state_dict": model.state_dict()}, path)
 
 class DiffusionPriorDemoCallback(pl.Callback):
     def __init__(
@@ -1109,8 +1127,9 @@ class DiffusionPriorDemoCallback(pl.Callback):
             
                 if module.diffusion.pretransform is not None:
                         source = module.diffusion.pretransform.encode(source)
-                        encoder_input = module.diffusion.pretransform.encode(encoder_input)
 
+            if module.diffusion.pretransform is not None:
+                    encoder_input = module.diffusion.pretransform.encode(encoder_input)
 
             fakes = sample(module.diffusion_ema.model, torch.randn_like(encoder_input), self.demo_steps, 0, cond={"source": [source]})
 

@@ -13,6 +13,7 @@ from torchaudio import transforms as T
 
 
 from ..inference.generation import generate_diffusion_cond, generate_diffusion_uncond
+from ..inference.priors import generate_mono_to_stereo
 from ..models.factory import create_model_from_config
 from ..models.pretrained import get_pretrained_model
 from ..models.utils import load_ckpt_state_dict
@@ -361,7 +362,7 @@ def create_sampling_ui(model_config, inpainting=False):
             with gr.Row(visible = has_seconds_start or has_seconds_total):
                 # Timing controls
                 seconds_start_slider = gr.Slider(minimum=0, maximum=512, step=1, value=0, label="Seconds start", visible=has_seconds_start)
-                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=95, label="Seconds total", visible=has_seconds_total)
+                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=sample_size//sample_rate, label="Seconds total", visible=has_seconds_total)
             
             with gr.Row():
                 # Steps slider
@@ -378,12 +379,12 @@ def create_sampling_ui(model_config, inpainting=False):
                 # Seed
                 seed_textbox = gr.Textbox(label="Seed (set to -1 for random seed)", value="-1")
 
-            # Sampler params
+                # Sampler params
                 with gr.Row():
                     sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "dpmpp-3m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-2m-sde")
                     sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
                     sigma_max_slider = gr.Slider(minimum=0.0, maximum=200.0, step=0.1, value=80, label="Sigma max")
-                    cfg_rescale_slider = gr.Slider(minimum=0.0, maximum=1, step=0.01, value=0.4, label="CFG rescale amount")
+                    cfg_rescale_slider = gr.Slider(minimum=0.0, maximum=1, step=0.01, value=0.2, label="CFG rescale amount")
 
             if inpainting: 
                 # Inpainting Tab
@@ -481,7 +482,7 @@ def create_diffusion_uncond_ui(model_config):
     
     return ui
 
-def autoencoder_process(audio, n_quantizers):
+def autoencoder_process(audio, latent_noise, n_quantizers):
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -503,6 +504,9 @@ def autoencoder_process(audio, n_quantizers):
         latents = model.encode_audio(audio, in_sr, n_quantizers=n_quantizers)
     else:
         latents = model.encode_audio(audio, in_sr)
+
+    if latent_noise > 0:
+        latents = latents + torch.randn_like(latents) * latent_noise
 
     audio = model.decode_audio(latents)
 
@@ -527,11 +531,56 @@ def create_autoencoder_ui(model_config):
         input_audio = gr.Audio(label="Input audio")
         output_audio = gr.Audio(label="Output audio", interactive=False)
         n_quantizers_slider = gr.Slider(minimum=1, maximum=n_quantizers, step=1, value=n_quantizers, label="# quantizers", visible=is_dac_rvq)
+        latent_noise_slider = gr.Slider(minimum=0.0, maximum=10.0, step=0.001, value=0.0, label="Add latent noise")
         process_button = gr.Button("Process", variant='primary', scale=1)
-        process_button.click(fn=autoencoder_process, inputs=[input_audio, n_quantizers_slider], outputs=output_audio, api_name="process")
+        process_button.click(fn=autoencoder_process, inputs=[input_audio, latent_noise_slider, n_quantizers_slider], outputs=output_audio, api_name="process")
 
     return ui
 
+def diffusion_prior_process(audio, steps, sampler_type, sigma_min, sigma_max):
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+    #Get the device from the model
+    device = next(model.parameters()).device
+
+    in_sr, audio = audio
+
+    audio = torch.from_numpy(audio).float().div(32767).to(device)
+    
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0) # [1, n]
+    elif audio.dim() == 2:
+        audio = audio.transpose(0, 1) # [n, 2] -> [2, n]
+
+    audio = audio.unsqueeze(0)
+
+    audio = generate_mono_to_stereo(model, audio, in_sr, steps, sampler_kwargs={"sampler_type": sampler_type, "sigma_min": sigma_min, "sigma_max": sigma_max})
+
+    audio = rearrange(audio, "b d n -> d (b n)")
+
+    audio = audio.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+
+    torchaudio.save("output.wav", audio, sample_rate)
+
+    return "output.wav"
+
+def create_diffusion_prior_ui(model_config):
+    with gr.Blocks() as ui:
+        input_audio = gr.Audio(label="Input audio")
+        output_audio = gr.Audio(label="Output audio", interactive=False)
+        # Sampler params
+        with gr.Row():
+            steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=100, label="Steps")
+            sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "dpmpp-3m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-2m-sde")
+            sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
+            sigma_max_slider = gr.Slider(minimum=0.0, maximum=200.0, step=0.1, value=80, label="Sigma max")
+        process_button = gr.Button("Process", variant='primary', scale=1)
+        process_button.click(fn=diffusion_prior_process, inputs=[input_audio, steps_slider, sampler_type_dropdown, sigma_min_slider, sigma_max_slider], outputs=output_audio, api_name="process")    
+
+    return ui
 
 def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None):
 
@@ -555,6 +604,7 @@ def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pret
         ui = create_diffusion_uncond_ui(model_config)
     elif model_type == "autoencoder" or model_type == "diffusion_autoencoder":
         ui = create_autoencoder_ui(model_config)
+    elif model_type == "diffusion_prior":
+        ui = create_diffusion_prior_ui(model_config)
         
-
     return ui
