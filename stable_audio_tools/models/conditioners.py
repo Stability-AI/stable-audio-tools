@@ -311,7 +311,7 @@ class T5Conditioner(Conditioner):
                 input_ids=input_ids, attention_mask=attention_mask
             )["last_hidden_state"]    
             
-        embeddings = self.proj_out(embeddings)
+        embeddings = self.proj_out(embeddings.float())
 
         embeddings = embeddings * attention_mask.unsqueeze(-1).float()
 
