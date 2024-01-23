@@ -8,8 +8,8 @@ from torch import nn
 from .autoencoders import AudioAutoencoder
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .factory import create_pretransform_from_config
-from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone
-from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform
+from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone, MambaAudioLMBackbone
+from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform, AudiocraftCompressionPretransform
 from .utils import multinomial, sample_top_k, sample_top_p
 
 from audiocraft.modules.codebooks_patterns import (
@@ -149,6 +149,9 @@ class AudioLanguageModelWrapper(nn.Module):
         elif isinstance(self.pretransform, PretrainedDACPretransform):
             self.num_quantizers = self.pretransform.model.num_quantizers
             self.codebook_size = self.pretransform.model.codebook_size
+        elif isinstance(self.pretransform, AudiocraftCompressionPretransform):
+            self.num_quantizers = self.pretransform.num_quantizers
+            self.codebook_size = self.pretransform.codebook_size
         else:
             raise NotImplementedError(f"Unrecognized pretransform type {type(self.pretransform)}")
 
@@ -460,6 +463,8 @@ def create_audio_lm_from_config(config):
 
     if lm_type == "x-transformers":
         backbone = XTransformersAudioLMBackbone(**lm_model_config)
+    elif lm_type == "mamba":
+        backbone = MambaAudioLMBackbone(**lm_model_config)
     else:
         raise NotImplementedError(f"Unrecognized lm type {lm_type}")
 

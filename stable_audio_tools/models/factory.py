@@ -68,6 +68,11 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         from .pretransforms import PretrainedDACPretransform
         pretrained_dac_config = pretransform_config["config"]
         pretransform = PretrainedDACPretransform(**pretrained_dac_config)
+    elif pretransform_type == "audiocraft_pretrained":
+        from .pretransforms import AudiocraftCompressionPretransform
+
+        audiocraft_config = pretransform_config["config"]
+        pretransform = AudiocraftCompressionPretransform(**audiocraft_config)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     

@@ -1,5 +1,8 @@
+import torch
 from torch import nn
 from x_transformers import ContinuousTransformerWrapper, Decoder
+
+from .mamba_lm import MambaModel
 
 # Interface for backbone of a language model
 # Handles conditioning and cross-attention
@@ -78,3 +81,36 @@ class XTransformersAudioLMBackbone(AudioLMBackbone):
             cross_attn_cond = self.to_cross_attn_embed(cross_attn_cond)
 
         return self.model(x, mask=mask, context=cross_attn_cond, prepend_embeds=prepend_cond, prepend_mask=prepend_cond_mask)[:, prepend_length:, :]
+    
+class MambaAudioLMBackbone(AudioLMBackbone):
+    def __init__(self,
+                 embed_dim: int,
+                 prepend_cond_dim: int = 0,
+                 **kwargs):
+        super().__init__(embed_dim=embed_dim)
+
+        # Embeddings are done in the AudioLanguageModel, so we use the continuous-input transformer
+        self.model = MambaModel(
+            d_model=embed_dim,
+            **kwargs
+        )
+
+        if prepend_cond_dim > 0:
+            # Prepend conditioning
+            self.to_prepend_embed = nn.Sequential(
+                nn.Linear(prepend_cond_dim, embed_dim, bias=False),
+                nn.SiLU(),
+                nn.Linear(embed_dim, embed_dim, bias=False)
+            )
+
+    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None):
+
+        prepend_length = 0
+        if prepend_cond is not None:
+            # Project the prepend conditioning to the embedding dimension
+            prepend_cond = self.to_prepend_embed(prepend_cond)
+            prepend_length = prepend_cond.shape[1]
+
+            x = torch.cat([prepend_cond, x], dim=1)
+
+        return self.model(x)[:, prepend_length:, :]
