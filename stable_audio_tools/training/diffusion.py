@@ -18,7 +18,9 @@ from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from ..inference.sampling import get_alphas_sigmas, sample
 from ..models.diffusion import DiffusionModelWrapper, ConditionedDiffusionModelWrapper
 from ..models.autoencoders import DiffusionAutoencoder
+from ..models.diffusion_prior import PriorType
 from .losses import AuralossLoss, MSELoss, MultiLoss
+from .utils import create_optimizer_from_config, create_scheduler_from_config
 
 from time import time
 
@@ -210,16 +212,19 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
     def __init__(
             self,
             model: ConditionedDiffusionModelWrapper,
-            lr: float = 1e-4,
+            lr: float = None,
             causal_dropout: float = 0.0,
             mask_padding: bool = False,
-            mask_padding_dropout: float = 0.2,
-            use_ema: bool = True
+            mask_padding_dropout: float = 0.0,
+            use_ema: bool = True,
+            log_loss_info: bool = False,
+            optimizer_configs: dict = None,
+            use_reconstruction_loss: bool = False
     ):
         super().__init__()
 
         self.diffusion = model
-        
+
         if use_ema:
             self.diffusion_ema = EMA(
                 self.diffusion.model,
@@ -235,7 +240,6 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         self.mask_padding = mask_padding
         self.mask_padding_dropout = mask_padding_dropout
 
-        self.lr = lr
 
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
@@ -250,10 +254,86 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             )
         ]
 
+        self.use_reconstruction_loss = use_reconstruction_loss
+
+        if use_reconstruction_loss:
+            scales = [2048, 1024, 512, 256, 128, 64, 32]
+            hop_sizes = []
+            win_lengths = []
+            overlap = 0.75
+            for s in scales:
+                hop_sizes.append(int(s * (1 - overlap)))
+                win_lengths.append(s)
+
+            sample_rate = model.sample_rate
+
+            stft_loss_args = {
+                "fft_sizes": scales,
+                "hop_sizes": hop_sizes,
+                "win_lengths": win_lengths,
+                "perceptual_weighting": True
+            }
+
+            out_channels = model.io_channels
+
+            if model.pretransform is not None:
+                out_channels = model.pretransform.io_channels
+
+            self.audio_out_channels = out_channels
+
+            if self.audio_out_channels == 2:
+                self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+                self.lrstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+
+                # Add left and right channel reconstruction losses in addition to the sum and difference
+                self.loss_modules += [
+                    AuralossLoss(self.lrstft, 'audio_reals_left', 'pred_left', name='stft_loss_left', weight=0.05),
+                    AuralossLoss(self.lrstft, 'audio_reals_right', 'pred_right', name='stft_loss_right', weight=0.05),
+                ]
+
+            else:
+                self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+
+            self.loss_modules.append(
+                AuralossLoss(self.sdstft, 'audio_reals', 'audio_pred', name='mrstft_loss', weight=0.1), # Reconstruction loss
+            )
+
         self.losses = MultiLoss(self.loss_modules)
 
+        self.log_loss_info = log_loss_info
+
+        assert lr is not None or optimizer_configs is not None, "Must specify either lr or optimizer_configs in training config"
+
+        if optimizer_configs is None:
+            optimizer_configs = {
+                "diffusion": {
+                    "optimizer": {
+                        "type": "Adam",
+                        "config": {
+                            "lr": lr
+                        }
+                    }
+                }
+            }
+        else:
+            if lr is not None:
+                print(f"WARNING: learning_rate and optimizer_configs both specified in config. Ignoring learning_rate and using optimizer_configs.")
+
+        self.optimizer_configs = optimizer_configs
+
     def configure_optimizers(self):
-        return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
+        diffusion_opt_config = self.optimizer_configs['diffusion']
+        opt_diff = create_optimizer_from_config(diffusion_opt_config['optimizer'], self.diffusion.parameters())
+
+        if "scheduler" in diffusion_opt_config:
+            sched_diff = create_scheduler_from_config(diffusion_opt_config['scheduler'], opt_diff)
+            sched_diff_config = {
+                "scheduler": sched_diff,
+                "interval": "step"
+            }
+            return [opt_diff], [sched_diff_config]
+
+        return [opt_diff]
 
     def training_step(self, batch, batch_idx):
         reals, metadata = batch
@@ -262,6 +342,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
+
+        loss_info = {}
 
         # Draw uniformly distributed continuous timesteps
         t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
@@ -273,6 +355,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         alphas, sigmas = get_alphas_sigmas(t)
 
         diffusion_input = reals
+
+        loss_info["audio_reals"] = diffusion_input
 
         p.tick("setup")
 
@@ -322,17 +406,55 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             v = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0.1, **extra_args)
             p.tick("diffusion")
 
-            loss_info = {
+            loss_info.update({
                 "v": v,
                 "targets": targets,
                 "padding_mask": padding_masks if use_padding_mask else None,
-            }
+            })
+
+            if self.use_reconstruction_loss:
+                pred = noised_inputs * alphas - v * sigmas
+
+                loss_info["pred"] = pred
+
+                if self.diffusion.pretransform is not None:
+                    pred = self.diffusion.pretransform.decode(pred)
+                    loss_info["audio_pred"] = pred
+
+                if self.audio_out_channels == 2:
+                    loss_info["pred_left"] = pred[:, 0:1, :]
+                    loss_info["pred_right"] = pred[:, 1:2, :]
+                    loss_info["audio_reals_left"] = loss_info["audio_reals"][:, 0:1, :]
+                    loss_info["audio_reals_right"] = loss_info["audio_reals"][:, 1:2, :]
 
             loss, losses = self.losses(loss_info)
+
+            if self.log_loss_info:
+                # Loss debugging logs
+                num_loss_buckets = 10
+                bucket_size = 1 / num_loss_buckets
+                loss_all = F.mse_loss(v, targets, reduction="none")
+
+                sigmas = rearrange(self.all_gather(sigmas), "w b c n -> (w b) c n").squeeze()
+
+                # gather loss_all across all GPUs
+                loss_all = rearrange(self.all_gather(loss_all), "w b c n -> (w b) c n")
+
+                # Bucket loss values based on corresponding sigma values, bucketing sigma values by bucket_size
+                loss_all = torch.stack([loss_all[(sigmas >= i) & (sigmas < i + bucket_size)].mean() for i in torch.arange(0, 1, bucket_size).to(self.device)])
+
+                # Log bucketed losses with corresponding sigma bucket values, if it's not NaN
+                debug_log_dict = {
+                    f"model/loss_all_{i/num_loss_buckets:.1f}": loss_all[i].detach() for i in range(num_loss_buckets) if not torch.isnan(loss_all[i])
+                }
+
+                self.log_dict(debug_log_dict)
+
 
         log_dict = {
             'train/loss': loss.detach(),
             'train/std_data': diffusion_input.std(),
+            'train/lr': self.trainer.optimizers[0].param_groups[0]['lr']
         }
 
         for loss_name, loss_value in losses.items():
@@ -970,6 +1092,28 @@ class DiffusionAutoencoderDemoCallback(pl.Callback):
 
         trainer.logger.experiment.log(log_dict)
 
+def create_source_mixture(reals, num_sources=2):
+    # Create a fake mixture source by mixing elements from the training batch together with random offsets
+    source = torch.zeros_like(reals)
+    for i in range(reals.shape[0]):
+        sources_added = 0
+        
+        js = list(range(reals.shape[0]))
+        random.shuffle(js)
+        for j in js:
+            if i == j or (i != j and sources_added < num_sources):
+                # Randomly offset the mixed element between 0 and the length of the source
+                seq_len = reals.shape[2]
+                offset = random.randint(0, seq_len-1)
+                source[i, :, offset:] += reals[j, :, :-offset]
+                if i == j:
+                    # If this is the real one, shift the reals as well to ensure alignment
+                    new_reals = torch.zeros_like(reals[i])
+                    new_reals[:, offset:] = reals[i, :, :-offset]
+                    reals[i] = new_reals
+                sources_added += 1
+
+    return source
 
 class DiffusionPriorTrainingWrapper(pl.LightningModule):
     '''
@@ -982,7 +1126,9 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
             model: ConditionedDiffusionModelWrapper,
             lr: float = 1e-4,
             ema_copy = None,
-            prior_type: tp.Literal["mono_stereo"] = "mono_stereo"
+            prior_type: PriorType = PriorType.MonoToStereo,
+            use_reconstruction_loss: bool = False,
+            log_loss_info: bool = False,
     ):
         super().__init__()
 
@@ -1002,6 +1148,8 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
 
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
+        self.log_loss_info = log_loss_info
+
         loss_modules = [
             MSELoss("v",
                     "targets",
@@ -1010,13 +1158,59 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
             )
         ]
 
+        self.use_reconstruction_loss = use_reconstruction_loss
+
+        if use_reconstruction_loss:
+            scales = [2048, 1024, 512, 256, 128, 64, 32]
+            hop_sizes = []
+            win_lengths = []
+            overlap = 0.75
+            for s in scales:
+                hop_sizes.append(int(s * (1 - overlap)))
+                win_lengths.append(s)
+
+            sample_rate = model.sample_rate
+
+            stft_loss_args = {
+                "fft_sizes": scales,
+                "hop_sizes": hop_sizes,
+                "win_lengths": win_lengths,
+                "perceptual_weighting": True
+            }
+
+            out_channels = model.io_channels
+
+            self.audio_out_channels = out_channels
+
+            if model.pretransform is not None:
+                out_channels = model.pretransform.io_channels
+
+            if self.audio_out_channels == 2:
+                self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+                self.lrstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+
+                # Add left and right channel reconstruction losses in addition to the sum and difference
+                self.loss_modules += [
+                    AuralossLoss(self.lrstft, 'audio_reals_left', 'pred_left', name='stft_loss_left', weight=0.05),
+                    AuralossLoss(self.lrstft, 'audio_reals_right', 'pred_right', name='stft_loss_right', weight=0.05),
+                ]
+
+            else:
+                self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+
+            self.loss_modules.append(
+                AuralossLoss(self.sdstft, 'audio_reals', 'audio_pred', name='mrstft_loss', weight=0.1), # Reconstruction loss
+            )
+
         self.losses = MultiLoss(loss_modules)
+
+        self.prior_type = prior_type
 
     def configure_optimizers(self):
         return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
 
     def training_step(self, batch, batch_idx):
-        reals = batch[0]
+        reals, metadata = batch
 
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
@@ -1025,16 +1219,27 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
 
         loss_info["audio_reals"] = reals
 
-        if self.prior_type == "mono_stereo":
+        if self.prior_type == PriorType.MonoToStereo:
             source = reals.mean(dim=1, keepdim=True).repeat(1, reals.shape[1], 1).to(self.device)
             loss_info["audio_reals_mono"] = source
+        elif self.prior_type == PriorType.SourceSeparation:
+            source = create_source_mixture(reals)
+            loss_info["audio_mixture"] = source
+        else:
+            raise ValueError(f"Unknown prior type {self.prior_type}")
         
         if self.diffusion.pretransform is not None:
             with torch.no_grad():
                 reals = self.diffusion.pretransform.encode(reals)
 
-                if self.prior_type == "mono_stereo":
+                if self.prior_type in [PriorType.MonoToStereo, PriorType.SourceSeparation]:
                     source = self.diffusion.pretransform.encode(source)
+
+        if self.diffusion.conditioner is not None:
+            with torch.cuda.amp.autocast():
+                conditioning = self.diffusion.conditioner(metadata, self.device)
+        else:
+            conditioning = {}
 
         loss_info["reals"] = reals
 
@@ -1053,14 +1258,52 @@ class DiffusionPriorTrainingWrapper(pl.LightningModule):
 
         with torch.cuda.amp.autocast():
             
-            v = self.diffusion(noised_reals, t, cond={"source": [source]})
+            conditioning['source'] = [source]
+
+            v = self.diffusion(noised_reals, t, cond=conditioning, cfg_dropout_prob = 0.1)
             
             loss_info.update({
                 "v": v,
                 "targets": targets
             })
 
+            if self.use_reconstruction_loss:
+                pred = noised_reals * alphas - v * sigmas
+
+                loss_info["pred"] = pred
+
+                if self.diffusion.pretransform is not None:
+                    pred = self.diffusion.pretransform.decode(pred)
+                    loss_info["audio_pred"] = pred
+
+                if self.audio_out_channels == 2:
+                    loss_info["pred_left"] = pred[:, 0:1, :]
+                    loss_info["pred_right"] = pred[:, 1:2, :]
+                    loss_info["audio_reals_left"] = loss_info["audio_reals"][:, 0:1, :]
+                    loss_info["audio_reals_right"] = loss_info["audio_reals"][:, 1:2, :]
+
             loss, losses = self.losses(loss_info)
+
+            if self.log_loss_info:
+                # Loss debugging logs
+                num_loss_buckets = 10
+                bucket_size = 1 / num_loss_buckets
+                loss_all = F.mse_loss(v, targets, reduction="none")
+
+                sigmas = rearrange(self.all_gather(sigmas), "w b c n -> (w b) c n").squeeze()
+
+                # gather loss_all across all GPUs
+                loss_all = rearrange(self.all_gather(loss_all), "w b c n -> (w b) c n")
+
+                # Bucket loss values based on corresponding sigma values, bucketing sigma values by bucket_size
+                loss_all = torch.stack([loss_all[(sigmas >= i) & (sigmas < i + bucket_size)].mean() for i in torch.arange(0, 1, bucket_size).to(self.device)])
+
+                # Log bucketed losses with corresponding sigma bucket values, if it's not NaN
+                debug_log_dict = {
+                    f"model/loss_all_{i/num_loss_buckets:.1f}": loss_all[i].detach() for i in range(num_loss_buckets) if not torch.isnan(loss_all[i])
+                }
+
+                self.log_dict(debug_log_dict)
 
         log_dict = {
             'train/loss': loss.detach(),
@@ -1111,7 +1354,7 @@ class DiffusionPriorDemoCallback(pl.Callback):
         
         self.last_demo_step = trainer.global_step
 
-        demo_reals, _ = next(self.demo_dl)
+        demo_reals, metadata = next(self.demo_dl)
 
         # Remove extra dimension added by WebDataset
         if demo_reals.ndim == 4 and demo_reals.shape[0] == 1:
@@ -1121,17 +1364,29 @@ class DiffusionPriorDemoCallback(pl.Callback):
 
         encoder_input = demo_reals
 
+        if module.diffusion.conditioner is not None:
+            with torch.cuda.amp.autocast():
+                conditioning_tensors = module.diffusion.conditioner(metadata, module.device)
+
+        else:
+            conditioning_tensors = {}
+
+               
         with torch.no_grad() and torch.cuda.amp.autocast():
-            if module.prior_type == "mono_stereo" and encoder_input.shape[1] > 1:
+            if module.prior_type == PriorType.MonoToStereo and encoder_input.shape[1] > 1:
                 source = encoder_input.mean(dim=1, keepdim=True).repeat(1, encoder_input.shape[1], 1).to(module.device)
-            
-                if module.diffusion.pretransform is not None:
-                        source = module.diffusion.pretransform.encode(source)
+            elif module.prior_type == PriorType.SourceSeparation:
+                source = create_source_mixture(encoder_input)
 
             if module.diffusion.pretransform is not None:
-                    encoder_input = module.diffusion.pretransform.encode(encoder_input)
+                encoder_input = module.diffusion.pretransform.encode(encoder_input)
+                source_input = module.diffusion.pretransform.encode(source)
+            else:
+                source_input = source
 
-            fakes = sample(module.diffusion_ema.model, torch.randn_like(encoder_input), self.demo_steps, 0, cond={"source": [source]})
+            conditioning_tensors['source'] = [source_input]
+
+            fakes = sample(module.diffusion_ema.model, torch.randn_like(encoder_input), self.demo_steps, 0, cond=conditioning_tensors)
 
             if module.diffusion.pretransform is not None:
                 fakes = module.diffusion.pretransform.decode(fakes)
@@ -1152,6 +1407,18 @@ class DiffusionPriorDemoCallback(pl.Callback):
                                             sample_rate=self.sample_rate,
                                             caption=f'Reconstructed')
 
-        log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))        
+        log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))   
+
+        #Log the source
+        filename = f'source_{trainer.global_step:08}.wav'
+        source = rearrange(source, 'b d n -> d (b n)')
+        source = source.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+        torchaudio.save(filename, source, self.sample_rate)
+
+        log_dict[f'source'] = wandb.Audio(filename,
+                                            sample_rate=self.sample_rate,
+                                            caption=f'Source')
+
+        log_dict[f'source_melspec_left'] = wandb.Image(audio_spectrogram_image(source))
 
         trainer.logger.experiment.log(log_dict)

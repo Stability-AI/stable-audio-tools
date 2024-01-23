@@ -26,8 +26,14 @@ def main():
 
     args = get_all_args()
 
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    seed = args.seed
+
+    # Set a different seed for each process if using SLURM
+    if os.environ.get("SLURM_PROCID") is not None:
+        seed += int(os.environ.get("SLURM_PROCID"))
+
+    random.seed(seed)
+    torch.manual_seed(seed)
 
     #Get JSON config from args.model_config
     with open(args.model_config) as f:
@@ -45,7 +51,7 @@ def main():
     
     if args.pretransform_ckpt_path:
         model.pretransform.load_state_dict(load_ckpt_state_dict(args.pretransform_ckpt_path))
-                 
+    
     training_wrapper = create_training_wrapper_from_config(model_config, model)
 
     wandb_logger = pl.loggers.WandbLogger(project=args.name)

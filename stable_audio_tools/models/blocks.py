@@ -1,5 +1,6 @@
 from functools import reduce
 import math
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -204,3 +205,27 @@ class AdaRMSNorm(nn.Module):
 
     def forward(self, x, cond):
         return rms_norm(x, self.linear(cond)[:, None, :] + 1, self.eps)
+    
+def normalize(x, eps=1e-4):
+    dim = list(range(1, x.ndim))
+    n = torch.linalg.vector_norm(x, dim=dim, keepdim=True)
+    alpha = np.sqrt(n.numel() / x.numel())
+    return x / torch.add(eps, n, alpha=alpha)
+
+class ForcedWNConv1d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=1):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn([out_channels, in_channels, kernel_size]))
+
+    def forward(self, x):
+        if self.training:
+            with torch.no_grad():
+                self.weight.copy_(normalize(self.weight))
+        
+        fan_in = self.weight[0].numel()
+
+        w = normalize(self.weight) / math.sqrt(fan_in)
+
+        return F.conv1d(x, w, padding='same')
+        
+    

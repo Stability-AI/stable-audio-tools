@@ -5,7 +5,6 @@ import logging, warnings
 import string
 import typing as tp
 import gc
-from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
 
 from .adp import NumberEmbedder
 from ..inference.utils import set_audio_channels
@@ -110,6 +109,7 @@ class CLAPTextConditioner(Conditioner):
             warnings.simplefilter("ignore")
             try:
                 import laion_clap
+                from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
                 
                 model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu')
 
@@ -187,6 +187,7 @@ class CLAPAudioConditioner(Conditioner):
             warnings.simplefilter("ignore")
             try:
                 import laion_clap
+                from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
                 
                 model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu')
 
