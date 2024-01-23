@@ -72,7 +72,14 @@ if __name__ == '__main__':
         
         use_ema = training_config.get("use_ema", True)
         
-        training_wrapper = DiffusionCondTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, use_ema=use_ema, strict=False)
+        training_wrapper = DiffusionCondTrainingWrapper.load_from_checkpoint(
+            args.ckpt_path, 
+            model=model, 
+            use_ema=use_ema, 
+            lr=training_config.get("learning_rate", None),
+            optimizer_configs=training_config.get("optimizer_configs", None),
+            strict=False
+        )
     elif model_type == 'diffusion_cond_inpaint':
         from stable_audio_tools.training.diffusion import DiffusionCondInpaintTrainingWrapper
         training_wrapper = DiffusionCondInpaintTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)

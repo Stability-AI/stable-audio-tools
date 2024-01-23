@@ -417,14 +417,67 @@ class AudioAutoencoder(nn.Module):
 
         return self.encode(audio, **kwargs)
     
-    def decode_audio(self, latents, **kwargs):
+    def decode_audio(self, latents, chunked=False, overlap=32, chunk_size=256, **kwargs):
         '''
-        Decode latents to audio
+        Decode latents to audio. 
+        If chunked is True, split the latents into chunks of a given maximum size chunk_size, with given overlap, both of which are measured in number of latents. 
+        A overlap of zero will cause discontinuity artefacts. Overlap should be => receptive field size. 
+        Every autoencoder will have a different receptive field size, and thus ideal overlap.
+        You can determine it empirically by diffing unchunked vs chunked audio and looking at maximum diff.
+        The final chunk may have a longer overlap in order to keep chunk_size consistent for all chunks.
+        Smaller chunk_size uses less memory, but more compute.
         '''
+        if not chunked:
+            # default behavior. Decode the entire latent in parallel
+            return self.decode(latents, **kwargs)
+        else:
+            # chunked decoding
+            hop_size = chunk_size - overlap
+            total_size = latents.shape[2]
+            batch_size = latents.shape[0]
+            chunks = []
+            for i in range(0, total_size - chunk_size + 1, hop_size):
+                chunk = latents[:,:,i:i+chunk_size]
+                chunks.append(chunk)
+            if i+chunk_size != total_size:
+                # Final chunk
+                chunk = latents[:,:,-chunk_size:]
+                chunks.append(chunk)
+            chunks = torch.stack(chunks)
+            num_chunks = chunks.shape[0]
+            # samples_per_latent is just the downsampling ratio
+            samples_per_latent = self.downsampling_ratio
+            # Create an empty waveform, we will populate it with chunks as decode them
+            y_size = total_size * samples_per_latent
+            y_final = torch.zeros((batch_size,self.out_channels,y_size)).to(latents.device)
+            for i in range(num_chunks):
+                x_chunk = chunks[i,:]
+                # decode the chunk
+                y_chunk = self.decode(x_chunk)
+                # figure out where to put the audio along the time domain
+                if i == num_chunks-1:
+                    # final chunk always goes at the end
+                    t_end = y_size
+                    t_start = t_end - y_chunk.shape[2]
+                else:
+                    t_start = i * hop_size * samples_per_latent
+                    t_end = t_start + chunk_size * samples_per_latent
+                #  remove the edges of the overlaps
+                ol = (overlap//2) * samples_per_latent
+                chunk_start = 0
+                chunk_end = y_chunk.shape[2]
+                if i > 0:
+                    # no overlap for the start of the first chunk
+                    t_start += ol
+                    chunk_start += ol
+                if i < num_chunks-1:
+                    # no overlap for the end of the last chunk
+                    t_end -= ol
+                    chunk_end -= ol
+                # paste the chunked audio into our y_final output audio
+                y_final[:,:,t_start:t_end] = y_chunk[:,:,chunk_start:chunk_end]
+            return y_final
 
-        # TODO: Add chunking logic
-
-        return self.decode(latents, **kwargs)
     
 class DiffusionAutoencoder(AudioAutoencoder):
     def __init__(

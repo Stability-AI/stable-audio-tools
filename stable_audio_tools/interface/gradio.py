@@ -13,7 +13,6 @@ from torchaudio import transforms as T
 
 
 from ..inference.generation import generate_diffusion_cond, generate_diffusion_uncond
-from ..inference.priors import generate_mono_to_stereo
 from ..models.factory import create_model_from_config
 from ..models.pretrained import get_pretrained_model
 from ..models.utils import load_ckpt_state_dict
@@ -557,7 +556,7 @@ def diffusion_prior_process(audio, steps, sampler_type, sigma_min, sigma_max):
 
     audio = audio.unsqueeze(0)
 
-    audio = generate_mono_to_stereo(model, audio, in_sr, steps, sampler_kwargs={"sampler_type": sampler_type, "sigma_min": sigma_min, "sigma_max": sigma_max})
+    audio = model.stereoize(audio, in_sr, steps, sampler_kwargs={"sampler_type": sampler_type, "sigma_min": sigma_min, "sigma_max": sigma_max})
 
     audio = rearrange(audio, "b d n -> d (b n)")
 
