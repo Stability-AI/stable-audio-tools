@@ -157,7 +157,8 @@ def create_training_wrapper_from_config(model_config, model):
             model,
             ema_copy=ema_copy,
             lr=training_config["learning_rate"],
-            use_ema=training_config.get("use_ema", False)
+            use_ema=training_config.get("use_ema", False),
+            optimizer_configs=training_config.get("optimizer_configs", None),
         )
 
     else:
@@ -251,6 +252,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             sample_rate=model_config["sample_rate"],
             demo_cfg_scales=demo_config.get("demo_cfg_scales", [1]),
             demo_conditioning=demo_config.get("demo_cond", None),
+            num_demos=demo_config.get("num_demos", 8),
             **kwargs
         )
     else:

@@ -14,9 +14,17 @@ from torch.nn import functional as F
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 from ..models.lm import AudioLanguageModelWrapper
+from .utils import create_optimizer_from_config, create_scheduler_from_config
 
 class AudioLanguageModelTrainingWrapper(pl.LightningModule):
-    def __init__(self, model: AudioLanguageModelWrapper, lr = 1e-4, use_ema=False, ema_copy=None):
+    def __init__(
+            self, 
+            model: AudioLanguageModelWrapper, 
+            lr = 1e-4, 
+            use_ema=False, 
+            ema_copy=None,
+            optimizer_configs: dict = None,
+        ):
         super().__init__()
 
         self.model = model
@@ -27,13 +35,41 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         if use_ema:
             self.model_ema = EMA(self.model, ema_model=ema_copy, beta=0.99, update_every=10)
 
-        self.lr = lr
+        assert lr is not None or optimizer_configs is not None, "Must specify either lr or optimizer_configs in training config"
+
+        if optimizer_configs is None:
+            optimizer_configs = {
+                "lm": {
+                    "optimizer": {
+                        "type": "AdamW",
+                        "config": {
+                            "lr": lr,
+                            "betas": (0.9, 0.95),
+                            "weight_decay": 0.1
+                        }
+                    }
+                }
+            }
+        else:
+            if lr is not None:
+                print(f"WARNING: learning_rate and optimizer_configs both specified in config. Ignoring learning_rate and using optimizer_configs.")
+
+        self.optimizer_configs = optimizer_configs
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW([*self.model.parameters()], lr=self.lr, betas=(0.9, 0.95), weight_decay=0.1)
+        lm_opt_config = self.optimizer_configs['lm']
+        opt_lm = create_optimizer_from_config(lm_opt_config['optimizer'], self.model.parameters())
 
-        return optimizer
-    
+        if "scheduler" in lm_opt_config:
+            sched_lm = create_scheduler_from_config(lm_opt_config['scheduler'], opt_lm)
+            sched_lm_config = {
+                "scheduler": sched_lm,
+                "interval": "step"
+            }
+            return [opt_lm], [sched_lm_config]
+
+        return [opt_lm]
+        
     # Copied and modified from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/solvers/musicgen.py under MIT license
     # License can be found in LICENSES/LICENSE_META.txt
 
@@ -100,6 +136,7 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
             'train/loss': loss.detach(),
             'train/cross_entropy': cross_entropy.detach(),
             'train/perplexity': torch.exp(cross_entropy).detach(),
+            'train/lr': self.trainer.optimizers[0].param_groups[0]['lr']
         }
 
         for k, ce_q in enumerate(cross_entropy_per_codebook):
@@ -155,14 +192,15 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
         demo_length_tokens = self.demo_samples // module.model.pretransform.downsampling_ratio
 
-        demo_reals = batch[0][:self.num_demos]
+        # demo_reals = batch[0][:self.num_demos]
 
-        demo_reals_tokens = module.model.pretransform.tokenize(demo_reals)
+        # if demo_reals.ndim == 4 and demo_reals.shape[0] == 1:
+        #     demo_reals = demo_reals[0]
 
-        print(f"Demo reals tokens shape: {demo_reals_tokens.shape}")
+        #demo_reals_tokens = module.model.pretransform.tokenize(demo_reals)
 
         # Limit to first 50 tokens
-        demo_reals_tokens = demo_reals_tokens[:, :, :50]
+        #demo_reals_tokens = demo_reals_tokens[:, :, :50]
 
         try:
             print("Getting conditioning")
@@ -174,12 +212,13 @@ class AudioLanguageModelDemoCallback(pl.Callback):
                 with torch.cuda.amp.autocast():
                     print(f"Generating demo for cfg scale {cfg_scale}")
                     fakes = model.generate_audio(
-                        #batch_size=self.num_demos,
+                        batch_size=self.num_demos,
                         max_gen_len=demo_length_tokens, 
                         conditioning=self.demo_conditioning, 
-                        init_data = demo_reals_tokens,
+#                       init_data = demo_reals_tokens,
                         cfg_scale=cfg_scale,
-                        temp=0
+                        temp=1.0,
+                        top_p=0.95
                     )
 
                 # Put the demos together

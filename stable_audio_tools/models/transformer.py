@@ -373,7 +373,7 @@ class Attention(nn.Module):
         mask = None,
         context_mask = None,
         rotary_pos_emb = None,
-        causal = False
+        causal = None
     ):
         h, kv_h, has_context = self.num_heads, self.kv_heads, context is not None
 

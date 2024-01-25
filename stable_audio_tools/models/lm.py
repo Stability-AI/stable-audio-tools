@@ -8,7 +8,7 @@ from torch import nn
 from .autoencoders import AudioAutoencoder
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .factory import create_pretransform_from_config
-from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone, MambaAudioLMBackbone
+from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone, MambaAudioLMBackbone, ContinuousTransformerAudioLMBackbone
 from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform, AudiocraftCompressionPretransform
 from .utils import multinomial, sample_top_k, sample_top_p
 
@@ -463,6 +463,8 @@ def create_audio_lm_from_config(config):
         backbone = XTransformersAudioLMBackbone(**lm_model_config)
     elif lm_type == "mamba":
         backbone = MambaAudioLMBackbone(**lm_model_config)
+    elif lm_type == "continuous_transformer":
+        backbone = ContinuousTransformerAudioLMBackbone(**lm_model_config)
     else:
         raise NotImplementedError(f"Unrecognized lm type {lm_type}")
 
