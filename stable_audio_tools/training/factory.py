@@ -156,7 +156,7 @@ def create_training_wrapper_from_config(model_config, model):
         return AudioLanguageModelTrainingWrapper(
             model,
             ema_copy=ema_copy,
-            lr=training_config["learning_rate"],
+            lr=training_config.get("learning_rate", None),
             use_ema=training_config.get("use_ema", False),
             optimizer_configs=training_config.get("optimizer_configs", None),
         )

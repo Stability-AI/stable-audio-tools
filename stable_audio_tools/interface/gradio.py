@@ -11,7 +11,6 @@ from safetensors.torch import load_file
 from torch.nn import functional as F
 from torchaudio import transforms as T
 
-
 from ..inference.generation import generate_diffusion_cond, generate_diffusion_uncond
 from ..models.factory import create_model_from_config
 from ..models.pretrained import get_pretrained_model
@@ -287,6 +286,40 @@ def generate_uncond(
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
     return ("output.wav", [audio_spectrogram, *preview_images])
+
+def generate_lm(
+        temperature=1.0,
+        top_p=0.95,
+        top_k=0,    
+        batch_size=1,
+        ):
+
+    
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+    #Get the device from the model
+    device = next(model.parameters()).device
+
+    audio = model.generate_audio(
+        batch_size=batch_size,
+        max_gen_len = sample_size//model.pretransform.downsampling_ratio,
+        conditioning=None,
+        temp=temperature,
+        top_p=top_p,
+        top_k=top_k,
+    )
+
+    audio = rearrange(audio, "b d n -> d (b n)")
+
+    audio = audio.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+
+    torchaudio.save("output.wav", audio, sample_rate)
+
+    audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
+
+    return ("output.wav", [audio_spectrogram])
 
 
 def create_uncond_sampling_ui(model_config):   
@@ -581,6 +614,31 @@ def create_diffusion_prior_ui(model_config):
 
     return ui
 
+def create_lm_ui(model_config):
+    with gr.Blocks() as ui:
+        output_audio = gr.Audio(label="Output audio", interactive=False)
+        audio_spectrogram_output = gr.Gallery(label="Output spectrogram", show_label=False)
+
+        # Sampling params
+        with gr.Row():
+            temperature_slider = gr.Slider(minimum=0, maximum=5, step=0.01, value=1.0, label="Temperature")
+            top_p_slider = gr.Slider(minimum=0, maximum=1, step=0.01, value=0.95, label="Top p")
+            top_k_slider = gr.Slider(minimum=0, maximum=100, step=1, value=0, label="Top k")
+
+        generate_button = gr.Button("Generate", variant='primary', scale=1)
+        generate_button.click(
+            fn=generate_lm, 
+            inputs=[
+                temperature_slider, 
+                top_p_slider, 
+                top_k_slider
+            ], 
+            outputs=[output_audio, audio_spectrogram_output],
+            api_name="generate"
+        )
+
+    return ui
+
 def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None):
 
     assert (pretrained_name is not None) ^ (model_config_path is not None and ckpt_path is not None), "Must specify either pretrained name or provide a model config and checkpoint, but not both"
@@ -605,5 +663,7 @@ def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pret
         ui = create_autoencoder_ui(model_config)
     elif model_type == "diffusion_prior":
         ui = create_diffusion_prior_ui(model_config)
+    elif model_type == "lm":
+        ui = create_lm_ui(model_config)
         
     return ui

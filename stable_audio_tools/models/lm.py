@@ -381,6 +381,9 @@ class AudioLanguageModelWrapper(nn.Module):
                 gen_sequence[..., offset:offset+1]
             )
 
+            # Only update the offset if caching is being used
+            #prev_offset = offset
+
             if callback is not None:
                 # Callback to report progress
                 # Pass in the offset relative to the start of the sequence, and the length of the current sequence

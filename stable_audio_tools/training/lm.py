@@ -9,6 +9,7 @@ import wandb
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 from ema_pytorch import EMA
 from einops import rearrange
+from safetensors.torch import save_file
 from torch import optim
 from torch.nn import functional as F
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
@@ -150,13 +151,15 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         if self.model_ema is not None:
             self.model_ema.update()
 
-    def export_model(self, path):
+    def export_model(self, path, use_safetensors=False):
         
         model = self.model_ema.ema_model if self.model_ema is not None else self.model
 
-        export_state_dict = {"state_dict": model.state_dict()}
+        if use_safetensors:
+            save_file(model.state_dict(), path)
+        else:
+            torch.save({"state_dict": model.state_dict()}, path)
         
-        torch.save(export_state_dict, path)
 
 class AudioLanguageModelDemoCallback(pl.Callback):
     def __init__(self, 
