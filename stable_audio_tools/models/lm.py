@@ -360,6 +360,10 @@ class AudioLanguageModelWrapper(nn.Module):
         prev_offset = 0
         gen_sequence_len = gen_sequence.shape[-1]
 
+        # Reset generation cache
+        if self.lm.backbone.use_generation_cache:
+            self.lm.backbone.reset_generation_cache(max_gen_len, batch_size)
+
         for offset in trange(start_offset_sequence, gen_sequence_len):
 
             # Get the full sequence up to the current offset
@@ -382,7 +386,10 @@ class AudioLanguageModelWrapper(nn.Module):
             )
 
             # Only update the offset if caching is being used
-            #prev_offset = offset
+            if self.lm.backbone.use_generation_cache:
+                prev_offset = offset
+
+                self.lm.backbone.update_generation_cache(offset)
 
             if callback is not None:
                 # Callback to report progress

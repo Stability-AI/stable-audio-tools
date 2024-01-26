@@ -2,19 +2,22 @@ import torch
 from torch import nn
 from x_transformers import ContinuousTransformerWrapper, Decoder
 
-from .mamba_lm import MambaModel
+from .mamba_lm import MambaModel 
+from mamba_ssm.utils.generation import InferenceParams
 from .transformer import ContinuousTransformer
 
 # Interface for backbone of a language model
 # Handles conditioning and cross-attention
 # Does not have to deal with patterns or quantizer heads
 class AudioLMBackbone(nn.Module):
-    def __init__(self, embed_dim: int, **kwargs):
+    def __init__(self, embed_dim: int, use_generation_cache=False, **kwargs):
         super().__init__()
 
         self.embed_dim = embed_dim
+        self.use_generation_cache = use_generation_cache
 
-    def forward(self, 
+    def forward(
+        self, 
         x, 
         cross_attn_cond=None, 
         prepend_cond=None, 
@@ -22,6 +25,19 @@ class AudioLMBackbone(nn.Module):
         **kwargs
         ):
         raise NotImplementedError
+    
+    def reset_generation_cache(
+        self,
+        max_seq_len, 
+        batch_size
+    ):
+        pass
+
+    def update_generation_cache(
+        self,
+        seqlen_offset
+    ):
+        pass
 
 class XTransformersAudioLMBackbone(AudioLMBackbone):
     def __init__(self,
@@ -141,7 +157,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
                  embed_dim: int,
                  prepend_cond_dim: int = 0,
                  **kwargs):
-        super().__init__(embed_dim=embed_dim)
+        super().__init__(embed_dim=embed_dim, use_generation_cache=True)
 
         # Embeddings are done in the AudioLanguageModel, so we use the continuous-input transformer
         self.model = MambaModel(
@@ -157,6 +173,14 @@ class MambaAudioLMBackbone(AudioLMBackbone):
                 nn.Linear(embed_dim, embed_dim, bias=False)
             )
 
+        self.inference_params = None
+
+    def reset_generation_cache(self, max_seq_len, batch_size):
+        self.inference_params = InferenceParams(max_seqlen=max_seq_len, max_batch_size=batch_size)
+
+    def update_generation_cache(self, seqlen_offset):
+        self.inference_params.seqlen_offset = seqlen_offset
+
     def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None):
 
         prepend_length = 0
@@ -167,4 +191,4 @@ class MambaAudioLMBackbone(AudioLMBackbone):
 
             x = torch.cat([prepend_cond, x], dim=1)
 
-        return self.model(x)[:, prepend_length:, :]
+        return self.model(x, inference_params=self.inference_params)[:, prepend_length:, :]
