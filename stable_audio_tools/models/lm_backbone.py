@@ -22,6 +22,7 @@ class AudioLMBackbone(nn.Module):
         cross_attn_cond=None, 
         prepend_cond=None, 
         prepend_cond_mask=None,
+        use_cache=False,
         **kwargs
         ):
         raise NotImplementedError
@@ -81,7 +82,7 @@ class XTransformersAudioLMBackbone(AudioLMBackbone):
                 nn.Linear(embed_dim, embed_dim, bias=False)
             )
 
-    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None):
+    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, use_cache=False):
 
         prepend_length = 0
         if prepend_cond is not None:
@@ -134,7 +135,7 @@ class ContinuousTransformerAudioLMBackbone(AudioLMBackbone):
                 nn.Linear(embed_dim, embed_dim, bias=False)
             )
 
-    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None):
+    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, use_cache=False):
 
         prepend_length = 0
         if prepend_cond is not None:
@@ -183,7 +184,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
     def update_generation_cache(self, seqlen_offset):
         self.inference_params.seqlen_offset = seqlen_offset
 
-    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None):
+    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, use_cache=False):
 
         prepend_length = 0
         if prepend_cond is not None:
@@ -193,4 +194,4 @@ class MambaAudioLMBackbone(AudioLMBackbone):
 
             x = torch.cat([prepend_cond, x], dim=1)
 
-        return self.model(x, inference_params=self.inference_params)[:, prepend_length:, :]
+        return self.model(x, inference_params=self.inference_params if use_cache else None)[:, prepend_length:, :]
