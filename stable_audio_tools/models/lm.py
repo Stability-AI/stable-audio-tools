@@ -63,7 +63,8 @@ class AudioLanguageModel(nn.Module):
             sequence: torch.Tensor, #[batch, seq_len, 
             prepend_cond=None, #[batch, seq, channels]
             prepend_cond_mask=None,
-            cross_attn_cond=None, #[batch, seq, channels]
+            cross_attn_cond=None, #[batch, seq, channels],
+            **kwargs
         ):
 
         batch, num_quantizers, seq_len = sequence.shape
@@ -76,7 +77,8 @@ class AudioLanguageModel(nn.Module):
             backbone_input,
             cross_attn_cond=cross_attn_cond,
             prepend_cond=prepend_cond,
-            prepend_cond_mask=prepend_cond_mask
+            prepend_cond_mask=prepend_cond_mask,
+            **kwargs
         ) # [batch, seq_len, embed_dim]
 
         # Run output through quantizer heads
@@ -373,6 +375,7 @@ class AudioLanguageModelWrapper(nn.Module):
             next_token = self._sample_next_token(
                 curr_sequence,
                 conditioning_tensors=conditioning_tensors,
+                use_cache=use_cache,
                 **kwargs
             )
 

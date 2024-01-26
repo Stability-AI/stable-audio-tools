@@ -114,24 +114,22 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        with torch.cuda.amp.autocast():
+        codes = self.model.pretransform.tokenize(reals)
+    
+        condition_tensors = None
 
-            codes = self.model.pretransform.tokenize(reals)
-     
-            condition_tensors = None
+        # If the model is conditioned, get the conditioning tensors
+        if self.model.conditioner is not None:
+            condition_tensors = self.model.conditioner(metadata, self.device)
 
-            # If the model is conditioned, get the conditioning tensors
-            if self.model.conditioner is not None:
-                condition_tensors = self.model.conditioner(metadata, self.device)
+        lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.1)
 
-            lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.1)
+        logits = lm_output.logits # [b, k, t, c]
+        logits_mask = lm_output.mask # [b, k, t]
 
-            logits = lm_output.logits # [b, k, t, c]
-            logits_mask = lm_output.mask # [b, k, t]
+        cross_entropy, cross_entropy_per_codebook = self._compute_cross_entropy(logits, codes, logits_mask)
 
-            cross_entropy, cross_entropy_per_codebook = self._compute_cross_entropy(logits, codes, logits_mask)
-
-            loss = cross_entropy
+        loss = cross_entropy
 
         log_dict = {
             'train/loss': loss.detach(),
@@ -212,17 +210,16 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
                 model = module.model # module.model_ema.ema_model if module.model_ema is not None else module.model
 
-                with torch.cuda.amp.autocast():
-                    print(f"Generating demo for cfg scale {cfg_scale}")
-                    fakes = model.generate_audio(
-                        batch_size=self.num_demos,
-                        max_gen_len=demo_length_tokens, 
-                        conditioning=self.demo_conditioning, 
+                print(f"Generating demo for cfg scale {cfg_scale}")
+                fakes = model.generate_audio(
+                    batch_size=self.num_demos,
+                    max_gen_len=demo_length_tokens, 
+                    conditioning=self.demo_conditioning, 
 #                       init_data = demo_reals_tokens,
-                        cfg_scale=cfg_scale,
-                        temp=1.0,
-                        top_p=0.95
-                    )
+                    cfg_scale=cfg_scale,
+                    temp=1.0,
+                    top_p=0.95
+                )
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')

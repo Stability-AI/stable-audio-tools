@@ -302,15 +302,15 @@ def generate_lm(
     #Get the device from the model
     device = next(model.parameters()).device
 
-    with torch.cuda.amp.autocast():
-        audio = model.generate_audio(
-            batch_size=batch_size,
-            max_gen_len = sample_size//model.pretransform.downsampling_ratio,
-            conditioning=None,
-            temp=temperature,
-            top_p=top_p,
-            top_k=top_k,
-        )
+    audio = model.generate_audio(
+        batch_size=batch_size,
+        max_gen_len = sample_size//model.pretransform.downsampling_ratio,
+        conditioning=None,
+        temp=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        use_cache=True
+    )
 
     audio = rearrange(audio, "b d n -> d (b n)")
 
