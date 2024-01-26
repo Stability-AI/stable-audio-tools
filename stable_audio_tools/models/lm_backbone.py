@@ -177,6 +177,8 @@ class MambaAudioLMBackbone(AudioLMBackbone):
 
     def reset_generation_cache(self, max_seq_len, batch_size):
         self.inference_params = InferenceParams(max_seqlen=max_seq_len, max_batch_size=batch_size)
+        dtype = torch.float16 if torch.is_autocast_enabled() else torch.float32
+        self.inference_params.key_value_memory_dict = self.model.allocate_inference_cache(batch_size, max_seq_len, dtype=dtype)
 
     def update_generation_cache(self, seqlen_offset):
         self.inference_params.seqlen_offset = seqlen_offset
