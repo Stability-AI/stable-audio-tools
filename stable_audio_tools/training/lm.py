@@ -114,22 +114,24 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        codes = self.model.pretransform.tokenize(reals)
-    
-        condition_tensors = None
+        with torch.cuda.amp.autocast():
 
-        # If the model is conditioned, get the conditioning tensors
-        if self.model.conditioner is not None:
-            condition_tensors = self.model.conditioner(metadata, self.device)
+            codes = self.model.pretransform.tokenize(reals)
+     
+            condition_tensors = None
 
-        lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.1)
+            # If the model is conditioned, get the conditioning tensors
+            if self.model.conditioner is not None:
+                condition_tensors = self.model.conditioner(metadata, self.device)
 
-        logits = lm_output.logits # [b, k, t, c]
-        logits_mask = lm_output.mask # [b, k, t]
+            lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.1)
 
-        cross_entropy, cross_entropy_per_codebook = self._compute_cross_entropy(logits, codes, logits_mask)
+            logits = lm_output.logits # [b, k, t, c]
+            logits_mask = lm_output.mask # [b, k, t]
 
-        loss = cross_entropy
+            cross_entropy, cross_entropy_per_codebook = self._compute_cross_entropy(logits, codes, logits_mask)
+
+            loss = cross_entropy
 
         log_dict = {
             'train/loss': loss.detach(),
