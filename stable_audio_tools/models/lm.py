@@ -311,6 +311,7 @@ class AudioLanguageModelWrapper(nn.Module):
         conditioning_tensors: tp.Optional[tp.Dict[str, tp.Any]] = None,
         callback: tp.Optional[tp.Callable[[int, int], None]] = None,
         use_cache: bool = True,
+        cfg_scale: float = 1.0,
         **kwargs
     ):
         device = next(self.parameters()).device
@@ -365,7 +366,7 @@ class AudioLanguageModelWrapper(nn.Module):
 
         # Reset generation cache
         if use_cache and self.lm.backbone.use_generation_cache:
-            self.lm.backbone.reset_generation_cache(max_gen_len, batch_size)
+            self.lm.backbone.reset_generation_cache(max_gen_len, batch_size if cfg_scale == 1.0 else batch_size * 2)
 
         for offset in trange(start_offset_sequence, gen_sequence_len):
 
@@ -376,6 +377,7 @@ class AudioLanguageModelWrapper(nn.Module):
                 curr_sequence,
                 conditioning_tensors=conditioning_tensors,
                 use_cache=use_cache,
+                cfg_scale=cfg_scale,
                 **kwargs
             )
 

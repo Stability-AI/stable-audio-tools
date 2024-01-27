@@ -231,7 +231,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
             # Second iteration, first time using the step() function, we need to capture the graph here
             self.init_graph(x)
 
-        if use_cache and self.cuda_graph_captured:
+        if use_cache and self.cuda_graph_captured and self.inference_params.seqlen_offset > 0:
             self.captured_x.copy_(x)
             self.cuda_graph.replay()
             return self.captured_logits.clone()
