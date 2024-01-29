@@ -26,6 +26,11 @@ def multinomial(input: torch.Tensor, num_samples: int, replacement=False, *, gen
             sampled from the multinomial probability distribution
             located in the last dimension of tensor input.
     """
+
+    if num_samples == 1:
+        q = torch.empty_like(input).exponential_(1, generator=generator)
+        return torch.argmax(input / q, dim=-1, keepdim=True).to(torch.int64)
+
     input_ = input.reshape(-1, input.shape[-1])
     output_ = torch.multinomial(input_, num_samples=num_samples, replacement=replacement, generator=generator)
     output = output_.reshape(*list(input.shape[:-1]), -1)

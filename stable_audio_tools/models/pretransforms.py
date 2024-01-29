@@ -1,3 +1,5 @@
+import torch
+
 from einops import rearrange
 from torch import nn
 
@@ -208,6 +210,8 @@ class AudiocraftCompressionPretransform(Pretransform):
 
         self.codebook_size = self.model.cardinality
 
+        self.model.to(torch.float16).eval().requires_grad_(False)
+
     def encode(self, x):
 
         assert False, "Audiocraft compression models do not support continuous encoding"
@@ -238,7 +242,9 @@ class AudiocraftCompressionPretransform(Pretransform):
         # return self.model.decode(z)
 
     def tokenize(self, x):
-        return self.model.encode(x)[0]
+        with torch.cuda.amp.autocast(enabled=False):
+            return self.model.encode(x.to(torch.float16))[0]
     
     def decode_tokens(self, tokens):
-        return self.model.decode(tokens)
+        with torch.cuda.amp.autocast(enabled=False):
+            return self.model.decode(tokens)
