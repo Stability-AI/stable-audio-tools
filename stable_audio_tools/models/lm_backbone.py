@@ -22,6 +22,7 @@ class AudioLMBackbone(nn.Module):
         cross_attn_cond=None, 
         prepend_cond=None, 
         prepend_cond_mask=None,
+        global_cond=None,
         use_cache=False,
         **kwargs
         ):
@@ -83,7 +84,7 @@ class XTransformersAudioLMBackbone(AudioLMBackbone):
                 nn.Linear(embed_dim, embed_dim, bias=False)
             )
 
-    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, use_cache=False):
+    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, global_cond=None, use_cache=False):
 
         prepend_length = 0
         if prepend_cond is not None:
@@ -136,7 +137,7 @@ class ContinuousTransformerAudioLMBackbone(AudioLMBackbone):
                 nn.Linear(embed_dim, embed_dim, bias=False)
             )
 
-    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, use_cache=False):
+    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, global_cond=None, use_cache=False):
 
         prepend_length = 0
         if prepend_cond is not None:
@@ -158,6 +159,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
     def __init__(self,
                  embed_dim: int,
                  prepend_cond_dim: int = 0,
+                 global_cond_dim: int = 0,
                  **kwargs):
         super().__init__(embed_dim=embed_dim, use_generation_cache=True)
 
@@ -171,6 +173,14 @@ class MambaAudioLMBackbone(AudioLMBackbone):
             # Prepend conditioning
             self.to_prepend_embed = nn.Sequential(
                 nn.Linear(prepend_cond_dim, embed_dim, bias=False),
+                nn.SiLU(),
+                nn.Linear(embed_dim, embed_dim, bias=False)
+            )
+
+        if global_cond_dim > 0:
+            # Global conditioning
+            self.to_global_embed = nn.Sequential(
+                nn.Linear(global_cond_dim, embed_dim, bias=False),
                 nn.SiLU(),
                 nn.Linear(embed_dim, embed_dim, bias=False)
             )
@@ -217,7 +227,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
 
         self.cuda_graph_captured = True
 
-    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, use_cache=False):
+    def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, global_cond=None, use_cache=False):
 
         prepend_length = 0
         if prepend_cond is not None and not (use_cache and self.inference_params.seqlen_offset > 0):

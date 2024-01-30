@@ -136,6 +136,7 @@ class AudioLanguageModelWrapper(nn.Module):
             conditioner: MultiConditioner = None,
             cross_attn_cond_ids: tp.List[str] = [],
             prepend_cond_ids: tp.List[str] = [],
+            global_cond_ids: tp.List[str] = []
         ):
         super().__init__()
         
@@ -166,11 +167,13 @@ class AudioLanguageModelWrapper(nn.Module):
 
         self.cross_attn_cond_ids = cross_attn_cond_ids
         self.prepend_cond_ids = prepend_cond_ids
+        self.global_cond_ids = global_cond_ids
     
     def get_conditioning_inputs(self, cond: tp.Dict[str, tp.Any], negative=False):
         cross_attention_input = None
         prepend_cond = None
         prepend_cond_mask = None
+        global_cond = None
 
         if len(self.cross_attn_cond_ids) > 0:
             # Concatenate all cross-attention inputs over the sequence dimension
@@ -183,15 +186,26 @@ class AudioLanguageModelWrapper(nn.Module):
             prepend_cond = torch.cat([cond[key][0] for key in self.prepend_cond_ids], dim=1)
             prepend_cond_mask = torch.cat([cond[key][1] for key in self.prepend_cond_ids], dim=1)
 
+        if len(self.global_cond_ids) > 0:
+            # Concatenate all global conditioning inputs over the channel dimension
+            # Assumes that the global conditioning inputs are of shape (batch, channels)
+            global_cond = torch.cat([cond[key][0] for key in self.global_cond_ids], dim=-1)
+            if len(global_cond.shape) == 3:
+                global_cond = global_cond.squeeze(1)
+
         if negative:
             return {
-                "negative_cross_attn_cond": cross_attention_input
+                "negative_cross_attn_cond": cross_attention_input,
+                "negative_prepend_cond": prepend_cond,
+                "negative_prepend_cond_mask": prepend_cond_mask,
+                "negative_global_cond": global_cond
             }
         else:
             return {
                 "cross_attn_cond": cross_attention_input,
                 "prepend_cond": prepend_cond,
-                "prepend_cond_mask": prepend_cond_mask
+                "prepend_cond_mask": prepend_cond_mask,
+                "global_cond": global_cond
             }
         
     def compute_logits(
@@ -214,6 +228,7 @@ class AudioLanguageModelWrapper(nn.Module):
         cross_attn_cond = conditioning_inputs["cross_attn_cond"]
         prepend_cond = conditioning_inputs["prepend_cond"]
         prepend_cond_mask = conditioning_inputs["prepend_cond_mask"]
+        global_cond = conditioning_inputs["global_cond"]
 
         if cfg_dropout_prob > 0.0:
             if cross_attn_cond is not None:
@@ -226,7 +241,12 @@ class AudioLanguageModelWrapper(nn.Module):
                 dropout_mask = torch.bernoulli(torch.full((prepend_cond.shape[0], 1, 1), cfg_dropout_prob, device=prepend_cond.device)).to(torch.bool)
                 prepend_cond = torch.where(dropout_mask, null_embed, prepend_cond)
 
-        return self.lm.compute_logits(codes, cross_attn_cond=cross_attn_cond, prepend_cond=prepend_cond, prepend_cond_mask=prepend_cond_mask, **kwargs)
+            if global_cond is not None:
+                null_embed = torch.zeros_like(global_cond, device=global_cond.device)
+                dropout_mask = torch.bernoulli(torch.full((global_cond.shape[0], 1), cfg_dropout_prob, device=global_cond.device)).to(torch.bool)
+                global_cond = torch.where(dropout_mask, null_embed, global_cond)
+
+        return self.lm.compute_logits(codes, cross_attn_cond=cross_attn_cond, prepend_cond=prepend_cond, prepend_cond_mask=prepend_cond_mask, global_cond=global_cond, **kwargs)
     
     def _sample_next_token(
             self, 
@@ -234,6 +254,7 @@ class AudioLanguageModelWrapper(nn.Module):
             conditioning_tensors=None, 
             cross_attn_use_cfg=True,
             prepend_use_cfg=True,
+            global_use_cfg=True,
             cfg_scale=1.0,
             top_k=250,
             top_p=0.0,
@@ -253,6 +274,7 @@ class AudioLanguageModelWrapper(nn.Module):
         cross_attn_cond = conditioning_inputs["cross_attn_cond"]
         prepend_cond = conditioning_inputs["prepend_cond"]
         prepend_cond_mask = conditioning_inputs["prepend_cond_mask"]
+        global_cond = conditioning_inputs["global_cond"]
 
         if cfg_scale != 1.0:
             
@@ -272,7 +294,12 @@ class AudioLanguageModelWrapper(nn.Module):
                 if prepend_cond_mask is not None:
                     prepend_cond_mask = torch.cat([prepend_cond_mask, prepend_cond_mask], dim=0)
 
-        logits = self.lm(sequence, cross_attn_cond=cross_attn_cond, prepend_cond=prepend_cond, prepend_cond_mask=prepend_cond_mask, **kwargs)
+            if global_cond is not None and global_use_cfg:
+                null_embed = torch.zeros_like(global_cond, device=global_cond.device)
+
+                global_cond = torch.cat([global_cond, null_embed], dim=0)
+
+        logits = self.lm(sequence, cross_attn_cond=cross_attn_cond, prepend_cond=prepend_cond, prepend_cond_mask=prepend_cond_mask, global_cond=global_cond, **kwargs)
 
         if cfg_scale != 1.0:
             cond_logits, uncond_logits = logits.chunk(2, dim=0)
@@ -468,6 +495,7 @@ def create_audio_lm_from_config(config):
 
     cross_attn_cond_ids = lm_config.get('cross_attention_cond_ids', [])
     prepend_cond_ids = lm_config.get('prepend_cond_ids', [])
+    global_cond_ids = lm_config.get('global_cond_ids', [])
 
     lm_type = lm_config.get("type", None)
     lm_model_config = lm_config.get("config", None)
@@ -498,7 +526,8 @@ def create_audio_lm_from_config(config):
         sample_rate=sample_rate,
         min_input_length=min_input_length,
         cross_attn_cond_ids=cross_attn_cond_ids,
-        prepend_cond_ids=prepend_cond_ids
+        prepend_cond_ids=prepend_cond_ids,
+        global_cond_ids=global_cond_ids
     )
 
     return model

@@ -139,9 +139,13 @@ class MambaModel(nn.Module):
             for i, layer in enumerate(self.layers)
         }
 
-    def forward(self, x, inference_params=None):
+    def forward(self, x, global_cond=None, inference_params=None):
 
         residual = None
+
+        if global_cond is not None:
+            # global_cond should be in shape (batch_size, d_model)
+            x = x + global_cond.unsqueeze(1)            
 
         for layer in self.layers:
             x, residual = layer(
