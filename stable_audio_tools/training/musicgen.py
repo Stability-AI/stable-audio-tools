@@ -213,7 +213,7 @@ class MusicGenDemoCallback(pl.Callback):
                 log_dict = {}
                 
                 filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
-                fakes = fakes.clamp(-1, 1).mul(32766).to(torch.int16).cpu()
+                fakes = fakes.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
                 torchaudio.save(filename, fakes, self.sample_rate)
 
                 log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,

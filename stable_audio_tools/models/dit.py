@@ -201,7 +201,7 @@ class DiffusionTransformer(nn.Module):
             extra_args["global_cond"] = global_embed
 
         if self.patch_size > 1:
-            x = rearrange(x, "b (t p) c -> b t (p c)", p=self.patch_size)
+            x = rearrange(x, "b (t p) c -> b t (c p)", p=self.patch_size)
 
         if self.transformer_type == "x-transformers" or self.transformer_type == "continuous_transformer":
             output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, **extra_args, **kwargs)

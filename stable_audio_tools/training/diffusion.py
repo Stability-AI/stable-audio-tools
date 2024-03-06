@@ -549,7 +549,7 @@ class DiffusionCondDemoCallback(pl.Callback):
                 audio_inputs = rearrange(audio_inputs, 'b d n -> d (b n)')
 
                 filename = f'demo_audio_cond_{trainer.global_step:08}.wav'
-                audio_inputs = audio_inputs.div(torch.max(torch.abs(audio_inputs))).mul(32767).to(torch.int16).cpu()
+                audio_inputs = audio_inputs.to(torch.float32).mul(32767).to(torch.int16).cpu()
                 torchaudio.save(filename, audio_inputs, self.sample_rate)
                 log_dict[f'demo_audio_cond'] = wandb.Audio(filename, sample_rate=self.sample_rate, caption="Audio conditioning")
                 log_dict[f"demo_audio_cond_melspec_left"] = wandb.Image(audio_spectrogram_image(audio_inputs))
@@ -836,7 +836,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
                 log_dict = {}
                 
                 filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
-                fakes = fakes.div(torch.max(torch.abs(fakes))).mul(32767).to(torch.int16).cpu()
+                fakes = fakes.to(torch.float32).div(torch.max(torch.abs(fakes))).mul(32767).to(torch.int16).cpu()
                 torchaudio.save(filename, fakes, self.sample_rate)
 
                 log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,
@@ -1067,7 +1067,7 @@ class DiffusionAutoencoderDemoCallback(pl.Callback):
         log_dict = {}
         
         filename = f'recon_{trainer.global_step:08}.wav'
-        reals_fakes = reals_fakes.div(torch.max(torch.abs(reals_fakes))).mul(32767).to(torch.int16).cpu()
+        reals_fakes = reals_fakes.to(torch.float32).div(torch.max(torch.abs(reals_fakes))).mul(32767).to(torch.int16).cpu()
         torchaudio.save(filename, reals_fakes, self.sample_rate)
 
         log_dict[f'recon'] = wandb.Audio(filename,
@@ -1084,7 +1084,7 @@ class DiffusionAutoencoderDemoCallback(pl.Callback):
                 initial_latents = module.diffae_ema.ema_model.pretransform.encode(encoder_input)
                 first_stage_fakes = module.diffae_ema.ema_model.pretransform.decode(initial_latents)
                 first_stage_fakes = rearrange(first_stage_fakes, 'b d n -> d (b n)')
-                first_stage_fakes = first_stage_fakes.div(torch.max(torch.abs(first_stage_fakes))).to(torch.int16).cpu()
+                first_stage_fakes = first_stage_fakes.to(torch.float32).mul(32767).to(torch.int16).cpu()
                 first_stage_filename = f'first_stage_{trainer.global_step:08}.wav'
                 torchaudio.save(first_stage_filename, first_stage_fakes, self.sample_rate)
 
@@ -1407,7 +1407,7 @@ class DiffusionPriorDemoCallback(pl.Callback):
         log_dict = {}
         
         filename = f'recon_{trainer.global_step:08}.wav'
-        reals_fakes = reals_fakes.div(torch.max(torch.abs(reals_fakes))).mul(32767).to(torch.int16).cpu()
+        reals_fakes = reals_fakes.to(torch.float32).div(torch.max(torch.abs(reals_fakes))).mul(32767).to(torch.int16).cpu()
         torchaudio.save(filename, reals_fakes, self.sample_rate)
 
         log_dict[f'recon'] = wandb.Audio(filename,
@@ -1419,7 +1419,7 @@ class DiffusionPriorDemoCallback(pl.Callback):
         #Log the source
         filename = f'source_{trainer.global_step:08}.wav'
         source = rearrange(source, 'b d n -> d (b n)')
-        source = source.div(torch.max(torch.abs(source))).mul(32767).to(torch.int16).cpu()
+        source = source.to(torch.float32).mul(32767).to(torch.int16).cpu()
         torchaudio.save(filename, source, self.sample_rate)
 
         log_dict[f'source'] = wandb.Audio(filename,
