@@ -427,7 +427,7 @@ class AutoencoderDemoCallback(pl.Callback):
             log_dict = {}
             
             filename = f'recon_{trainer.global_step:08}.wav'
-            reals_fakes = reals_fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+            reals_fakes = reals_fakes.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
             torchaudio.save(filename, reals_fakes, self.sample_rate)
 
             log_dict[f'recon'] = wandb.Audio(filename,

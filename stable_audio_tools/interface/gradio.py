@@ -11,7 +11,6 @@ from safetensors.torch import load_file
 from torch.nn import functional as F
 from torchaudio import transforms as T
 
-
 from ..inference.generation import generate_diffusion_cond, generate_diffusion_uncond
 from ..models.factory import create_model_from_config
 from ..models.pretrained import get_pretrained_model
@@ -23,7 +22,7 @@ model = None
 sample_rate = 32000
 sample_size = 1920000
 
-def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, device="cuda"):
+def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, device="cuda", model_half=False):
     global model, sample_rate, sample_size
     
     if pretrained_name is not None:
@@ -49,6 +48,9 @@ def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pr
 
     model.to(device).eval().requires_grad_(False)
 
+    if model_half:
+        model.to(torch.float16)
+        
     print(f"Done loading model")
 
     return model, model_config
@@ -83,6 +85,8 @@ def generate_cond(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
+
+    print(f"Prompt: {prompt}")
 
     global preview_images
     preview_images = []
@@ -183,7 +187,7 @@ def generate_cond(
 
     # Convert to WAV file
     audio = rearrange(audio, "b d n -> d (b n)")
-    audio = audio.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+    audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
     torchaudio.save("output.wav", audio, sample_rate)
 
     # Let's look at a nice spectrogram too
@@ -280,13 +284,47 @@ def generate_uncond(
 
     audio = rearrange(audio, "b d n -> d (b n)")
 
-    audio = audio.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+    audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
     torchaudio.save("output.wav", audio, sample_rate)
 
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
     return ("output.wav", [audio_spectrogram, *preview_images])
+
+def generate_lm(
+        temperature=1.0,
+        top_p=0.95,
+        top_k=0,    
+        batch_size=1,
+        ):
+    
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+    #Get the device from the model
+    device = next(model.parameters()).device
+
+    audio = model.generate_audio(
+        batch_size=batch_size,
+        max_gen_len = sample_size//model.pretransform.downsampling_ratio,
+        conditioning=None,
+        temp=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        use_cache=True
+    )
+
+    audio = rearrange(audio, "b d n -> d (b n)")
+
+    audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+
+    torchaudio.save("output.wav", audio, sample_rate)
+
+    audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
+
+    return ("output.wav", [audio_spectrogram])
 
 
 def create_uncond_sampling_ui(model_config):   
@@ -482,7 +520,6 @@ def create_diffusion_uncond_ui(model_config):
     return ui
 
 def autoencoder_process(audio, latent_noise, n_quantizers):
-
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
@@ -499,19 +536,30 @@ def autoencoder_process(audio, latent_noise, n_quantizers):
     else:
         audio = audio.transpose(0, 1)
 
+    audio = model.preprocess_audio_for_encoder(audio, in_sr)
+    # Note: If you need to do chunked encoding, to reduce VRAM, 
+    # then add these arguments to encode_audio and decode_audio: chunked=True, overlap=32, chunk_size=128
+    # To turn it off, do chunked=False
+    # Optimal overlap and chunk_size values will depend on the model. 
+    # See encode_audio & decode_audio in autoencoders.py for more info
+    # Get dtype of model
+    dtype = next(model.parameters()).dtype
+
+    audio = audio.to(dtype)
+
     if n_quantizers > 0:
-        latents = model.encode_audio(audio, in_sr, n_quantizers=n_quantizers)
+        latents = model.encode_audio(audio, chunked=False, n_quantizers=n_quantizers)
     else:
-        latents = model.encode_audio(audio, in_sr)
+        latents = model.encode_audio(audio, chunked=False)
 
     if latent_noise > 0:
         latents = latents + torch.randn_like(latents) * latent_noise
 
-    audio = model.decode_audio(latents)
+    audio = model.decode_audio(latents, chunked=False)
 
     audio = rearrange(audio, "b d n -> d (b n)")
 
-    audio = audio.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+    audio = audio.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
     torchaudio.save("output.wav", audio, sample_rate)
 
@@ -560,7 +608,7 @@ def diffusion_prior_process(audio, steps, sampler_type, sigma_min, sigma_max):
 
     audio = rearrange(audio, "b d n -> d (b n)")
 
-    audio = audio.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+    audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
     torchaudio.save("output.wav", audio, sample_rate)
 
@@ -581,7 +629,32 @@ def create_diffusion_prior_ui(model_config):
 
     return ui
 
-def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None):
+def create_lm_ui(model_config):
+    with gr.Blocks() as ui:
+        output_audio = gr.Audio(label="Output audio", interactive=False)
+        audio_spectrogram_output = gr.Gallery(label="Output spectrogram", show_label=False)
+
+        # Sampling params
+        with gr.Row():
+            temperature_slider = gr.Slider(minimum=0, maximum=5, step=0.01, value=1.0, label="Temperature")
+            top_p_slider = gr.Slider(minimum=0, maximum=1, step=0.01, value=0.95, label="Top p")
+            top_k_slider = gr.Slider(minimum=0, maximum=100, step=1, value=0, label="Top k")
+
+        generate_button = gr.Button("Generate", variant='primary', scale=1)
+        generate_button.click(
+            fn=generate_lm, 
+            inputs=[
+                temperature_slider, 
+                top_p_slider, 
+                top_k_slider
+            ], 
+            outputs=[output_audio, audio_spectrogram_output],
+            api_name="generate"
+        )
+
+    return ui
+
+def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, model_half=False):
 
     assert (pretrained_name is not None) ^ (model_config_path is not None and ckpt_path is not None), "Must specify either pretrained name or provide a model config and checkpoint, but not both"
 
@@ -593,7 +666,7 @@ def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pret
         model_config = None
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _, model_config = load_model(model_config, ckpt_path, pretrained_name=pretrained_name, pretransform_ckpt_path=pretransform_ckpt_path, device=device)
+    _, model_config = load_model(model_config, ckpt_path, pretrained_name=pretrained_name, pretransform_ckpt_path=pretransform_ckpt_path, model_half=model_half, device=device)
     
     model_type = model_config["model_type"]
 
@@ -605,5 +678,7 @@ def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pret
         ui = create_autoencoder_ui(model_config)
     elif model_type == "diffusion_prior":
         ui = create_diffusion_prior_ui(model_config)
+    elif model_type == "lm":
+        ui = create_lm_ui(model_config)
         
     return ui

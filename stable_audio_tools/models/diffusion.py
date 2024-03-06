@@ -10,7 +10,6 @@ from .conditioners import MultiConditioner, create_multi_conditioner_from_condit
 from .dit import DiffusionTransformer
 from .factory import create_pretransform_from_config
 from .pretransforms import Pretransform
-from .transformer import ContinuousTransformer
 from ..inference.generation import generate_diffusion_cond
 
 from .adp import UNetCFG1d, UNet1d
@@ -138,8 +137,22 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         if len(self.cross_attn_cond_ids) > 0:
             # Concatenate all cross-attention inputs over the sequence dimension
             # Assumes that the cross-attention inputs are of shape (batch, seq, channels)
-            cross_attention_input = torch.cat([cond[key][0] for key in self.cross_attn_cond_ids], dim=1)
-            cross_attention_masks = torch.cat([cond[key][1] for key in self.cross_attn_cond_ids], dim=1)
+            cross_attention_input = []
+            cross_attention_masks = []
+
+            for key in self.cross_attn_cond_ids:
+                cross_attn_in, cross_attn_mask = cond[key]
+
+                # Add sequence dimension if it's not there
+                if len(cross_attn_in.shape) == 2:
+                    cross_attn_in = cross_attn_in.unsqueeze(1)
+                    cross_attn_mask = cross_attn_mask.unsqueeze(1)
+
+                cross_attention_input.append(cross_attn_in)
+                cross_attention_masks.append(cross_attn_mask)
+
+            cross_attention_input = torch.cat(cross_attention_input, dim=1)
+            cross_attention_masks = torch.cat(cross_attention_masks, dim=1)
 
         if len(self.global_cond_ids) > 0:
             # Concatenate all global conditioning inputs over the channel dimension
@@ -497,7 +510,6 @@ class DiTWrapper(ConditionedDiffusionModel):
 
         assert batch_cfg, "batch_cfg must be True for DiTWrapper"
         assert negative_input_concat_cond is None, "negative_input_concat_cond is not supported for DiTWrapper"
-        assert negative_global_cond is None, "negative_global_cond is not supported for DiTWrapper"
 
         return self.model(
             x,
@@ -563,11 +575,13 @@ def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
         model = DiffusionAttnUnet1D(
             **diffusion_config
         )
+    
     elif model_type == "adp_uncond_1d":
 
         model = UNet1DUncondWrapper(
             **diffusion_config
         )
+
     elif model_type == "dit":
         model = DiTUncondWrapper(
             **diffusion_config
@@ -633,7 +647,9 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     if diffusion_model_type == "adp_cfg_1d" or diffusion_model_type == "adp_1d":
         min_input_length *= np.prod(diffusion_model_config["factors"])
     elif diffusion_model_type == "dit":
-        min_input_length = min_input_length # There's no downsampling in DiT
+        min_input_length *= diffusion_model.model.patch_size
+    elif diffusion_model_type == "mamba":
+        min_input_length = min_input_length # There's no downsampling in Mamba
 
     # Get the proper wrapper class
 

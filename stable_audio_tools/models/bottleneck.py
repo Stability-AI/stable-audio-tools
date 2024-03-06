@@ -7,18 +7,31 @@ from vector_quantize_pytorch import ResidualVQ, FSQ
 from dac.nn.quantize import ResidualVectorQuantize as DACResidualVQ
 
 class Bottleneck(nn.Module):
-    def __init__(self):
+    def __init__(self, is_discrete: bool = False):
         super().__init__()
+
+        self.is_discrete = is_discrete
 
     def encode(self, x, return_info=False, **kwargs):
         raise NotImplementedError
 
     def decode(self, x):
         raise NotImplementedError
+
+class DiscreteBottleneck(Bottleneck):
+    def __init__(self, num_quantizers, codebook_size, tokens_id):
+        super().__init__(is_discrete=True)
+
+        self.num_quantizers = num_quantizers
+        self.codebook_size = codebook_size
+        self.tokens_id = tokens_id
+
+    def decode_tokens(self, codes, **kwargs):
+        raise NotImplementedError
     
 class TanhBottleneck(Bottleneck):
     def __init__(self):
-        super().__init__()
+        super().__init__(is_discrete=False)
         self.tanh = nn.Tanh()
 
     def encode(self, x, return_info=False):
@@ -46,7 +59,7 @@ def vae_sample(mean, scale):
 
 class VAEBottleneck(Bottleneck):
     def __init__(self):
-        super().__init__()
+        super().__init__(is_discrete=False)
 
     def encode(self, x, return_info=False, **kwargs):
         info = {}
@@ -82,7 +95,7 @@ def compute_mmd(latents):
 
 class WassersteinBottleneck(Bottleneck):
     def __init__(self, noise_augment_dim: int = 0):
-        super().__init__()
+        super().__init__(is_discrete=False)
 
         self.noise_augment_dim = noise_augment_dim
     
@@ -109,7 +122,7 @@ class WassersteinBottleneck(Bottleneck):
 
 class L2Bottleneck(Bottleneck):
     def __init__(self):
-        super().__init__()
+        super().__init__(is_discrete=False)
     
     def encode(self, x, return_info=False):
         info = {}
@@ -124,9 +137,9 @@ class L2Bottleneck(Bottleneck):
     def decode(self, x):
         return F.normalize(x, dim=1)
         
-class RVQBottleneck(Bottleneck):
+class RVQBottleneck(DiscreteBottleneck):
     def __init__(self, **quantizer_kwargs):
-        super().__init__()
+        super().__init__(num_quantizers = quantizer_kwargs["num_quantizers"], codebook_size = quantizer_kwargs["codebook_size"], tokens_id = "quantizer_indices")
         self.quantizer = ResidualVQ(**quantizer_kwargs)
         self.num_quantizers = quantizer_kwargs["num_quantizers"]
 
@@ -148,9 +161,14 @@ class RVQBottleneck(Bottleneck):
     def decode(self, x):
         return x
     
-class RVQVAEBottleneck(Bottleneck):
+    def decode_tokens(self, codes, **kwargs):
+        latents = self.quantizer.get_outputs_from_indices(codes)
+
+        return self.decode(latents, **kwargs)
+    
+class RVQVAEBottleneck(DiscreteBottleneck):
     def __init__(self, **quantizer_kwargs):
-        super().__init__()
+        super().__init__(num_quantizers = quantizer_kwargs["num_quantizers"], codebook_size = quantizer_kwargs["codebook_size"], tokens_id = "quantizer_indices")
         self.quantizer = ResidualVQ(**quantizer_kwargs)
         self.num_quantizers = quantizer_kwargs["num_quantizers"]
 
@@ -175,10 +193,15 @@ class RVQVAEBottleneck(Bottleneck):
         
     def decode(self, x):
         return x
+    
+    def decode_tokens(self, codes, **kwargs):
+        latents = self.quantizer.get_outputs_from_indices(codes)
 
-class DACRVQBottleneck(Bottleneck):
+        return self.decode(latents, **kwargs)
+
+class DACRVQBottleneck(DiscreteBottleneck):
     def __init__(self, quantize_on_decode=False, **quantizer_kwargs):
-        super().__init__()
+        super().__init__(num_quantizers = quantizer_kwargs["n_codebooks"], codebook_size = quantizer_kwargs["codebook_size"], tokens_id = "codes")
         self.quantizer = DACResidualVQ(**quantizer_kwargs)
         self.num_quantizers = quantizer_kwargs["n_codebooks"]
         self.quantize_on_decode = quantize_on_decode
@@ -217,10 +240,15 @@ class DACRVQBottleneck(Bottleneck):
             x = self.quantizer(x)[0]
 
         return x
+    
+    def decode_tokens(self, codes, **kwargs):
+        latents, _, _ = self.quantizer.from_codes(codes)
 
-class DACRVQVAEBottleneck(Bottleneck):
+        return self.decode(latents, **kwargs)
+
+class DACRVQVAEBottleneck(DiscreteBottleneck):
     def __init__(self, quantize_on_decode=False, **quantizer_kwargs):
-        super().__init__()
+        super().__init__(num_quantizers = quantizer_kwargs["n_codebooks"], codebook_size = quantizer_kwargs["codebook_size"], tokens_id = "codes")
         self.quantizer = DACResidualVQ(**quantizer_kwargs)
         self.num_quantizers = quantizer_kwargs["n_codebooks"]
         self.quantize_on_decode = quantize_on_decode
@@ -264,10 +292,15 @@ class DACRVQVAEBottleneck(Bottleneck):
             x = self.quantizer(x)[0]
 
         return x
+
+    def decode_tokens(self, codes, **kwargs):
+        latents, _, _ = self.quantizer.from_codes(codes)
+
+        return self.decode(latents, **kwargs)
     
-class FSQBottleneck(Bottleneck):
+class FSQBottleneck(DiscreteBottleneck):
     def __init__(self, dim, levels):
-        super().__init__()
+        super().__init__(num_quantizers = 1, codebook_size = levels ** dim, tokens_id = "quantizer_indices")
         self.quantizer = FSQ(levels=[levels] * dim)
 
     def encode(self, x, return_info=False):
@@ -286,3 +319,8 @@ class FSQBottleneck(Bottleneck):
         
     def decode(self, x):
         return x
+    
+    def decode_tokens(self, tokens, **kwargs):
+        latents = self.quantizer.indices_to_codes(tokens)
+
+        return self.decode(latents, **kwargs)

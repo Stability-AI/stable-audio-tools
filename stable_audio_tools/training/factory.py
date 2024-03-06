@@ -142,6 +142,25 @@ def create_training_wrapper_from_config(model_config, model):
             ema_copy=ema_copy,
             lr=training_config["learning_rate"]
         )
+    elif model_type == 'lm':
+        from .lm import AudioLanguageModelTrainingWrapper
+
+        ema_copy = create_model_from_config(model_config)
+
+        for name, param in model.state_dict().items():
+            if isinstance(param, Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            ema_copy.state_dict()[name].copy_(param)
+
+        return AudioLanguageModelTrainingWrapper(
+            model,
+            ema_copy=ema_copy,
+            lr=training_config.get("learning_rate", None),
+            use_ema=training_config.get("use_ema", False),
+            optimizer_configs=training_config.get("optimizer_configs", None),
+        )
+
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
 
@@ -221,6 +240,19 @@ def create_demo_callback_from_config(model_config, **kwargs):
             sample_rate=model_config["sample_rate"],
             demo_cfg_scales=demo_config["demo_cfg_scales"],
             demo_conditioning=demo_config["demo_cond"],
+            **kwargs
+        )
+    
+    elif model_type == "lm":
+        from .lm import AudioLanguageModelDemoCallback
+
+        return AudioLanguageModelDemoCallback(
+            demo_every=demo_config.get("demo_every", 2000), 
+            sample_size=model_config["sample_size"],
+            sample_rate=model_config["sample_rate"],
+            demo_cfg_scales=demo_config.get("demo_cfg_scales", [1]),
+            demo_conditioning=demo_config.get("demo_cond", None),
+            num_demos=demo_config.get("num_demos", 8),
             **kwargs
         )
     else:

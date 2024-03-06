@@ -1,10 +1,12 @@
+import torch
 from einops import rearrange
 from torch import nn
 
 class Pretransform(nn.Module):
-    def __init__(self, enable_grad=False, io_channels=2, ):
+    def __init__(self, enable_grad, io_channels, is_discrete):
         super().__init__()
 
+        self.is_discrete = is_discrete
         self.io_channels = io_channels
         self.encoded_channels = None
         self.downsampling_ratio = None
@@ -12,14 +14,20 @@ class Pretransform(nn.Module):
         self.enable_grad = enable_grad
 
     def encode(self, x):
-        return x
+        raise NotImplementedError
 
     def decode(self, z):
-        return z
+        raise NotImplementedError
+    
+    def tokenize(self, x):
+        raise NotImplementedError
+    
+    def decode_tokens(self, tokens):
+        raise NotImplementedError
 
 class AutoencoderPretransform(Pretransform):
-    def __init__(self, model, scale=1.0, model_half=False, iterate_batch=False):
-        super().__init__()
+    def __init__(self, model, scale=1.0, model_half=False, iterate_batch=False, chunked=False):
+        super().__init__(enable_grad=False, io_channels=model.io_channels, is_discrete=model.bottleneck is not None and model.bottleneck.is_discrete)
         self.model = model
         self.model.requires_grad_(False).eval()
         self.scale=scale
@@ -32,6 +40,10 @@ class AutoencoderPretransform(Pretransform):
 
         self.encoded_channels = model.latent_dim
 
+        self.chunked = chunked
+        self.num_quantizers = model.bottleneck.num_quantizers if model.bottleneck is not None and model.bottleneck.is_discrete else None
+        self.codebook_size = model.bottleneck.codebook_size if model.bottleneck is not None and model.bottleneck.is_discrete else None
+
         if self.model_half:
             self.model.half()
     
@@ -39,8 +51,9 @@ class AutoencoderPretransform(Pretransform):
         
         if self.model_half:
             x = x.half()
+            self.model.to(torch.float16)
 
-        encoded = self.model.encode(x, iterate_batch=self.iterate_batch, **kwargs)
+        encoded = self.model.encode_audio(x, chunked=self.chunked, iterate_batch=self.iterate_batch, **kwargs)
 
         if self.model_half:
             encoded = encoded.float()
@@ -52,20 +65,33 @@ class AutoencoderPretransform(Pretransform):
 
         if self.model_half:
             z = z.half()
+            self.model.to(torch.float16)
 
-        decoded = self.model.decode(z, iterate_batch=self.iterate_batch, **kwargs)
+        decoded = self.model.decode_audio(z, chunked=self.chunked, iterate_batch=self.iterate_batch, **kwargs)
 
         if self.model_half:
             decoded = decoded.float()
 
         return decoded
     
+    def tokenize(self, x, **kwargs):
+        assert self.model.is_discrete, "Cannot tokenize with a continuous model"
+
+        _, info = self.model.encode(x, return_info = True, **kwargs)
+
+        return info[self.model.bottleneck.tokens_id]
+    
+    def decode_tokens(self, tokens, **kwargs):
+        assert self.model.is_discrete, "Cannot decode tokens with a continuous model"
+
+        return self.model.decode_tokens(tokens, **kwargs)
+    
     def load_state_dict(self, state_dict, strict=True):
         self.model.load_state_dict(state_dict, strict=strict)
 
 class WaveletPretransform(Pretransform):
     def __init__(self, channels, levels, wavelet):
-        super().__init__()
+        super().__init__(enable_grad=False, io_channels=channels, is_discrete=False)
 
         from .wavelets import WaveletEncode1d, WaveletDecode1d
 
@@ -84,9 +110,11 @@ class WaveletPretransform(Pretransform):
     
 class PQMFPretransform(Pretransform):
     def __init__(self, attenuation=100, num_bands=16):
-        super().__init__()
+        # TODO: Fix PQMF to take in in-channels
+        super().__init__(enable_grad=False, io_channels=1, is_discrete=False)
         from .pqmf import PQMF
         self.pqmf = PQMF(attenuation, num_bands)
+
 
     def encode(self, x):
         # x is (Batch x Channels x Time)
@@ -104,7 +132,7 @@ class PQMFPretransform(Pretransform):
         
 class PretrainedDACPretransform(Pretransform):
     def __init__(self, model_type="44khz", model_bitrate="8kbps", scale=1.0, quantize_on_decode: bool = True, chunked=True):
-        super().__init__()
+        super().__init__(enable_grad=False, io_channels=1, is_discrete=True)
         
         import dac
         
@@ -126,6 +154,10 @@ class PretrainedDACPretransform(Pretransform):
         self.chunked = chunked
 
         self.encoded_channels = self.model.latent_dim
+
+        self.num_quantizers = self.model.n_codebooks
+
+        self.codebook_size = self.model.codebook_size
 
     def encode(self, x):
 
@@ -152,5 +184,70 @@ class PretrainedDACPretransform(Pretransform):
 
         return self.model.decode(z)
 
+    def tokenize(self, x):
+        return self.model.encode(x)[1]
+    
+    def decode_tokens(self, tokens):
+        latents = self.model.quantizer.from_codes(tokens)
+        return self.model.decode(latents)
+    
+class AudiocraftCompressionPretransform(Pretransform):
+    def __init__(self, model_type="facebook/encodec_32khz", scale=1.0, quantize_on_decode: bool = True):
+        super().__init__(enable_grad=False, io_channels=1, is_discrete=True)
         
+        from audiocraft.models import CompressionModel
+               
+        self.model = CompressionModel.get_pretrained(model_type)
 
+        self.quantize_on_decode = quantize_on_decode
+
+        self.downsampling_ratio = round(self.model.sample_rate / self.model.frame_rate)
+
+        self.io_channels = self.model.channels
+
+        self.scale = scale
+
+        #self.encoded_channels = self.model.latent_dim
+
+        self.num_quantizers = self.model.num_codebooks
+
+        self.codebook_size = self.model.cardinality
+
+        self.model.to(torch.float16).eval().requires_grad_(False)
+
+    def encode(self, x):
+
+        assert False, "Audiocraft compression models do not support continuous encoding"
+
+        # latents = self.model.encoder(x)
+
+        # if self.quantize_on_decode:
+        #     output = latents
+        # else:
+        #     z, _, _, _, _ = self.model.quantizer(latents, n_quantizers=self.model.n_codebooks)
+        #     output = z
+        
+        # if self.scale != 1.0:
+        #     output = output / self.scale
+        
+        # return output
+
+    def decode(self, z):
+        
+        assert False, "Audiocraft compression models do not support continuous decoding"
+
+        # if self.scale != 1.0:
+        #     z = z * self.scale
+
+        # if self.quantize_on_decode:
+        #     z, _, _, _, _ = self.model.quantizer(z, n_quantizers=self.model.n_codebooks)
+
+        # return self.model.decode(z)
+
+    def tokenize(self, x):
+        with torch.cuda.amp.autocast(enabled=False):
+            return self.model.encode(x.to(torch.float16))[0]
+    
+    def decode_tokens(self, tokens):
+        with torch.cuda.amp.autocast(enabled=False):
+            return self.model.decode(tokens)

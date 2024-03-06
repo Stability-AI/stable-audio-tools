@@ -246,7 +246,7 @@ wds.tariterators.group_by_keys = group_by_keys
 
 # S3 code and WDS preprocessing code based on implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
 
-def get_s3_contents(dataset_path, s3_url_prefix=None, filter='', recursive=True, debug=False, profile='default'):
+def get_s3_contents(dataset_path, s3_url_prefix=None, filter='', recursive=True, debug=False, profile=None):
     """
     Returns a list of full S3 paths to files in a given S3 bucket and directory path.
     """
@@ -256,7 +256,11 @@ def get_s3_contents(dataset_path, s3_url_prefix=None, filter='', recursive=True,
     # Use posixpath to construct the S3 URL path
     bucket_path = posixpath.join(s3_url_prefix or '', dataset_path)
     # Construct the `aws s3 ls` command
-    cmd = ['aws', 's3', 'ls', bucket_path, '--profile', profile]
+    cmd = ['aws', 's3', 'ls', bucket_path]
+
+    if profile is not None:
+        cmd.extend(['--profile', profile])
+
     if recursive:
         # Add the --recursive flag if requested
         cmd.append('--recursive')
@@ -316,7 +320,7 @@ def get_all_s3_urls(
             if debug:
                 print(f"subset_str = {subset_str}")
             # Get the list of tar files in the current subset directory
-            profile = profiles.get(name, 'default')
+            profile = profiles.get(name, None)
             tar_list = get_s3_contents(
                 subset_str, s3_url_prefix=None, recursive=recursive, filter=filter_str, debug=debug, profile=profile)
             for tar in tar_list:
@@ -509,13 +513,11 @@ class S3WebDataLoader():
         
         return sample
 
-def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
+def create_dataloader_from_config(dataset_config, batch_size, sample_size, sample_rate, audio_channels=2, num_workers=4):
 
     dataset_type = dataset_config.get("dataset_type", None)
 
     assert dataset_type is not None, "Dataset type must be specified in dataset config"
-
-    audio_channels = model_config.get("audio_channels", 2)
 
     if audio_channels == 1:
         force_channels = "mono"
@@ -547,16 +549,16 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
 
         train_set = SampleDataset(
             training_dirs,
-            sample_rate=model_config["sample_rate"],
-            sample_size=model_config["sample_size"],
+            sample_rate=sample_rate,
+            sample_size=sample_size,
             random_crop=dataset_config.get("random_crop", True),
             force_channels=force_channels,
             custom_metadata_fn=custom_metadata_fn,
             relpath=training_dirs[0] #TODO: Make relpath relative to each training dir
         )
 
-        return torch.utils.data.DataLoader(train_set, args.batch_size, shuffle=True,
-                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
+        return torch.utils.data.DataLoader(train_set, batch_size, shuffle=True,
+                                num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
 
     elif dataset_type == "s3":
         dataset_configs = []
@@ -584,11 +586,11 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
 
         return S3WebDataLoader(
             dataset_configs,
-            sample_rate=model_config["sample_rate"],
-            sample_size=model_config["sample_size"],
-            batch_size=args.batch_size,
-            random_crop=True,
-            num_workers=args.num_workers,
+            sample_rate=sample_rate,
+            sample_size=sample_size,
+            batch_size=batch_size,
+            random_crop=dataset_config.get("random_crop", True),
+            num_workers=num_workers,
             persistent_workers=True,
             force_channels=force_channels,
             epoch_steps=dataset_config.get("epoch_steps", 2000),

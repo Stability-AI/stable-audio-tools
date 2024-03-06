@@ -20,6 +20,9 @@ def create_model_from_config(model_config):
     elif model_type == 'musicgen':
         from .musicgen import create_musicgen_from_config
         return create_musicgen_from_config(model_config)
+    elif model_type == 'lm':
+        from .lm import create_audio_lm_from_config
+        return create_audio_lm_from_config(model_config)
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
 
@@ -46,8 +49,9 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         scale = pretransform_config.get("scale", 1.0)
         model_half = pretransform_config.get("model_half", False)
         iterate_batch = pretransform_config.get("iterate_batch", False)
+        chunked = pretransform_config.get("chunked", False)
 
-        pretransform = AutoencoderPretransform(autoencoder, scale=scale, model_half=model_half, iterate_batch=iterate_batch)
+        pretransform = AutoencoderPretransform(autoencoder, scale=scale, model_half=model_half, iterate_batch=iterate_batch, chunked=chunked)
     elif pretransform_type == 'wavelet':
         from .pretransforms import WaveletPretransform
 
@@ -65,6 +69,11 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
         from .pretransforms import PretrainedDACPretransform
         pretrained_dac_config = pretransform_config["config"]
         pretransform = PretrainedDACPretransform(**pretrained_dac_config)
+    elif pretransform_type == "audiocraft_pretrained":
+        from .pretransforms import AudiocraftCompressionPretransform
+
+        audiocraft_config = pretransform_config["config"]
+        pretransform = AudiocraftCompressionPretransform(**audiocraft_config)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     

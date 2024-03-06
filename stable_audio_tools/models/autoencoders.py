@@ -4,7 +4,6 @@ import numpy as np
 
 from torch import nn, sin, pow
 from torch.nn import functional as F
-from torch.nn import Parameter
 from torchaudio import transforms as T
 from alias_free_torch import Activation1d
 from dac.nn.layers import WNConv1d, WNConvTranspose1d
@@ -13,51 +12,16 @@ from einops import rearrange
 
 from ..inference.sampling import sample
 from ..inference.utils import prepare_audio
-from .bottleneck import Bottleneck
+from .blocks import SnakeBeta
+from .bottleneck import Bottleneck, DiscreteBottleneck
 from .diffusion import ConditionedDiffusionModel, DAU1DCondWrapper, UNet1DCondWrapper, DiTWrapper
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform, AutoencoderPretransform
 
-def snake_beta(x, alpha, beta):
-    return x + (1.0 / (beta + 0.000000001)) * pow(sin(x * alpha), 2)
+def checkpoint(function, *args, **kwargs):
+    kwargs.setdefault("use_reentrant", False)
+    return torch.utils.checkpoint.checkpoint(function, *args, **kwargs)
 
-try:
-    snake_beta = torch.compile(snake_beta)
-except RuntimeError:
-    pass
-
-# Adapted from https://github.com/NVIDIA/BigVGAN/blob/main/activations.py under MIT license
-# License available in LICENSES/LICENSE_NVIDIA.txt
-class SnakeBeta(nn.Module):
-
-    def __init__(self, in_features, alpha=1.0, alpha_trainable=True, alpha_logscale=True):
-        super(SnakeBeta, self).__init__()
-        self.in_features = in_features
-
-        # initialize alpha
-        self.alpha_logscale = alpha_logscale
-        if self.alpha_logscale: # log scale alphas initialized to zeros
-            self.alpha = Parameter(torch.zeros(in_features) * alpha)
-            self.beta = Parameter(torch.zeros(in_features) * alpha)
-        else: # linear scale alphas initialized to ones
-            self.alpha = Parameter(torch.ones(in_features) * alpha)
-            self.beta = Parameter(torch.ones(in_features) * alpha)
-
-        self.alpha.requires_grad = alpha_trainable
-        self.beta.requires_grad = alpha_trainable
-
-        self.no_div_by_zero = 0.000000001
-
-    def forward(self, x):
-        alpha = self.alpha.unsqueeze(0).unsqueeze(-1) # line up with x to [B, C, T]
-        beta = self.beta.unsqueeze(0).unsqueeze(-1)
-        if self.alpha_logscale:
-            alpha = torch.exp(alpha)
-            beta = torch.exp(beta)
-        x = snake_beta(x, alpha, beta)
-
-        return x
-    
 def get_activation(activation: Literal["elu", "snake", "none"], antialias=False, channels=None) -> nn.Module:
     if activation == "elu":
         act = nn.ELU()
@@ -93,7 +57,11 @@ class ResidualUnit(nn.Module):
         )
 
     def forward(self, x):
-        return x + self.layers(x)
+        res = x
+        
+        x = checkpoint(self.layers, x)
+
+        return x + res
 
 class EncoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride, use_snake=False, antialias_activation=False):
@@ -307,6 +275,8 @@ class AudioAutoencoder(nn.Module):
 
         self.soft_clip = soft_clip
  
+        self.is_discrete = self.bottleneck is not None and self.bottleneck.is_discrete
+
     def encode(self, audio, return_info=False, skip_pretransform=False, iterate_batch=False, **kwargs):
 
         info = {}
@@ -394,30 +364,144 @@ class AudioAutoencoder(nn.Module):
             decoded = torch.tanh(decoded)
         
         return decoded
-    
-    def encode_audio(self, audio, in_sr, **kwargs):
+          
+    def decode_tokens(self, tokens, **kwargs):
         '''
-        Encode single audio tensor to latents, including preprocessing the audio to be compatible with the model
+        Decode discrete tokens to audio
+        Only works with discrete autoencoders
         '''
 
-        if in_sr != self.sample_rate:
-            resample_tf = T.Resample(in_sr, self.sample_rate).to(audio.device)
-            audio = resample_tf(audio)
+        assert isinstance(self.bottleneck, DiscreteBottleneck), "decode_tokens only works with discrete autoencoders"
 
-        audio_length = audio.shape[-1]
+        latents = self.bottleneck.decode_tokens(tokens, **kwargs)
 
-        pad_length = (self.min_length - (audio_length % self.min_length)) % self.min_length
-
-        # Pad with zeros to multiple of model's downsampling ratio
-        audio = F.pad(audio, (0, pad_length))
-
-        audio = prepare_audio(audio, in_sr=self.sample_rate, target_sr=self.sample_rate, target_length=audio.shape[1], target_channels=self.in_channels, device=audio.device)
-
-        # TODO: Add chunking logic
-
-        return self.encode(audio, **kwargs)
+        return self.decode(latents, **kwargs)
+        
     
-    def decode_audio(self, latents, chunked=False, overlap=32, chunk_size=256, **kwargs):
+    def preprocess_audio_for_encoder(self, audio, in_sr):
+        '''
+        Preprocess single audio tensor (Channels x Length) to be compatible with the encoder.
+        If the model is mono, stereo audio will be converted to mono.
+        Audio will be silence-padded to be a multiple of the model's downsampling ratio.
+        Audio will be resampled to the model's sample rate. 
+        The output will have batch size 1 and be shape (1 x Channels x Length)
+        '''
+        return self.preprocess_audio_list_for_encoder([audio], [in_sr])
+
+    def preprocess_audio_list_for_encoder(self, audio_list, in_sr_list):
+        '''
+        Preprocess a [list] of audio (Channels x Length) into a batch tensor to be compatable with the encoder. 
+        The audio in that list can be of different lengths and channels. 
+        in_sr can be an integer or list. If it's an integer it will be assumed it is the input sample_rate for every audio.
+        All audio will be resampled to the model's sample rate. 
+        Audio will be silence-padded to the longest length, and further padded to be a multiple of the model's downsampling ratio. 
+        If the model is mono, all audio will be converted to mono. 
+        The output will be a tensor of shape (Batch x Channels x Length)
+        '''
+        batch_size = len(audio_list)
+        if isinstance(in_sr_list, int):
+            in_sr_list = [in_sr_list]*batch_size
+        assert len(in_sr_list) == batch_size, "list of sample rates must be the same length of audio_list"
+        new_audio = []
+        max_length = 0
+        # resample & find the max length
+        for i in range(batch_size):
+            audio = audio_list[i]
+            in_sr = in_sr_list[i]
+            if len(audio.shape) == 3 and audio.shape[0] == 1:
+                # batchsize 1 was given by accident. Just squeeze it.
+                audio = audio.squeeze(0)
+            elif len(audio.shape) == 1:
+                # Mono signal, channel dimension is missing, unsqueeze it in
+                audio = audio.unsqueeze(0)
+            assert len(audio.shape)==2, "Audio should be shape (Channels x Length) with no batch dimension" 
+            # Resample audio
+            if in_sr != self.sample_rate:
+                resample_tf = T.Resample(in_sr, self.sample_rate).to(audio.device)
+                audio = resample_tf(audio)
+            new_audio.append(audio)
+            if audio.shape[-1] > max_length:
+                max_length = audio.shape[-1]
+        # Pad every audio to the same length, multiple of model's downsampling ratio
+        padded_audio_length = max_length + (self.min_length - (max_length % self.min_length)) % self.min_length
+        for i in range(batch_size):
+            # Pad it & if necessary, mixdown/duplicate stereo/mono channels to support model
+            new_audio[i] = prepare_audio(new_audio[i], in_sr=in_sr, target_sr=in_sr, target_length=padded_audio_length, 
+                target_channels=self.in_channels, device=new_audio[i].device).squeeze(0)
+        # convert to tensor 
+        return torch.stack(new_audio) 
+
+    def encode_audio(self, audio, chunked=False, overlap=32, chunk_size=128, **kwargs):
+        '''
+        Encode audios into latents. Audios should already be preprocesed by preprocess_audio_for_encoder.
+        If chunked is True, split the audio into chunks of a given maximum size chunk_size, with given overlap.
+        Overlap and chunk_size params are both measured in number of latents (not audio samples) 
+        # and therefore you likely could use the same values with decode_audio. 
+        A overlap of zero will cause discontinuity artefacts. Overlap should be => receptive field size. 
+        Every autoencoder will have a different receptive field size, and thus ideal overlap.
+        You can determine it empirically by diffing unchunked vs chunked output and looking at maximum diff.
+        The final chunk may have a longer overlap in order to keep chunk_size consistent for all chunks.
+        Smaller chunk_size uses less memory, but more compute.
+        The chunk_size vs memory tradeoff isn't linear, and possibly depends on the GPU and CUDA version
+        For example, on a A6000 chunk_size 128 is overall faster than 256 and 512 even though it has more chunks
+        '''
+        if not chunked:
+            # default behavior. Encode the entire audio in parallel
+            return self.encode(audio, **kwargs)
+        else:
+            # CHUNKED ENCODING
+            # samples_per_latent is just the downsampling ratio (which is also the upsampling ratio)
+            samples_per_latent = self.downsampling_ratio
+            total_size = audio.shape[2] # in samples
+            batch_size = audio.shape[0]
+            chunk_size *= samples_per_latent # converting metric in latents to samples
+            overlap *= samples_per_latent # converting metric in latents to samples
+            hop_size = chunk_size - overlap
+            chunks = []
+            for i in range(0, total_size - chunk_size + 1, hop_size):
+                chunk = audio[:,:,i:i+chunk_size]
+                chunks.append(chunk)
+            if i+chunk_size != total_size:
+                # Final chunk
+                chunk = audio[:,:,-chunk_size:]
+                chunks.append(chunk)
+            chunks = torch.stack(chunks)
+            num_chunks = chunks.shape[0]
+            # Note: y_size might be a different value from the latent length used in diffusion training
+            # because we can encode audio of varying lengths
+            # However, the audio should've been padded to a multiple of samples_per_latent by now.
+            y_size = total_size // samples_per_latent
+            # Create an empty latent, we will populate it with chunks as we encode them
+            y_final = torch.zeros((batch_size,self.latent_dim,y_size)).to(audio.device)
+            for i in range(num_chunks):
+                x_chunk = chunks[i,:]
+                # encode the chunk
+                y_chunk = self.encode(x_chunk)
+                # figure out where to put the audio along the time domain
+                if i == num_chunks-1:
+                    # final chunk always goes at the end
+                    t_end = y_size
+                    t_start = t_end - y_chunk.shape[2]
+                else:
+                    t_start = i * hop_size // samples_per_latent
+                    t_end = t_start + chunk_size // samples_per_latent
+                #  remove the edges of the overlaps
+                ol = overlap//samples_per_latent//2
+                chunk_start = 0
+                chunk_end = y_chunk.shape[2]
+                if i > 0:
+                    # no overlap for the start of the first chunk
+                    t_start += ol
+                    chunk_start += ol
+                if i < num_chunks-1:
+                    # no overlap for the end of the last chunk
+                    t_end -= ol
+                    chunk_end -= ol
+                # paste the chunked audio into our y_final output audio
+                y_final[:,:,t_start:t_end] = y_chunk[:,:,chunk_start:chunk_end]
+            return y_final
+    
+    def decode_audio(self, latents, chunked=False, overlap=32, chunk_size=128, **kwargs):
         '''
         Decode latents to audio. 
         If chunked is True, split the latents into chunks of a given maximum size chunk_size, with given overlap, both of which are measured in number of latents. 
@@ -426,6 +510,8 @@ class AudioAutoencoder(nn.Module):
         You can determine it empirically by diffing unchunked vs chunked audio and looking at maximum diff.
         The final chunk may have a longer overlap in order to keep chunk_size consistent for all chunks.
         Smaller chunk_size uses less memory, but more compute.
+        The chunk_size vs memory tradeoff isn't linear, and possibly depends on the GPU and CUDA version
+        For example, on a A6000 chunk_size 128 is overall faster than 256 and 512 even though it has more chunks
         '''
         if not chunked:
             # default behavior. Decode the entire latent in parallel
