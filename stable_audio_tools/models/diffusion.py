@@ -648,8 +648,6 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
         min_input_length *= np.prod(diffusion_model_config["factors"])
     elif diffusion_model_type == "dit":
         min_input_length *= diffusion_model.model.patch_size
-    elif diffusion_model_type == "mamba":
-        min_input_length = min_input_length # There's no downsampling in Mamba
 
     # Get the proper wrapper class
 
