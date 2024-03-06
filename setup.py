@@ -24,7 +24,6 @@ setup(
         'k-diffusion==0.1.1',
         'laion-clap==1.1.4',
         'local-attention==1.8.6',
-        'mamba-ssm==1.1.1',
         'pandas==2.0.2',
         'pedalboard==0.7.4',
         'prefigure==0.0.9',
