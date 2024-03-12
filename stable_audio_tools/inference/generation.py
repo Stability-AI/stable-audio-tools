@@ -211,6 +211,8 @@ def generate_diffusion_cond(
     # Denoising process done. 
     # If this is latent diffusion, decode latents back into audio
     if model.pretransform is not None and not return_latents:
+        #cast sampled latents to pretransform dtype
+        sampled = sampled.to(next(model.pretransform.parameters()).dtype)
         sampled = model.pretransform.decode(sampled)
 
     # Return audio

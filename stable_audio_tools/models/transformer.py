@@ -15,6 +15,16 @@ except ImportError:
     flash_attn_kvpacked_func = None
     flash_attn_func = None
 
+try:
+    import natten
+except ImportError:
+    natten = None
+
+def checkpoint(function, *args, **kwargs):
+    kwargs.setdefault("use_reentrant", False)
+    return torch.utils.checkpoint.checkpoint(function, *args, **kwargs)
+
+
 # Copied and modified from https://github.com/lucidrains/x-transformers/blob/main/x_transformers/attend.py under MIT License
 # License can be found in LICENSES/LICENSE_XTRANSFORMERS.txt
 
@@ -115,7 +125,7 @@ class RotaryEmbedding(nn.Module):
     def forward(self, t):
         device = self.inv_freq.device
 
-        t = t.type_as(self.inv_freq)
+        t = t.to(torch.float32)
 
         t = t / self.interpolation_factor
 
@@ -264,7 +274,8 @@ class Attention(nn.Module):
         dim_context = None,
         causal = False,
         zero_init_output=True,
-        qk_norm = False
+        qk_norm = False,
+        natten_kernel_size = None
     ):
         super().__init__()
         self.dim = dim
@@ -288,6 +299,11 @@ class Attention(nn.Module):
             nn.init.zeros_(self.to_out.weight)
 
         self.qk_norm = qk_norm
+
+        # Using 1d neighborhood attention
+        self.natten_kernel_size = natten_kernel_size
+        if natten_kernel_size is not None:
+            return
 
         self.use_pt_flash = torch.cuda.is_available() and version.parse(torch.__version__) >= version.parse('2.0.0')
 
@@ -373,13 +389,11 @@ class Attention(nn.Module):
         mask = None,
         context_mask = None,
         rotary_pos_emb = None,
-        causal = False
+        causal = None
     ):
         h, kv_h, has_context = self.num_heads, self.kv_heads, context is not None
 
         kv_input = context if has_context else x
-
-        #print(f"x std before qk_norm: {x.std()}")
 
         if hasattr(self, 'to_q'):
             # Use separate linear projections for q and k/v
@@ -440,8 +454,24 @@ class Attention(nn.Module):
         if n == 1 and causal:
             causal = False
 
+        if self.natten_kernel_size is not None:
+            if natten is None:
+                raise ImportError('natten not installed, please install natten to use neighborhood attention')
+            
+            dtype_in = q.dtype
+            q, k, v = map(lambda t: t.to(torch.float32), (q, k, v))
+
+            attn = natten.functional.natten1dqk(q, k, kernel_size = self.natten_kernel_size, dilation=1)
+
+            if final_attn_mask is not None:
+                attn = attn.masked_fill(final_attn_mask, -torch.finfo(attn.dtype).max)
+
+            attn = F.softmax(attn, dim=-1, dtype=torch.float32)
+
+            out = natten.functional.natten1dav(attn, v, kernel_size = self.natten_kernel_size, dilation=1).to(dtype_in)
+
         # Prioritize Flash Attention 2
-        if self.use_fa_flash:
+        elif self.use_fa_flash:
             assert final_attn_mask is None, 'masking not yet supported for Flash Attention 2'
             # Flash Attention 2 requires FP16 inputs
             dtype_in = q.dtype
@@ -534,6 +564,7 @@ class TransformerBlock(nn.Module):
             dim_heads = 64,
             cross_attend = False,
             dim_context = None,
+            global_cond_dim = None,
             causal = False,
             zero_init_branch_outputs = True,
             conformer = False,
@@ -579,25 +610,62 @@ class TransformerBlock(nn.Module):
 
         self.conformer = ConformerModule(dim, norm_kwargs=norm_kwargs) if conformer else None
 
+        self.global_cond_dim = global_cond_dim
+
+        if global_cond_dim is not None:
+            self.to_scale_shift_gate = nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(global_cond_dim, dim * 6, bias=False)
+            )
+
+            nn.init.zeros_(self.to_scale_shift_gate[1].weight)
+            #nn.init.zeros_(self.to_scale_shift_gate_self[1].bias)
+
     def forward(
         self,
         x,
         context = None,
+        global_cond=None,
         mask = None,
         context_mask = None,
         rotary_pos_emb = None
     ):
-        #print(f"x std before self_attn in layer {self.layer_ix}: {x.std()}")
-        x = x + self.self_attn(self.pre_norm(x), mask = mask, rotary_pos_emb = rotary_pos_emb)
-        #print(f"x std after self_attn in layer {self.layer_ix}: {x.std()}")
-        if context is not None:
-            x = x + self.cross_attn(self.cross_attend_norm(x), context = context, context_mask = context_mask)
-            #print(f"x std after cross_attn in layer {self.layer_ix}: {x.std()}")
-        if self.conformer is not None:
-            x = x + self.conformer(x)
-            #print(f"x std after conformer in layer {self.layer_ix}: {x.std()}")
-        x = x + self.ff(self.ff_norm(x))
-        #print(f"x std after ff in layer {self.layer_ix}: {x.std()}")
+        if self.global_cond_dim is not None and self.global_cond_dim > 0 and global_cond is not None:
+            
+            scale_self, shift_self, gate_self, scale_ff, shift_ff, gate_ff = self.to_scale_shift_gate(global_cond).unsqueeze(1).chunk(6, dim = -1)
+
+            # self-attention with adaLN
+            residual = x
+            x = self.pre_norm(x)
+            x = x * (1 + scale_self) + shift_self
+            x = self.self_attn(x, mask = mask, rotary_pos_emb = rotary_pos_emb)
+            x = x * torch.sigmoid(1 - gate_self)
+            x = x + residual
+
+            if context is not None:
+                x = x + self.cross_attn(self.cross_attend_norm(x), context = context, context_mask = context_mask)
+
+            if self.conformer is not None:
+                x = x + self.conformer(x)
+
+            # feedforward with adaLN
+            residual = x
+            x = self.ff_norm(x)
+            x = x * (1 + scale_ff) + shift_ff
+            x = self.ff(x)
+            x = x * torch.sigmoid(1 - gate_ff)
+            x = x + residual
+
+        else:
+            x = x + self.self_attn(self.pre_norm(x), mask = mask, rotary_pos_emb = rotary_pos_emb)
+
+            if context is not None:
+                x = x + self.cross_attn(self.cross_attend_norm(x), context = context, context_mask = context_mask)
+
+            if self.conformer is not None:
+                x = x + self.conformer(x)
+
+            x = x + self.ff(self.ff_norm(x))
 
         return x
         
@@ -612,6 +680,7 @@ class ContinuousTransformer(nn.Module):
         dim_heads = 64,
         cross_attend=False,
         cond_token_dim=None,
+        global_cond_dim=None,
         causal=False,
         rotary_pos_emb=True,
         zero_init_branch_outputs=True,
@@ -652,6 +721,7 @@ class ContinuousTransformer(nn.Module):
                     dim_heads = dim_heads,
                     cross_attend = cross_attend,
                     dim_context = cond_token_dim,
+                    global_cond_dim = global_cond_dim,
                     causal = causal,
                     zero_init_branch_outputs = zero_init_branch_outputs,
                     conformer=conformer,
@@ -666,6 +736,7 @@ class ContinuousTransformer(nn.Module):
         mask = None,
         prepend_embeds = None,
         prepend_mask = None,
+        global_cond = None,
         **kwargs
     ):
         batch, seq, device = *x.shape[:2], x.device
@@ -697,7 +768,7 @@ class ContinuousTransformer(nn.Module):
 
         # Iterate over the transformer layers
         for layer in self.layers:
-            x = layer(x, rotary_pos_emb = rotary_pos_emb, **kwargs)
+            x = checkpoint(layer, x, rotary_pos_emb = rotary_pos_emb, global_cond=global_cond, **kwargs)
 
         x = self.project_out(x)
 

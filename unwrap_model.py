@@ -95,6 +95,29 @@ if __name__ == '__main__':
             ema_copy.state_dict()[name].copy_(param)
 
         training_wrapper = DiffusionPriorTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False, ema_copy=ema_copy)
+    elif model_type == 'lm':
+        from stable_audio_tools.training.lm import AudioLanguageModelTrainingWrapper
+
+        ema_copy = None
+
+        if training_config.get("use_ema", False):
+
+            ema_copy = create_model_from_config(model_config)
+
+            for name, param in model.state_dict().items():
+                if isinstance(param, Parameter):
+                    # backwards compatibility for serialized parameters
+                    param = param.data
+                ema_copy.state_dict()[name].copy_(param)
+
+        training_wrapper = AudioLanguageModelTrainingWrapper.load_from_checkpoint(
+            args.ckpt_path, 
+            model=model, 
+            strict=False, 
+            ema_copy=ema_copy,
+            optimizer_configs=training_config.get("optimizer_configs", None)
+        )
+
     else:
         raise ValueError(f"Unknown model type {model_type}")
     

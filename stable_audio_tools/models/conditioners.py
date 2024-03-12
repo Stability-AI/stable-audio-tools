@@ -82,6 +82,10 @@ class NumberConditioner(Conditioner):
     
             normalized_floats = (floats - self.min_val) / (self.max_val - self.min_val)
 
+            # Cast floats to same type as embedder
+            embedder_dtype = next(self.embedder.parameters()).dtype
+            normalized_floats = normalized_floats.to(embedder_dtype)
+
             float_embeds = self.embedder(normalized_floats).unsqueeze(1)
     
             return [float_embeds, torch.ones(float_embeds.shape[0], 1).to(device)]

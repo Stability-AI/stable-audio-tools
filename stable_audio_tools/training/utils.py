@@ -82,8 +82,15 @@ def create_optimizer_from_config(optimizer_config, parameters):
     Returns:
         torch.optim.Optimizer: optimizer.
     """
-    optimizer_fn = getattr(torch.optim, optimizer_config["type"])
-    optimizer = optimizer_fn(parameters, **optimizer_config["config"])
+
+    optimizer_type = optimizer_config["type"]
+
+    if optimizer_type == "FusedAdam":
+        from deepspeed.ops.adam import FusedAdam
+        optimizer = FusedAdam(parameters, **optimizer_config["config"])
+    else:
+        optimizer_fn = getattr(torch.optim, optimizer_type)
+        optimizer = optimizer_fn(parameters, **optimizer_config["config"])
     return optimizer
 
 def create_scheduler_from_config(scheduler_config, optimizer):

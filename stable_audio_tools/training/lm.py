@@ -9,56 +9,68 @@ import wandb
 from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 from ema_pytorch import EMA
 from einops import rearrange
+from safetensors.torch import save_file
 from torch import optim
 from torch.nn import functional as F
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
-from audiocraft.models import MusicGen
-from audiocraft.modules.conditioners import ClassifierFreeGuidanceDropout, ConditioningAttributes
+from ..models.lm import AudioLanguageModelWrapper
+from .utils import create_optimizer_from_config, create_scheduler_from_config
 
-from time import time
-
-class Profiler:
-
-    def __init__(self):
-        self.ticks = [[time(), None]]
-
-    def tick(self, msg):
-        self.ticks.append([time(), msg])
-
-    def __repr__(self):
-        rep = 80 * "=" + "\n"
-        for i in range(1, len(self.ticks)):
-            msg = self.ticks[i][1]
-            ellapsed = self.ticks[i][0] - self.ticks[i - 1][0]
-            rep += msg + f": {ellapsed*1000:.2f}ms\n"
-        rep += 80 * "=" + "\n\n\n"
-        return rep
-
-
-class MusicGenTrainingWrapper(pl.LightningModule):
-    def __init__(self, musicgen_model, lr = 1e-4, ema_copy=None):
+class AudioLanguageModelTrainingWrapper(pl.LightningModule):
+    def __init__(
+            self, 
+            model: AudioLanguageModelWrapper, 
+            lr = 1e-4, 
+            use_ema=False, 
+            ema_copy=None,
+            optimizer_configs: dict = None,
+        ):
         super().__init__()
 
-        self.musicgen_model: MusicGen = musicgen_model
+        self.model = model
 
-        self.musicgen_model.compression_model.requires_grad_(False)
+        self.model.pretransform.requires_grad_(False)
 
-        self.lm = self.musicgen_model.lm
+        self.model_ema = None
+        if use_ema:
+            self.model_ema = EMA(self.model, ema_model=ema_copy, beta=0.99, update_every=10)
 
-        self.lm.to(torch.float32).train().requires_grad_(True)
+        assert lr is not None or optimizer_configs is not None, "Must specify either lr or optimizer_configs in training config"
 
-        self.lm_ema = EMA(self.lm, ema_model=ema_copy, beta=0.99, update_every=10)
+        if optimizer_configs is None:
+            optimizer_configs = {
+                "lm": {
+                    "optimizer": {
+                        "type": "AdamW",
+                        "config": {
+                            "lr": lr,
+                            "betas": (0.9, 0.95),
+                            "weight_decay": 0.1
+                        }
+                    }
+                }
+            }
+        else:
+            if lr is not None:
+                print(f"WARNING: learning_rate and optimizer_configs both specified in config. Ignoring learning_rate and using optimizer_configs.")
 
-        self.cfg_dropout = ClassifierFreeGuidanceDropout(0.1)
-
-        self.lr = lr
+        self.optimizer_configs = optimizer_configs
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW([*self.lm.parameters()], lr=self.lr, betas=(0.9, 0.95), weight_decay=0.1)
+        lm_opt_config = self.optimizer_configs['lm']
+        opt_lm = create_optimizer_from_config(lm_opt_config['optimizer'], self.model.parameters())
 
-        return optimizer
-    
+        if "scheduler" in lm_opt_config:
+            sched_lm = create_scheduler_from_config(lm_opt_config['scheduler'], opt_lm)
+            sched_lm_config = {
+                "scheduler": sched_lm,
+                "interval": "step"
+            }
+            return [opt_lm], [sched_lm_config]
+
+        return [opt_lm]
+        
     # Copied and modified from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/solvers/musicgen.py under MIT license
     # License can be found in LICENSES/LICENSE_META.txt
 
@@ -102,46 +114,36 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
-        # Convert reals to mono if necessary
-        if self.musicgen_model.audio_channels == 1:
-            reals = reals.mean(dim=1, keepdim=True)
 
-        self.musicgen_model.compression_model.to(self.device).eval()
-        self.lm.to(self.device).train()
-        self.lm.condition_provider.to(self.device).eval()
+        codes = self.model.pretransform.tokenize(reals)
 
-        self.lm.condition_provider.conditioners["description"].device = self.device
-        self.lm.condition_provider.conditioners["description"].t5.to(self.device).eval()
+        padding_masks = torch.stack([md["padding_mask"][0] for md in metadata], dim=0).to(self.device) # Shape (batch_size, sequence_length)
 
-        with torch.cuda.amp.autocast():
+        # Interpolate padding masks to the same length as the codes
+        padding_masks = F.interpolate(padding_masks.unsqueeze(1).float(), size=codes.shape[2], mode='nearest').bool()
+    
+        condition_tensors = None
 
-            codes, _ = self.musicgen_model.compression_model.encode(reals) # [b, k, t]
+        # If the model is conditioned, get the conditioning tensors
+        if self.model.conditioner is not None:
+            condition_tensors = self.model.conditioner(metadata, self.device)
 
-            attributes = [ConditioningAttributes(text={'description': md["prompt"][0][:512]}) for md in metadata]
-            attributes = self.lm.cfg_dropout(attributes)
-            attributes = self.lm.att_dropout(attributes)
-            tokenized = self.lm.condition_provider.tokenize(attributes)
-     
-            with torch.cuda.amp.autocast(enabled=False):
-                condition_tensors = self.lm.condition_provider(tokenized)
-                
-            lm_output = self.lm.compute_predictions(
-                codes=codes,
-                conditions = [],
-                condition_tensors = condition_tensors,
-            )
+        lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.1)
 
-            logits = lm_output.logits # [b, k, t, c]
-            logits_mask = lm_output.mask # [b, k, t]
+        logits = lm_output.logits # [b, k, t, c]
+        logits_mask = lm_output.mask # [b, k, t]
 
-            cross_entropy, cross_entropy_per_codebook = self._compute_cross_entropy(logits, codes, logits_mask)
+        logits_mask = logits_mask & padding_masks
 
-            loss = cross_entropy
+        cross_entropy, cross_entropy_per_codebook = self._compute_cross_entropy(logits, codes, logits_mask)
+
+        loss = cross_entropy
 
         log_dict = {
             'train/loss': loss.detach(),
             'train/cross_entropy': cross_entropy.detach(),
             'train/perplexity': torch.exp(cross_entropy).detach(),
+            'train/lr': self.trainer.optimizers[0].param_groups[0]['lr']
         }
 
         for k, ce_q in enumerate(cross_entropy_per_codebook):
@@ -152,15 +154,20 @@ class MusicGenTrainingWrapper(pl.LightningModule):
         return loss
 
     def on_before_zero_grad(self, *args, **kwargs):
-        self.lm_ema.update()
+        if self.model_ema is not None:
+            self.model_ema.update()
 
-    def export_model(self, path):
-        self.musicgen_model.lm = self.lm_ema.ema_model
-        export_state_dict = {"state_dict": self.musicgen_model.state_dict()}
+    def export_model(self, path, use_safetensors=False):
         
-        torch.save(export_state_dict, path)
+        model = self.model_ema.ema_model if self.model_ema is not None else self.model
 
-class MusicGenDemoCallback(pl.Callback):
+        if use_safetensors:
+            save_file(model.state_dict(), path)
+        else:
+            torch.save({"state_dict": model.state_dict()}, path)
+        
+
+class AudioLanguageModelDemoCallback(pl.Callback):
     def __init__(self, 
                  demo_every=2000,
                  num_demos=8,
@@ -182,7 +189,7 @@ class MusicGenDemoCallback(pl.Callback):
 
     @rank_zero_only
     @torch.no_grad()
-    def on_train_batch_end(self, trainer, module: MusicGenTrainingWrapper, outputs, batch, batch_idx):        
+    def on_train_batch_end(self, trainer, module: AudioLanguageModelTrainingWrapper, outputs, batch, batch_idx):        
 
         if (trainer.global_step - 1) % self.demo_every != 0 or self.last_demo_step == trainer.global_step:
             return
@@ -192,20 +199,35 @@ class MusicGenDemoCallback(pl.Callback):
         print(f"Generating demo")
         self.last_demo_step = trainer.global_step
 
-        demo_length_sec = self.demo_samples // self.sample_rate
+        demo_length_tokens = self.demo_samples // module.model.pretransform.downsampling_ratio
+
+        # demo_reals = batch[0][:self.num_demos]
+
+        # if demo_reals.ndim == 4 and demo_reals.shape[0] == 1:
+        #     demo_reals = demo_reals[0]
+
+        #demo_reals_tokens = module.model.pretransform.tokenize(demo_reals)
+
+        # Limit to first 50 tokens
+        #demo_reals_tokens = demo_reals_tokens[:, :, :50]
 
         try:
             print("Getting conditioning")
 
-            prompts = [md["prompt"][:512] for md in self.demo_conditioning]
-
             for cfg_scale in self.demo_cfg_scales:
 
-                module.musicgen_model.set_generation_params(duration=demo_length_sec, cfg_coef=cfg_scale)
+                model = module.model # module.model_ema.ema_model if module.model_ema is not None else module.model
 
-                with torch.cuda.amp.autocast():
-                    print(f"Generating demo for cfg scale {cfg_scale}")
-                    fakes = module.musicgen_model.generate(prompts, progress=True)
+                print(f"Generating demo for cfg scale {cfg_scale}")
+                fakes = model.generate_audio(
+                    batch_size=self.num_demos,
+                    max_gen_len=demo_length_tokens, 
+                    conditioning=self.demo_conditioning, 
+                    #init_data = demo_reals_tokens,
+                    cfg_scale=cfg_scale,
+                    temp=1.0,
+                    top_p=0.95
+                )
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')
@@ -213,7 +235,7 @@ class MusicGenDemoCallback(pl.Callback):
                 log_dict = {}
                 
                 filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
-                fakes = fakes.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+                fakes = fakes.clamp(-1, 1).mul(32766).to(torch.int16).cpu()
                 torchaudio.save(filename, fakes, self.sample_rate)
 
                 log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,

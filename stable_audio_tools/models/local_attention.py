@@ -2,10 +2,13 @@ import torch
 
 from einops import rearrange
 from torch import nn
-from local_attention.transformer import LocalMHA, FeedForward
 
-from .adp import Attention
 from .blocks import AdaRMSNorm
+from .transformer import Attention, FeedForward, RotaryEmbedding, LayerNorm
+
+def checkpoint(function, *args, **kwargs):
+    kwargs.setdefault("use_reentrant", False)
+    return torch.utils.checkpoint.checkpoint(function, *args, **kwargs)
 
 # Adapted from https://github.com/lucidrains/local-attention/blob/master/local_attention/transformer.py
 class ContinuousLocalTransformer(nn.Module):
@@ -19,20 +22,14 @@ class ContinuousLocalTransformer(nn.Module):
         causal = False,
         local_attn_window_size = 64,
         heads = 8,
-        ff_mult = 4,
-        attn_dropout = 0.,
-        ff_dropout = 0.,
-        use_conv = True,
+        ff_mult = 2,
         cond_dim = 0,
         cross_attn_cond_dim = 0,
-        use_rotary_pos_emb = False,
         **kwargs
     ):
         super().__init__()
         
         dim_head = dim//heads
-
-        qk_scale = dim_head ** 0.5
 
         self.layers = nn.ModuleList([])
 
@@ -42,60 +39,65 @@ class ContinuousLocalTransformer(nn.Module):
 
         self.local_attn_window_size = local_attn_window_size
 
-        self.use_conv = use_conv
-
         self.cond_dim = cond_dim
 
         self.cross_attn_cond_dim = cross_attn_cond_dim
+
+        self.rotary_pos_emb = RotaryEmbedding(max(dim_head // 2, 32))
        
         for _ in range(depth):
 
             self.layers.append(nn.ModuleList([
-                AdaRMSNorm(dim, cond_dim, eps=1e-8) if cond_dim > 0 else nn.LayerNorm(dim, eps=1e-8),
-                LocalMHA(
-                    dim = dim, 
-                    dim_head = dim_head, 
-                    heads = heads, 
-                    qk_scale=qk_scale, 
-                    dropout = attn_dropout, 
-                    causal = causal, 
-                    window_size = local_attn_window_size, 
-                    prenorm = False, 
-                    use_rotary_pos_emb = use_rotary_pos_emb,
-                    **kwargs),
-                Attention(features=dim, num_heads=heads, head_features=dim_head, context_features=self.cross_attn_cond_dim) if self.cross_attn_cond_dim > 0 else nn.Identity(),
-                nn.Conv1d(dim, dim, kernel_size=3, padding=1) if use_conv else nn.Identity(),
-                FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
+                AdaRMSNorm(dim, cond_dim, eps=1e-8) if cond_dim > 0 else LayerNorm(dim),
+                Attention(
+                    dim=dim,
+                    dim_heads=dim_head,
+                    causal=causal,
+                    zero_init_output=True,
+                    natten_kernel_size=local_attn_window_size,
+                ),
+                Attention(
+                    dim=dim,
+                    dim_heads=dim_head,
+                    dim_context = cross_attn_cond_dim,
+                    zero_init_output=True
+                ) if self.cross_attn_cond_dim > 0 else nn.Identity(),
+                AdaRMSNorm(dim, cond_dim, eps=1e-8) if cond_dim > 0 else LayerNorm(dim),
+                FeedForward(dim = dim, mult = ff_mult, no_bias=True)
             ]))
 
     def forward(self, x, mask = None, cond = None, cross_attn_cond = None, cross_attn_cond_mask = None, prepend_cond = None):
  
-        x = self.project_in(x)
+        x = checkpoint(self.project_in, x)
 
         if prepend_cond is not None:
             x = torch.cat([prepend_cond, x], dim=1)
 
-        for norm, attn, xattn, conv, ff in self.layers:
+        pos_emb = self.rotary_pos_emb.forward_from_seq_len(x.shape[1])
 
+        for attn_norm, attn, xattn, ff_norm, ff in self.layers:
+
+            residual = x
             if cond is not None:
-                x = norm(x, cond)
+                x = checkpoint(attn_norm, x, cond)
             else:
-                x = norm(x)
+                x = checkpoint(attn_norm, x)
 
-            x = attn(x, mask = mask) + x
+            x = checkpoint(attn, x, mask = mask, rotary_pos_emb=pos_emb) + residual
 
             if cross_attn_cond is not None:
-                x = xattn(x, context=cross_attn_cond, context_mask=cross_attn_cond_mask) + x
+                x = checkpoint(xattn, x, context=cross_attn_cond, context_mask=cross_attn_cond_mask) + x
 
-            if self.use_conv:
-                x = rearrange(x, "b n c -> b c n")
-                x = conv(x) + x
-                x = rearrange(x, "b c n -> b n c")
-                
-            x = ff(x) + x
+            residual = x
 
-        return self.project_out(x)
+            if cond is not None:
+                x = checkpoint(ff_norm, x, cond)
+            else:
+                x = checkpoint(ff_norm, x)
 
+            x = checkpoint(ff, x) + residual
+
+        return checkpoint(self.project_out, x)
 
 class TransformerDownsampleBlock1D(nn.Module):
     def __init__(
@@ -106,7 +108,6 @@ class TransformerDownsampleBlock1D(nn.Module):
         heads = 12,
         downsample_ratio = 2,
         local_attn_window_size = 64,
-        use_conv = True,
         **kwargs
     ):
         super().__init__()
@@ -118,21 +119,17 @@ class TransformerDownsampleBlock1D(nn.Module):
             depth=depth,
             heads=heads,
             local_attn_window_size=local_attn_window_size,
-            use_conv=use_conv,
             **kwargs
         )
 
-        self.project_in = nn.Linear(in_channels, embed_dim) if in_channels != embed_dim else nn.Identity()
+        self.project_in = nn.Linear(in_channels, embed_dim, bias=False) if in_channels != embed_dim else nn.Identity()
 
-        self.project_down = nn.Sequential(
-            nn.Linear(embed_dim * self.downsample_ratio, embed_dim, bias=False),
-            nn.SiLU(),
-            nn.Linear(embed_dim, embed_dim, bias=False)
-        )
+        self.project_down = nn.Linear(embed_dim * self.downsample_ratio, embed_dim, bias=False)
+        
     
     def forward(self, x):
 
-        x = self.project_in(x)
+        x = checkpoint(self.project_in, x)
 
         # Compute
         x = self.transformer(x)
@@ -141,7 +138,7 @@ class TransformerDownsampleBlock1D(nn.Module):
         x = rearrange(x, "b (n r) c -> b n (c r)", r=self.downsample_ratio)
 
         # Project back to embed dim
-        x = self.project_down(x)
+        x = checkpoint(self.project_down, x)
 
         return x
 
@@ -154,7 +151,6 @@ class TransformerUpsampleBlock1D(nn.Module):
         heads = 12,
         upsample_ratio = 2,
         local_attn_window_size = 64,
-        use_conv = True,
         **kwargs
     ):
         super().__init__()
@@ -166,26 +162,20 @@ class TransformerUpsampleBlock1D(nn.Module):
             depth=depth,
             heads=heads,
             local_attn_window_size = local_attn_window_size,
-            use_conv=use_conv,
             **kwargs
         )
 
-        self.project_in = nn.Linear(in_channels, embed_dim) if in_channels != embed_dim else nn.Identity()
+        self.project_in = nn.Linear(in_channels, embed_dim, bias=False) if in_channels != embed_dim else nn.Identity()
 
-        self.project_up = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim * self.upsample_ratio, bias=False),
-            nn.SiLU(),
-            nn.Linear(embed_dim * self.upsample_ratio, embed_dim * self.upsample_ratio, bias=False)
-        )
-    
-
+        self.project_up = nn.Linear(embed_dim, embed_dim * self.upsample_ratio, bias=False)
+        
     def forward(self, x):
 
         # Project to embed dim
-        x = self.project_in(x)
+        x = checkpoint(self.project_in, x)
 
         # Project to increase channel dim
-        x = self.project_up(x)
+        x = checkpoint(self.project_up, x)
 
         # Trade channels for sequence length
         x = rearrange(x, "b n (c r) -> b (n r) c", r=self.upsample_ratio)
@@ -206,7 +196,6 @@ class TransformerEncoder1D(nn.Module):
         depths = [3, 3, 3, 3],
         ratios = [2, 2, 2, 2],
         local_attn_window_size = 64,
-        use_conv = True,
         **kwargs
     ):
         super().__init__()
@@ -224,21 +213,20 @@ class TransformerEncoder1D(nn.Module):
                     depth = depths[layer],
                     downsample_ratio = ratios[layer],
                     local_attn_window_size = local_attn_window_size,
-                    use_conv = use_conv,
                     **kwargs
                 )
             )
         
         self.layers = nn.Sequential(*layers)
 
-        self.project_in = nn.Linear(in_channels, embed_dims[0])
-        self.project_out = nn.Linear(embed_dims[-1], out_channels)
+        self.project_in = nn.Linear(in_channels, embed_dims[0], bias=False)
+        self.project_out = nn.Linear(embed_dims[-1], out_channels, bias=False)
 
     def forward(self, x):
         x = rearrange(x, "b c n -> b n c")
-        x = self.project_in(x)
+        x = checkpoint(self.project_in, x)
         x = self.layers(x)
-        x = self.project_out(x)
+        x = checkpoint(self.project_out, x)
         x = rearrange(x, "b n c -> b c n")
 
         return x
@@ -254,7 +242,6 @@ class TransformerDecoder1D(nn.Module):
         depths = [3, 3, 3, 3],
         ratios = [2, 2, 2, 2],
         local_attn_window_size = 64,
-        use_conv = True,
         **kwargs
     ):
 
@@ -273,20 +260,19 @@ class TransformerDecoder1D(nn.Module):
                     depth = depths[layer],
                     upsample_ratio = ratios[layer],
                     local_attn_window_size = local_attn_window_size,
-                    use_conv = use_conv,
                     **kwargs
                 )
             )
         
         self.layers = nn.Sequential(*layers)
 
-        self.project_in = nn.Linear(in_channels, embed_dims[0])
-        self.project_out = nn.Linear(embed_dims[-1], out_channels)
+        self.project_in = nn.Linear(in_channels, embed_dims[0], bias=False)
+        self.project_out = nn.Linear(embed_dims[-1], out_channels, bias=False)
 
     def forward(self, x):
         x = rearrange(x, "b c n -> b n c")
-        x = self.project_in(x)
+        x = checkpoint(self.project_in, x)
         x = self.layers(x)
-        x = self.project_out(x)
+        x = checkpoint(self.project_out, x)
         x = rearrange(x, "b n c -> b c n")
         return x

@@ -8,13 +8,12 @@ from torch.nn import functional as F
 from x_transformers import ContinuousTransformerWrapper, Encoder
 
 from .blocks import FourierFeatures
-from .local_attention import ContinuousLocalTransformer
-from .transformer import ContinuousTransformer
+from .transformer import ContinuousTransformer        
 
 class DiffusionTransformer(nn.Module):
     def __init__(self, 
         io_channels=32, 
-        input_length=512,
+        patch_size=1,
         embed_dim=768,
         cond_token_dim=0,
         project_cond_tokens=True,
@@ -23,7 +22,8 @@ class DiffusionTransformer(nn.Module):
         prepend_cond_dim=0,
         depth=12,
         num_heads=8,
-        transformer_type: tp.Literal["local_attn", "x-transformers", "continuous_transformer"] = "x-transformers",
+        transformer_type: tp.Literal["x-transformers", "continuous_transformer"] = "x-transformers",
+        global_cond_type: tp.Literal["prepend", "adaLN"] = "prepend",
         **kwargs):
 
         super().__init__()
@@ -73,29 +73,18 @@ class DiffusionTransformer(nn.Module):
 
         dim_in = io_channels + self.input_concat_dim
 
+        self.patch_size = patch_size
+
         # Transformer
 
         self.transformer_type = transformer_type
 
-        # # Default to prepending the global conditioning, use model-specific logic to override
-        # self.should_prepend_global_cond = True
+        self.global_cond_type = global_cond_type
 
-        if self.transformer_type == "local_attn":
-            self.transformer = ContinuousLocalTransformer(
-                dim=embed_dim,
-                dim_in=dim_in,
-                dim_out=io_channels,
-                depth=depth,
-                heads=num_heads,
-                cond_dim=embed_dim if global_cond_dim > 0 else 0,
-                cross_attn_cond_dim=embed_dim if cond_token_dim > 0 else 0,
-                **kwargs
-            )
-
-        elif self.transformer_type == "x-transformers":
+        if self.transformer_type == "x-transformers":
             self.transformer = ContinuousTransformerWrapper(
-                dim_in=dim_in,
-                dim_out=io_channels,
+                dim_in=dim_in * patch_size,
+                dim_out=io_channels * patch_size,
                 max_seq_len=0, #Not relevant without absolute positional embeds
                 attn_layers = Encoder(
                     dim=embed_dim,
@@ -115,18 +104,21 @@ class DiffusionTransformer(nn.Module):
 
         elif self.transformer_type == "continuous_transformer":
 
-            # # Continuous transformer has a specific way of handling global conditioning
-            # self.should_prepend_global_cond = False
+            global_dim = None
+
+            if self.global_cond_type == "adaLN":
+                # The global conditioning is projected to the embed_dim already at this point
+                global_dim = embed_dim
 
             self.transformer = ContinuousTransformer(
                 dim=embed_dim,
                 depth=depth,
                 dim_heads=embed_dim // num_heads,
-                dim_in=dim_in,
-                dim_out=io_channels,
+                dim_in=dim_in * patch_size,
+                dim_out=io_channels * patch_size,
                 cross_attend = cond_token_dim > 0,
                 cond_token_dim = cond_embed_dim,
-                #global_cond_dim=embed_dim,
+                global_cond_dim=global_dim,
                 **kwargs
             )
              
@@ -187,29 +179,37 @@ class DiffusionTransformer(nn.Module):
             global_embed = timestep_embed
 
         # Add the global_embed to the prepend inputs if there is no global conditioning support in the transformer
-        if prepend_inputs is None:
-            # Prepend inputs are just the global embed, and the mask is all ones
-            prepend_inputs = global_embed.unsqueeze(1)
-            prepend_mask = torch.ones((x.shape[0], 1), device=x.device, dtype=torch.bool)
-        else:
-            # Prepend inputs are the prepend conditioning + the global embed
-            prepend_inputs = torch.cat([prepend_inputs, global_embed.unsqueeze(1)], dim=1)
-            prepend_mask = torch.cat([prepend_mask, torch.ones((x.shape[0], 1), device=x.device, dtype=torch.bool)], dim=1)
+        if self.global_cond_type == "prepend":
+            if prepend_inputs is None:
+                # Prepend inputs are just the global embed, and the mask is all ones
+                prepend_inputs = global_embed.unsqueeze(1)
+                prepend_mask = torch.ones((x.shape[0], 1), device=x.device, dtype=torch.bool)
+            else:
+                # Prepend inputs are the prepend conditioning + the global embed
+                prepend_inputs = torch.cat([prepend_inputs, global_embed.unsqueeze(1)], dim=1)
+                prepend_mask = torch.cat([prepend_mask, torch.ones((x.shape[0], 1), device=x.device, dtype=torch.bool)], dim=1)
 
-        prepend_length = prepend_inputs.shape[1]
+            prepend_length = prepend_inputs.shape[1]
 
         x = self.preprocess_conv(x) + x
 
         x = rearrange(x, "b c t -> b t c")
 
-        if self.transformer_type == "local_attn":
-            if mask is not None:
-                mask = torch.cat([prepend_mask, mask], dim=1)
-            output = self.transformer(x, prepend_cond=prepend_inputs, cross_attn_cond=cross_attn_cond, cross_attn_cond_mask=cross_attn_cond_mask, mask=mask, **kwargs)
-        elif self.transformer_type == "x-transformers" or self.transformer_type == "continuous_transformer":
-            output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, **kwargs)
+        extra_args = {}
+
+        if self.global_cond_type == "adaLN":
+            extra_args["global_cond"] = global_embed
+
+        if self.patch_size > 1:
+            x = rearrange(x, "b (t p) c -> b t (c p)", p=self.patch_size)
+
+        if self.transformer_type == "x-transformers" or self.transformer_type == "continuous_transformer":
+            output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, **extra_args, **kwargs)
 
         output = rearrange(output, "b t c -> b c t")[:,:,prepend_length:]
+
+        if self.patch_size > 1:
+            output = rearrange(output, "b (c p) t -> b c (t p)", p=self.patch_size)
 
         output = self.postprocess_conv(output) + output
 
@@ -225,6 +225,7 @@ class DiffusionTransformer(nn.Module):
         negative_cross_attn_mask=None,
         input_concat_cond=None,
         global_embed=None,
+        negative_global_embed=None,
         prepend_cond=None,
         prepend_cond_mask=None,
         cfg_scale=1.0,
