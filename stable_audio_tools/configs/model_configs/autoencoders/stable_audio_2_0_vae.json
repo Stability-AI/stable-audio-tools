@@ -1,0 +1,122 @@
+{
+    "model_type": "autoencoder",
+    "sample_size": 65536,
+    "sample_rate": 44100,
+    "audio_channels": 2,
+    "model": {
+        "encoder": {
+            "type": "oobleck",
+            "config": {
+                "in_channels": 2,
+                "channels": 128,
+                "c_mults": [1, 2, 4, 8, 16],
+                "strides": [2, 4, 4, 8, 8],
+                "latent_dim": 128,
+                "use_snake": true
+            }
+        },
+        "decoder": {
+            "type": "oobleck",
+            "config": {
+                "out_channels": 2,
+                "channels": 128,
+                "c_mults": [1, 2, 4, 8, 16],
+                "strides": [2, 4, 4, 8, 8],
+                "latent_dim": 64,
+                "use_snake": true,
+                "final_tanh": false
+            }
+        },
+        "bottleneck": {
+            "type": "vae"
+        },
+        "latent_dim": 64,
+        "downsampling_ratio": 2048,
+        "io_channels": 2
+    },
+    "training": {
+        "learning_rate": 1.5e-4,
+        "warmup_steps": 0,
+        "use_ema": true,
+        "optimizer_configs": {
+            "autoencoder": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "betas": [0.8, 0.99],
+                        "lr": 1.5e-4,
+                        "weight_decay": 1e-3
+                    }
+                },
+                "scheduler": {
+                    "type": "InverseLR",
+                    "config": {
+                        "inv_gamma": 200000,
+                        "power": 0.5,
+                        "warmup": 0.999
+                    }
+                }
+            },
+            "discriminator": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "betas": [0.8, 0.99],
+                        "lr": 3e-4,
+                        "weight_decay": 1e-3
+                    }
+                },
+                "scheduler": {
+                    "type": "InverseLR",
+                    "config": {
+                        "inv_gamma": 200000,
+                        "power": 0.5,
+                        "warmup": 0.999
+                    }
+                }
+            }
+        },
+        "loss_configs": {
+            "discriminator": {
+                "type": "encodec",
+                "config": {
+                    "filters": 64,
+                    "n_ffts": [2048, 1024, 512, 256, 128],
+                    "hop_lengths": [512, 256, 128, 64, 32],
+                    "win_lengths": [2048, 1024, 512, 256, 128]
+                },
+                "weights": {
+                    "adversarial": 0.1,
+                    "feature_matching": 5.0
+                }
+            },
+            "spectral": {
+                "type": "mrstft",
+                "config": {
+                    "fft_sizes": [2048, 1024, 512, 256, 128, 64, 32],
+                    "hop_sizes": [512, 256, 128, 64, 32, 16, 8],
+                    "win_lengths": [2048, 1024, 512, 256, 128, 64, 32],
+                    "perceptual_weighting": true
+                },
+                "weights": {
+                    "mrstft": 1.0
+                }
+            },
+            "time": {
+                "type": "l1",
+                "weights": {
+                    "l1": 0.0
+                }
+            },
+            "bottleneck": {
+                "type": "kl",
+                "weights": {
+                    "kl": 1e-4
+                }
+            }
+        },
+        "demo": {
+            "demo_every": 2000
+        }
+    }
+}
