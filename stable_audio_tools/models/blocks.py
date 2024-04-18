@@ -301,10 +301,11 @@ class RMSNorm(nn.Module):
 def snake_beta(x, alpha, beta):
     return x + (1.0 / (beta + 0.000000001)) * pow(torch.sin(x * alpha), 2)
 
-try:
-    snake_beta = torch.compile(snake_beta)
-except RuntimeError:
-    pass
+# Disable snake_beta compliation until error is fixed
+# try:
+#     snake_beta = torch.compile(snake_beta)
+# except RuntimeError:
+#     pass
 
 # Adapted from https://github.com/NVIDIA/BigVGAN/blob/main/activations.py under MIT license
 # License available in LICENSES/LICENSE_NVIDIA.txt
