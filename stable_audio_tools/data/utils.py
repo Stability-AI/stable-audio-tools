@@ -5,18 +5,30 @@ import torch
 from torch import nn
 from typing import Tuple
 
+
 class PadCrop(nn.Module):
+    # Initialize the PadCrop module
     def __init__(self, n_samples, randomize=True):
         super().__init__()
-        self.n_samples = n_samples
-        self.randomize = randomize
+        self.n_samples = n_samples  # Target number of samples for each signal
+        self.randomize = randomize  # Whether to randomly select the crop start position
 
+    # Process the input signal
     def __call__(self, signal):
-        n, s = signal.shape
+        n, s = signal.shape  # n: number of signals, s: original number of samples per signal
+        
+        # If not randomizing, start from 0; otherwise, pick a random start position within a valid range
         start = 0 if (not self.randomize) else torch.randint(0, max(0, s - self.n_samples) + 1, []).item()
-        end = start + self.n_samples
+        
+        end = start + self.n_samples  # Calculate the end position for cropping
+        
+        # Create a zero tensor with the desired output shape
         output = signal.new_zeros([n, self.n_samples])
+        
+        # Fill the output tensor with values from the input signal starting from 'start' to 'end'
+        # If the original signal is shorter than n_samples, fill as much as possible
         output[:, :min(s, self.n_samples)] = signal[:, start:end]
+        
         return output
 
 class PadCrop_Normalized_T(nn.Module):
@@ -70,7 +82,7 @@ class PadCrop_Normalized_T(nn.Module):
         )
 
 class PhaseFlipper(nn.Module):
-    "Randomly invert the phase of a signal"
+    """Randomly invert the phase of a signal"""
     def __init__(self, p=0.5):
         super().__init__()
         self.p = p
