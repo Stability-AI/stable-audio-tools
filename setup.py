@@ -35,7 +35,7 @@ setup(
         'torchaudio>=2.0.2',
         'torchmetrics==0.11.4',
         'tqdm',
-        'transformers==4.33.3',
+        'transformers==4.36.0',
         'v-diffusion-pytorch==0.0.2',
         'vector-quantize-pytorch==1.9.14',
         'wandb==0.15.4',
