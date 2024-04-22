@@ -12,7 +12,7 @@ from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone, Continuo
 from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform, AudiocraftCompressionPretransform
 from .utils import multinomial, sample_top_k, sample_top_p
 
-from audiocraft.modules.codebooks_patterns import (
+from .codebooks_patterns import (
     CodebooksPatternProvider,
     DelayedPatternProvider,
     MusicLMPattern,
