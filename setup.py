@@ -8,7 +8,6 @@ setup(
     description='Training and inference tools for generative audio models from Stability AI',
     packages=find_packages(),  
     install_requires=[
-        'audiocraft==1.0.0',
         'aeiou==0.0.20',
         'alias-free-torch==0.0.6',
         'auraloss==0.4.0',
