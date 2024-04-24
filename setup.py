@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='stable-audio-tools',
-    version='0.0.12',
+    version='0.0.13',
     url='https://github.com/Stability-AI/stable-audio-tools.git',
     author='Stability AI',
     description='Training and inference tools for generative audio models from Stability AI',
@@ -35,7 +35,7 @@ setup(
         'torchaudio>=2.0.2',
         'torchmetrics==0.11.4',
         'tqdm',
-        'transformers==4.33.3',
+        'transformers',
         'v-diffusion-pytorch==0.0.2',
         'vector-quantize-pytorch==1.9.14',
         'wandb==0.15.4',
