@@ -11,7 +11,9 @@ from typing import Callable, Literal
 
 try:
     from flash_attn import flash_attn_func, flash_attn_kvpacked_func
-except ImportError:
+except ImportError as e:
+    print(e)
+    print('flash_attn not installed, disabling Flash Attention')
     flash_attn_kvpacked_func = None
     flash_attn_func = None
 
@@ -324,9 +326,14 @@ class Attention(nn.Module):
             causal = None
     ):
         batch, heads, q_len, _, k_len, device = *q.shape, k.shape[-2], q.device
-        
+        kv_heads = k.shape[1]
         # Recommended for multi-query single-key-value attention by Tri Dao
         # kv shape torch.Size([1, 512, 64]) -> torch.Size([1, 8, 512, 64])
+
+        if heads != kv_heads:
+            # Repeat interleave kv_heads to match q_heads
+            heads_per_kv_head = heads // kv_heads
+            k, v = map(lambda t: t.repeat_interleave(heads_per_kv_head, dim = 1), (k, v))
 
         if k.ndim == 3:
             k = rearrange(k, 'b ... -> b 1 ...').expand_as(q)
@@ -474,11 +481,12 @@ class Attention(nn.Module):
         elif self.use_fa_flash:
             assert final_attn_mask is None, 'masking not yet supported for Flash Attention 2'
             # Flash Attention 2 requires FP16 inputs
-            dtype_in = q.dtype
-            q, k, v = map(lambda t: rearrange(t, 'b h n d -> b n h d').half(), (q, k, v))
-            out = flash_attn_func(q, k, v, causal = causal).to(dtype_in)
-
-            out = rearrange(out, 'b n h d -> b h n d')
+            fa_dtype_in = q.dtype
+            q, k, v = map(lambda t: rearrange(t, 'b h n d -> b n h d').to(torch.float16), (q, k, v))
+            
+            out = flash_attn_func(q, k, v, causal = causal)
+            
+            out = rearrange(out.to(fa_dtype_in), 'b n h d -> b h n d')
 
         # Fall back to PyTorch implementation
         elif self.use_pt_flash:
@@ -486,6 +494,11 @@ class Attention(nn.Module):
 
         else:
             # Fall back to custom implementation
+            
+            if h != kv_h:
+                # Repeat interleave kv_heads to match q_heads
+                heads_per_kv_head = h // kv_h
+                k, v = map(lambda t: t.repeat_interleave(heads_per_kv_head, dim = 1), (k, v))
 
             scale = 1. / (q.shape[-1] ** 0.5)
 
@@ -513,7 +526,11 @@ class Attention(nn.Module):
         out = rearrange(out, ' b h n d -> b n (h d)')
 
         # Communicate between heads
-        out = self.to_out(out)
+        
+        with autocast(enabled = False):
+            out_dtype = out.dtype
+            out = out.to(torch.float32)
+            out = self.to_out(out).to(out_dtype)
 
         if mask is not None:
             mask = rearrange(mask, 'b n -> b n 1')
@@ -768,6 +785,7 @@ class ContinuousTransformer(nn.Module):
 
         # Iterate over the transformer layers
         for layer in self.layers:
+            #x = layer(x, rotary_pos_emb = rotary_pos_emb, global_cond=global_cond, **kwargs)
             x = checkpoint(layer, x, rotary_pos_emb = rotary_pos_emb, global_cond=global_cond, **kwargs)
 
         x = self.project_out(x)
