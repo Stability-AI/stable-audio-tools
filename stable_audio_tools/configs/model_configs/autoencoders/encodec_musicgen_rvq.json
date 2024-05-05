@@ -82,7 +82,8 @@
             }
         },
         "demo": {
-            "demo_every": 2000
+            "demo_every": 2000,
+            "max_num_sample": 4
         }
     }
 }

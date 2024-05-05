@@ -379,11 +379,13 @@ class AutoencoderDemoCallback(pl.Callback):
         self,
         demo_dl,
         demo_every=2000,
+        max_num_sample=4,
         sample_size=65536,
         sample_rate=48000
     ):
         super().__init__()
         self.demo_every = demo_every
+        self.max_num_sample = max_num_sample
         self.demo_samples = sample_size
         self.demo_dl = iter(demo_dl)
         self.sample_rate = sample_rate
@@ -396,7 +398,6 @@ class AutoencoderDemoCallback(pl.Callback):
             return
 
         self.last_demo_step = trainer.global_step
-
         module.eval()
 
         try:
@@ -406,51 +407,50 @@ class AutoencoderDemoCallback(pl.Callback):
             if demo_reals.ndim == 4 and demo_reals.shape[0] == 1:
                 demo_reals = demo_reals[0]
 
-            encoder_input = demo_reals
+            max_num_sample = min(demo_reals.shape[0], self.max_num_sample)
+            demo_reals = demo_reals[: max_num_sample]
 
-            encoder_input = encoder_input.to(module.device)
+            demo_reals = demo_reals.to(module.device)
+            encoder_input = demo_reals
 
             if module.force_input_mono:
                 encoder_input = encoder_input.mean(dim=1, keepdim=True)
 
-            demo_reals = demo_reals.to(module.device)
-
             with torch.no_grad():
                 if module.use_ema:
-
                     latents = module.autoencoder_ema.ema_model.encode(encoder_input)
-
                     fakes = module.autoencoder_ema.ema_model.decode(latents)
                 else:
                     latents = module.autoencoder.encode(encoder_input)
-
                     fakes = module.autoencoder.decode(latents)
 
-            # Interleave reals and fakes
-            reals_fakes = rearrange([demo_reals, fakes], 'i b d n -> (b i) d n')
+            sample_dir = os.path.join(trainer.default_root_dir, 'samples')
+            os.makedirs(sample_dir, exist_ok=True)
 
-            # Put the demos together
-            # reals_fakes = rearrange(reals_fakes, 'b d n -> d (b n)')
-            reals_fakes = rearrange(reals_fakes, 'b d n -> (b d) n')
+            # Create reconstruction table
+            table_recon = wandb.Table(columns=['id', 'target', 'target (spec)', 'recon', 'recon (spec)'])
+            for idx in range(max_num_sample):
+                target_audio = demo_reals[idx].to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+                recon_audio = fakes[idx].to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+
+                # add audio row
+                table_recon.add_row(
+                    f'audio_{idx}',
+                    wandb.Audio(target_audio.numpy().T, sample_rate=self.sample_rate),
+                    wandb.Image(audio_spectrogram_image(target_audio)),
+                    wandb.Audio(recon_audio.numpy().T, sample_rate=self.sample_rate),
+                    wandb.Image(audio_spectrogram_image(recon_audio))
+                )
+
+                # save only the first sample as an audio file
+                if idx == 0:
+                    torchaudio.save(f'{sample_dir}/{trainer.global_step:08}_target.wav', target_audio, self.sample_rate)
+                    torchaudio.save(f'{sample_dir}/{trainer.global_step:08}_recon.wav', recon_audio, self.sample_rate)
 
             log_dict = {}
-
-            sample_dir = os.path.join(trainer.default_root_dir, 'samples')
-            filename = f'recon_{trainer.global_step:08}.wav'
-            reals_fakes = reals_fakes.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-
-            filepath = os.path.join(sample_dir, filename)
-            os.makedirs(sample_dir, exist_ok=True)
-            torchaudio.save(filepath, reals_fakes, self.sample_rate)
-
-            log_dict['recon'] = wandb.Audio(filepath,
-                                            sample_rate=self.sample_rate,
-                                            caption='Reconstructed')
-
+            log_dict['reconstruction'] = table_recon
             log_dict['embeddings_3dpca'] = pca_point_cloud(latents)
             log_dict['embeddings_spec'] = wandb.Image(tokens_spectrogram_image(latents))
-
-            log_dict['recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
 
             trainer.logger.experiment.log(log_dict)
         except Exception as e:
