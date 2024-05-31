@@ -14,6 +14,13 @@ Global conditioning is the use of a single n-dimensional tensor to provide condi
 
 Signals used for global conditioning should be of the shape `[batch, channels]`.
 
+## Prepend conditioning
+Prepend conditioning involves prepending the conditioning tokens to the data tokens in the model, allowing for the information to be interpreted through the model's self-attention mechanism.
+
+This kind of conditioning is currently only supported by Transformer-based models such as diffusion transformers.
+
+Signals used for prepend conditioning should be of the shape `[batch, sequence, channels]`.
+
 ## Input concatenation
 Input concatenation applies a spatial conditioning signal to the model that correlates in the sequence dimension with the model's input, and is of the same length. The conditioning signal will be concatenated with the model's input data along the channel dimension. This can be used for things like inpainting information, melody conditioning, or for creating a diffusion autoencoder.
 
