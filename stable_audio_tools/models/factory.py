@@ -17,9 +17,6 @@ def create_model_from_config(model_config):
     elif model_type == 'diffusion_autoencoder':
         from .autoencoders import create_diffAE_from_config
         return create_diffAE_from_config(model_config)
-    elif model_type == 'musicgen':
-        from .musicgen import create_musicgen_from_config
-        return create_musicgen_from_config(model_config)
     elif model_type == 'lm':
         from .lm import create_audio_lm_from_config
         return create_audio_lm_from_config(model_config)

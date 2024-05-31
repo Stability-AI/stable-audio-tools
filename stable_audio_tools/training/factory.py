@@ -126,22 +126,6 @@ def create_training_wrapper_from_config(model_config, model):
             lr=training_config["learning_rate"],
             use_reconstruction_loss=training_config.get("use_reconstruction_loss", False)
         )
-    elif model_type == 'musicgen':
-        from .musicgen import MusicGenTrainingWrapper
-
-        ema_copy = create_model_from_config(model_config).lm
-
-        for name, param in model.lm.state_dict().items():
-            if isinstance(param, Parameter):
-                # backwards compatibility for serialized parameters
-                param = param.data
-            ema_copy.state_dict()[name].copy_(param)
-
-        return MusicGenTrainingWrapper(
-            model,
-            ema_copy=ema_copy,
-            lr=training_config["learning_rate"]
-        )
     elif model_type == 'lm':
         from .lm import AudioLanguageModelTrainingWrapper
 
@@ -231,18 +215,6 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_cfg_scales=demo_config["demo_cfg_scales"],
             **kwargs
         )
-    elif model_type == "musicgen":
-        from .musicgen import MusicGenDemoCallback
-
-        return MusicGenDemoCallback(
-            demo_every=demo_config.get("demo_every", 2000), 
-            sample_size=model_config["sample_size"],
-            sample_rate=model_config["sample_rate"],
-            demo_cfg_scales=demo_config["demo_cfg_scales"],
-            demo_conditioning=demo_config["demo_cond"],
-            **kwargs
-        )
-    
     elif model_type == "lm":
         from .lm import AudioLanguageModelDemoCallback
 

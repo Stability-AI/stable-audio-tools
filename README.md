@@ -105,7 +105,7 @@ The model config file defines all of the information needed to load a model for 
 The following properties are defined in the top level of the model configuration:
 
 - `model_type`
-  - The type of model being defined, currently limited to one of `"autoencoder", "diffusion_uncond", "diffusion_cond", "diffusion_cond_inpaint", "diffusion_autoencoder", "musicgen"`.
+  - The type of model being defined, currently limited to one of `"autoencoder", "diffusion_uncond", "diffusion_cond", "diffusion_cond_inpaint", "diffusion_autoencoder", "lm"`.
 - `sample_size`
   - The length of the audio provided to the model during training, in samples. For diffusion models, this is also the raw audio sample length used for inference.
 - `sample_rate`
@@ -121,7 +121,6 @@ The following properties are defined in the top level of the model configuration
 `stable-audio-tools` currently supports two kinds of data sources: local directories of audio files, and WebDataset datasets stored in Amazon S3. More information can be found in [the dataset config documentation](docs/datasets.md)
 
 # Todo
-- [ ] Add documentation for different model types
 - [ ] Add documentation for Gradio interface
 - [ ] Add troubleshooting section
 - [ ] Add contribution guidelines 

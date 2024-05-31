@@ -39,7 +39,7 @@ The model config file for an autoencoder should set the `model_type` to `autoenc
 # Training configs
 The `training` config in the autoencoder model config file should have the following properties:
 - `learning_rate`
-    - The learning rate to use during training, fixed learning rate is currently the only option
+    - The learning rate to use during training
 - `use_ema`
     - If true, a copy of the model weights is maintained during training and updated as an exponential moving average of the trained model's weights. 
     - Optional. Default: `false`
@@ -51,6 +51,9 @@ The `training` config in the autoencoder model config file should have the follo
     - Optional. Default: `false`
 - `loss_configs`
     - Configurations for the loss function calculation
+    - Optional
+- `optimizer_configs`
+    - Configuration for optimizers and schedulers
     - Optional
 
 ## Loss configs
