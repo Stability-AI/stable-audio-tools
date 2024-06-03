@@ -206,10 +206,7 @@ def rms_norm(x, scale, eps):
     scale = scale.to(dtype) * torch.rsqrt(mean_sq + eps)
     return x * scale.to(x.dtype)
 
-try:
-    rms_norm = torch.compile(rms_norm)
-except RuntimeError:
-    pass
+#rms_norm = torch.compile(rms_norm)
 
 class AdaRMSNorm(nn.Module):
     def __init__(self, features, cond_features, eps=1e-6):
@@ -304,7 +301,6 @@ class RMSNorm(nn.Module):
 def snake_beta(x, alpha, beta):
     return x + (1.0 / (beta + 0.000000001)) * pow(torch.sin(x * alpha), 2)
 
-# Disable snake_beta compliation until error is fixed
 # try:
 #     snake_beta = torch.compile(snake_beta)
 # except RuntimeError:

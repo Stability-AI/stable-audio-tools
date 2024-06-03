@@ -3,11 +3,8 @@ import torchaudio
 import wandb
 from einops import rearrange
 from safetensors.torch import save_file, save_model
-from torch import nn, optim
-from torch.nn import functional as F
-from torch.nn.parameter import Parameter
 from ema_pytorch import EMA
-import auraloss
+from .losses.auraloss import SumAndDifferenceSTFTLoss, MultiResolutionSTFTLoss
 import pytorch_lightning as pl
 from ..models.autoencoders import AudioAutoencoder
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss
@@ -126,10 +123,10 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         stft_loss_args = loss_config['spectral']['config']
 
         if self.autoencoder.out_channels == 2:
-            self.sdstft = auraloss.freq.SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
-            self.lrstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+            self.sdstft = SumAndDifferenceSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+            self.lrstft = MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
         else:
-            self.sdstft = auraloss.freq.MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
+            self.sdstft = MultiResolutionSTFTLoss(sample_rate=sample_rate, **stft_loss_args)
 
         # Discriminator
 

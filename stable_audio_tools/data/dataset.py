@@ -108,25 +108,35 @@ def get_audio_filenames(
         filenames.extend(files)
     return filenames
 
+class LocalDatasetConfig:
+    def __init__(
+        self,
+        id: str,
+        path: str,
+        custom_metadata_fn: Optional[Callable[[str], str]] = None
+    ):
+        self.id = id
+        self.path = path
+        self.custom_metadata_fn = custom_metadata_fn
+
 class SampleDataset(torch.utils.data.Dataset):
     def __init__(
         self, 
-        paths, 
+        configs,
         sample_size=65536, 
         sample_rate=48000, 
         keywords=None, 
-        relpath=None, 
         random_crop=True,
-        force_channels="stereo",
-        custom_metadata_fn: Optional[Callable[[str], str]] = None
+        force_channels="stereo"
     ):
         super().__init__()
         self.filenames = []
-        self.relpath = relpath
 
         self.augs = torch.nn.Sequential(
             PhaseFlipper(),
         )
+
+        self.root_paths = []
 
         self.pad_crop = PadCrop_Normalized_T(sample_size, sample_rate, randomize=random_crop)
 
@@ -137,13 +147,17 @@ class SampleDataset(torch.utils.data.Dataset):
             Mono() if self.force_channels == "mono" else torch.nn.Identity(),
         )
 
-        self.filenames = get_audio_filenames(paths, keywords)
-
-        print(f'Found {len(self.filenames)} files')
-
         self.sr = sample_rate
 
-        self.custom_metadata_fn = custom_metadata_fn
+        self.custom_metadata_fns = {}
+
+        for config in configs:
+            self.root_paths.append(config.path)
+            self.filenames.extend(get_audio_filenames(config.path, keywords))
+            if config.custom_metadata_fn is not None:
+                self.custom_metadata_fns[config.path] = config.custom_metadata_fn
+
+        print(f'Found {len(self.filenames)} files')
 
     def load_file(self, filename):
         ext = filename.split(".")[-1]
@@ -187,8 +201,9 @@ class SampleDataset(torch.utils.data.Dataset):
 
             info["path"] = audio_filename
 
-            if self.relpath is not None:
-                info["relpath"] = path.relpath(audio_filename, self.relpath)
+            for root_path in self.root_paths:
+                if root_path in audio_filename:
+                    info["relpath"] = path.relpath(audio_filename, root_path)
 
             info["timestamps"] = (t_start, t_end)
             info["seconds_start"] = seconds_start
@@ -199,9 +214,11 @@ class SampleDataset(torch.utils.data.Dataset):
 
             info["load_time"] = end_time - start_time
 
-            if self.custom_metadata_fn is not None:
-                custom_metadata = self.custom_metadata_fn(info, audio)
-                info.update(custom_metadata)
+            for custom_md_path in self.custom_metadata_fns.keys():
+                if custom_md_path in audio_filename:
+                    custom_metadata_fn = self.custom_metadata_fns[custom_md_path]
+                    custom_metadata = custom_metadata_fn(info, audio)
+                    info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
                     return self[random.randrange(len(self))]
@@ -366,18 +383,37 @@ class S3DatasetConfig:
         profile: Optional[str] = None,
     ):
         self.id = id
-        self.s3_path = s3_path
+        self.path = s3_path
         self.custom_metadata_fn = custom_metadata_fn
         self.profile = profile
         self.urls = []
 
     def load_data_urls(self):
         self.urls = get_all_s3_urls(
-            names=[self.s3_path],
+            names=[self.path],
             s3_url_prefix=None,
             recursive=True,
-            profiles={self.s3_path: self.profile} if self.profile else {},
+            profiles={self.path: self.profile} if self.profile else {},
         )
+
+        return self.urls
+
+class LocalWebDatasetConfig:
+    def __init__(
+        self,
+        id: str,
+        path: str,
+        custom_metadata_fn: Optional[Callable[[str], str]] = None,
+        profile: Optional[str] = None,
+    ):
+        self.id = id
+        self.path = path
+        self.custom_metadata_fn = custom_metadata_fn
+        self.urls = []
+
+    def load_data_urls(self):
+
+        self.urls = fast_scandir(self.path, ["tar"])[1]
 
         return self.urls
 
@@ -405,7 +441,7 @@ def collation_fn(samples):
             result.append(b)
         return result
 
-class S3WebDataLoader():
+class WebDatasetDataLoader():
     def __init__(
         self,
         datasets: List[S3DatasetConfig],
@@ -433,6 +469,9 @@ class S3WebDataLoader():
         # Flatten the list of lists of URLs
         urls = [url for dataset_urls in urls for url in dataset_urls]
 
+        # Shuffle the urls
+        random.shuffle(urls)
+
         self.dataset = wds.DataPipeline(
             wds.ResampledShards(urls),
             wds.tarfile_to_samples(handler=log_and_continue),
@@ -440,6 +479,7 @@ class S3WebDataLoader():
             wds.map(self.wds_preprocess, handler=log_and_continue),
             wds.select(is_valid_sample),
             wds.to_tuple("audio", "json", handler=log_and_continue),
+            #wds.shuffle(bufsize=1000, initial=5000),
             wds.batched(batch_size, partial=False, collation_fn=collation_fn),
         ).with_epoch(epoch_steps//num_workers if num_workers > 0 else epoch_steps)
 
@@ -499,7 +539,7 @@ class S3WebDataLoader():
             if dataset.custom_metadata_fn is None:
                 continue
         
-            if dataset.s3_path in sample["__url__"]:
+            if dataset.path in sample["__url__"]:
                 custom_metadata = dataset.custom_metadata_fn(sample["json"], audio)
                 sample["json"].update(custom_metadata)
 
@@ -530,43 +570,14 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
 
         assert audio_dir_configs is not None, "Directory configuration must be specified in datasets[\"dataset\"]"
 
-        training_dirs = []
-
-        custom_metadata_fn = None
-        custom_metadata_module_path = dataset_config.get("custom_metadata_module", None)
-
-        if custom_metadata_module_path is not None:
-            spec = importlib.util.spec_from_file_location("metadata_module", custom_metadata_module_path)
-            metadata_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(metadata_module)                
-
-            custom_metadata_fn = metadata_module.get_custom_metadata
+        configs = []
 
         for audio_dir_config in audio_dir_configs:
             audio_dir_path = audio_dir_config.get("path", None)
             assert audio_dir_path is not None, "Path must be set for local audio directory configuration"
-            training_dirs.append(audio_dir_path)
-
-        train_set = SampleDataset(
-            training_dirs,
-            sample_rate=sample_rate,
-            sample_size=sample_size,
-            random_crop=dataset_config.get("random_crop", True),
-            force_channels=force_channels,
-            custom_metadata_fn=custom_metadata_fn,
-            relpath=training_dirs[0] #TODO: Make relpath relative to each training dir
-        )
-
-        return torch.utils.data.DataLoader(train_set, batch_size, shuffle=True,
-                                num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
-
-    elif dataset_type == "s3":
-        dataset_configs = []
-
-        for s3_config in dataset_config["datasets"]:
 
             custom_metadata_fn = None
-            custom_metadata_module_path = s3_config.get("custom_metadata_module", None)
+            custom_metadata_module_path = audio_dir_config.get("custom_metadata_module", None)
 
             if custom_metadata_module_path is not None:
                 spec = importlib.util.spec_from_file_location("metadata_module", custom_metadata_module_path)
@@ -575,17 +586,63 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
 
                 custom_metadata_fn = metadata_module.get_custom_metadata
 
-            dataset_configs.append(
-                S3DatasetConfig(
-                    id=s3_config["id"],
-                    s3_path=s3_config["s3_path"],
-                    custom_metadata_fn=custom_metadata_fn,
-                    profile=s3_config.get("profile", None),
+            configs.append(
+                LocalDatasetConfig(
+                    id=audio_dir_config["id"],
+                    path=audio_dir_path,
+                    custom_metadata_fn=custom_metadata_fn
                 )
             )
 
-        return S3WebDataLoader(
-            dataset_configs,
+        train_set = SampleDataset(
+            configs,
+            sample_rate=sample_rate,
+            sample_size=sample_size,
+            random_crop=dataset_config.get("random_crop", True),
+            force_channels=force_channels
+        )
+
+        return torch.utils.data.DataLoader(train_set, batch_size, shuffle=True,
+                                num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
+
+    elif dataset_type in ["s3", "wds"]: # Support "s3" type for backwards compatibility
+        wds_configs = []
+
+        for wds_config in dataset_config["datasets"]:
+
+            custom_metadata_fn = None
+            custom_metadata_module_path = wds_config.get("custom_metadata_module", None)
+
+            if custom_metadata_module_path is not None:
+                spec = importlib.util.spec_from_file_location("metadata_module", custom_metadata_module_path)
+                metadata_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(metadata_module)                
+
+                custom_metadata_fn = metadata_module.get_custom_metadata
+
+            if "s3_path" in wds_config:
+
+                wds_configs.append(
+                    S3DatasetConfig(
+                        id=wds_config["id"],
+                        s3_path=wds_config["s3_path"],
+                        custom_metadata_fn=custom_metadata_fn,
+                        profile=wds_config.get("profile", None),
+                    )
+                )
+            
+            elif "path" in wds_config:
+                    
+                    wds_configs.append(
+                        LocalWebDatasetConfig(
+                            id=wds_config["id"],
+                            path=wds_config["path"],
+                            custom_metadata_fn=custom_metadata_fn
+                        )
+                    )
+
+        return WebDatasetDataLoader(
+            wds_configs,
             sample_rate=sample_rate,
             sample_size=sample_size,
             batch_size=batch_size,
@@ -593,5 +650,5 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
             num_workers=num_workers,
             persistent_workers=True,
             force_channels=force_channels,
-            epoch_steps=dataset_config.get("epoch_steps", 2000),
+            epoch_steps=dataset_config.get("epoch_steps", 2000)
         ).data_loader

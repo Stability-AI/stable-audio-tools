@@ -20,7 +20,7 @@ class Conditioner(nn.Module):
             self,
             dim: int,
             output_dim: int,
-            project_out: bool = False,
+            project_out: bool = False
             ):
         
         super().__init__()
@@ -264,7 +264,7 @@ class T5Conditioner(Conditioner):
             t5_model_name: str = "t5-base",
             max_length: str = 128,
             enable_grad: bool = False,
-            project_out: bool = False,
+            project_out: bool = False
     ):
         assert t5_model_name in self.T5_MODELS, f"Unknown T5 model name: {t5_model_name}"
         super().__init__(self.T5_MODEL_DIMS[t5_model_name], output_dim, project_out=project_out)
@@ -498,9 +498,12 @@ class MultiConditioner(nn.Module):
 
                 #Unwrap the condition info if it's a single-element list or tuple, this is to support collation functions that wrap everything in a list
                 if isinstance(x[condition_key], list) or isinstance(x[condition_key], tuple) and len(x[condition_key]) == 1:
-                    conditioner_inputs.append(x[condition_key][0])
+                    conditioner_input = x[condition_key][0]
+                    
                 else:
-                    conditioner_inputs.append(x[condition_key])
+                    conditioner_input = x[condition_key]
+
+                conditioner_inputs.append(conditioner_input)
             
             output[key] = conditioner(conditioner_inputs, device)
 

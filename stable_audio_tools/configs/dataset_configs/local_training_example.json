@@ -3,9 +3,9 @@
     "datasets": [
         {
             "id": "my_audio",
-            "path": "/path/to/audio/dataset/"
+            "path": "/path/to/audio/dataset/",
+            "custom_metadata_module": "/path/to/custom_metadata/custom_md_example.py"
         }
     ],
-    "custom_metadata_module": "/path/to/custom_metadata/custom_md_example.py",
     "random_crop": true
 }

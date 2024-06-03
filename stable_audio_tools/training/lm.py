@@ -25,6 +25,7 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
             use_ema=False, 
             ema_copy=None,
             optimizer_configs: dict = None,
+            pre_encoded=False
         ):
         super().__init__()
 
@@ -56,6 +57,8 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
                 print(f"WARNING: learning_rate and optimizer_configs both specified in config. Ignoring learning_rate and using optimizer_configs.")
 
         self.optimizer_configs = optimizer_configs
+
+        self.pre_encoded = pre_encoded
 
     def configure_optimizers(self):
         lm_opt_config = self.optimizer_configs['lm']
@@ -114,10 +117,19 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         if reals.ndim == 4 and reals.shape[0] == 1:
             reals = reals[0]
 
+        if not self.pre_encoded:
+            codes = self.model.pretransform.tokenize(reals)
+        else:
+            codes = reals
 
-        codes = self.model.pretransform.tokenize(reals)
-
-        padding_masks = torch.stack([md["padding_mask"][0] for md in metadata], dim=0).to(self.device) # Shape (batch_size, sequence_length)
+        padding_masks = []
+        for md in metadata:
+            if md["padding_mask"].ndim == 1:
+                padding_masks.append(md["padding_mask"])
+            else:
+                padding_masks.append(md["padding_mask"][0])
+            
+        padding_masks = torch.stack(padding_masks, dim=0).to(self.device) # Shape (batch_size, sequence_length)
 
         # Interpolate padding masks to the same length as the codes
         padding_masks = F.interpolate(padding_masks.unsqueeze(1).float(), size=codes.shape[2], mode='nearest').bool()
@@ -201,14 +213,14 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
         demo_length_tokens = self.demo_samples // module.model.pretransform.downsampling_ratio
 
-        # demo_reals = batch[0][:self.num_demos]
+        #demo_reals = batch[0][:self.num_demos]
 
         # if demo_reals.ndim == 4 and demo_reals.shape[0] == 1:
         #     demo_reals = demo_reals[0]
 
         #demo_reals_tokens = module.model.pretransform.tokenize(demo_reals)
 
-        # Limit to first 50 tokens
+        ##Limit to first 50 tokens
         #demo_reals_tokens = demo_reals_tokens[:, :, :50]
 
         try:
@@ -235,7 +247,8 @@ class AudioLanguageModelDemoCallback(pl.Callback):
                 log_dict = {}
                 
                 filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
-                fakes = fakes.clamp(-1, 1).mul(32766).to(torch.int16).cpu()
+                fakes = fakes / fakes.abs().max()
+                fakes = fakes.type(torch.float32).clamp(-1, 1).mul(32767).type(torch.int16).cpu()
                 torchaudio.save(filename, fakes, self.sample_rate)
 
                 log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,

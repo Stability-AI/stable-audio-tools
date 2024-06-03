@@ -494,7 +494,7 @@ class Attention(nn.Module):
 
         else:
             # Fall back to custom implementation
-            
+
             if h != kv_h:
                 # Repeat interleave kv_heads to match q_heads
                 heads_per_kv_head = h // kv_h
@@ -527,10 +527,11 @@ class Attention(nn.Module):
 
         # Communicate between heads
         
-        with autocast(enabled = False):
-            out_dtype = out.dtype
-            out = out.to(torch.float32)
-            out = self.to_out(out).to(out_dtype)
+        # with autocast(enabled = False):
+        #     out_dtype = out.dtype
+        #     out = out.to(torch.float32)
+        #     out = self.to_out(out).to(out_dtype)
+        out = self.to_out(out)
 
         if mask is not None:
             mask = rearrange(mask, 'b n -> b n 1')
@@ -754,9 +755,14 @@ class ContinuousTransformer(nn.Module):
         prepend_embeds = None,
         prepend_mask = None,
         global_cond = None,
+        return_info = False,
         **kwargs
     ):
         batch, seq, device = *x.shape[:2], x.device
+
+        info = {
+            "hidden_states": [],
+        }
 
         x = self.project_in(x)
 
@@ -780,7 +786,7 @@ class ContinuousTransformer(nn.Module):
         else:
             rotary_pos_emb = None
 
-        if self.use_sinusoidal_emb:
+        if self.use_sinusoidal_emb or self.use_abs_pos_emb:
             x = x + self.pos_emb(x)
 
         # Iterate over the transformer layers
@@ -788,6 +794,12 @@ class ContinuousTransformer(nn.Module):
             #x = layer(x, rotary_pos_emb = rotary_pos_emb, global_cond=global_cond, **kwargs)
             x = checkpoint(layer, x, rotary_pos_emb = rotary_pos_emb, global_cond=global_cond, **kwargs)
 
+            if return_info:
+                info["hidden_states"].append(x)
+
         x = self.project_out(x)
 
+        if return_info:
+            return x, info
+        
         return x
