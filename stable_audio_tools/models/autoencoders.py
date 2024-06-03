@@ -2,13 +2,12 @@ import torch
 import math
 import numpy as np
 
-from torch import nn, sin, pow
+from torch import nn
 from torch.nn import functional as F
 from torchaudio import transforms as T
 from alias_free_torch import Activation1d
 from dac.nn.layers import WNConv1d, WNConvTranspose1d
-from typing import List, Literal, Dict, Any, Callable
-from einops import rearrange
+from typing import Literal, Dict, Any
 
 from ..inference.sampling import sample
 from ..inference.utils import prepare_audio
@@ -16,7 +15,7 @@ from .blocks import SnakeBeta
 from .bottleneck import Bottleneck, DiscreteBottleneck
 from .diffusion import ConditionedDiffusionModel, DAU1DCondWrapper, UNet1DCondWrapper, DiTWrapper
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
-from .pretransforms import Pretransform, AutoencoderPretransform
+from .pretransforms import Pretransform
 
 def checkpoint(function, *args, **kwargs):
     kwargs.setdefault("use_reentrant", False)
@@ -43,15 +42,13 @@ class ResidualUnit(nn.Module):
         
         self.dilation = dilation
 
-        act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels)
-
         padding = (dilation * (7-1)) // 2
 
         self.layers = nn.Sequential(
-            act,
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels),
             WNConv1d(in_channels=in_channels, out_channels=out_channels,
                       kernel_size=7, dilation=dilation, padding=padding),
-            act,
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels),
             WNConv1d(in_channels=out_channels, out_channels=out_channels,
                       kernel_size=1)
         )
@@ -59,7 +56,6 @@ class ResidualUnit(nn.Module):
     def forward(self, x):
         res = x
         
-        # Disable checkpoint until tensor mismatch is fixed
         #x = checkpoint(self.layers, x)
         x = self.layers(x)
 
@@ -69,8 +65,6 @@ class EncoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride, use_snake=False, antialias_activation=False):
         super().__init__()
 
-        act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels)
-
         self.layers = nn.Sequential(
             ResidualUnit(in_channels=in_channels,
                          out_channels=in_channels, dilation=1, use_snake=use_snake),
@@ -78,7 +72,7 @@ class EncoderBlock(nn.Module):
                          out_channels=in_channels, dilation=3, use_snake=use_snake),
             ResidualUnit(in_channels=in_channels,
                          out_channels=in_channels, dilation=9, use_snake=use_snake),
-            act,
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels),
             WNConv1d(in_channels=in_channels, out_channels=out_channels,
                       kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2)),
         )
@@ -105,10 +99,8 @@ class DecoderBlock(nn.Module):
                                out_channels=out_channels,
                                kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2))
 
-        act = get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels)
-
         self.layers = nn.Sequential(
-            act,
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=in_channels),
             upsample_layer,
             ResidualUnit(in_channels=out_channels, out_channels=out_channels,
                          dilation=1, use_snake=use_snake),
@@ -197,6 +189,7 @@ class OobleckDecoder(nn.Module):
 
     def forward(self, x):
         return self.layers(x)
+
 
 class DACEncoderWrapper(nn.Module):
     def __init__(self, in_channels=1, **kwargs):

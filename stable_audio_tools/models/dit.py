@@ -8,7 +8,7 @@ from torch.nn import functional as F
 from x_transformers import ContinuousTransformerWrapper, Encoder
 
 from .blocks import FourierFeatures
-from .transformer import ContinuousTransformer        
+from .transformer import ContinuousTransformer
 
 class DiffusionTransformer(nn.Module):
     def __init__(self, 
@@ -18,6 +18,7 @@ class DiffusionTransformer(nn.Module):
         cond_token_dim=0,
         project_cond_tokens=True,
         global_cond_dim=0,
+        project_global_cond=True,
         input_concat_dim=0,
         prepend_cond_dim=0,
         depth=12,
@@ -55,10 +56,11 @@ class DiffusionTransformer(nn.Module):
 
         if global_cond_dim > 0:
             # Global conditioning
+            global_embed_dim = global_cond_dim if not project_global_cond else embed_dim
             self.to_global_embed = nn.Sequential(
-                nn.Linear(global_cond_dim, embed_dim, bias=False),
+                nn.Linear(global_cond_dim, global_embed_dim, bias=False),
                 nn.SiLU(),
-                nn.Linear(embed_dim, embed_dim, bias=False)
+                nn.Linear(global_embed_dim, global_embed_dim, bias=False)
             )
 
         if prepend_cond_dim > 0:
@@ -141,6 +143,7 @@ class DiffusionTransformer(nn.Module):
         global_embed=None,
         prepend_cond=None,
         prepend_cond_mask=None,
+        return_info=False,
         **kwargs):
 
         if cross_attn_cond is not None:
@@ -203,8 +206,15 @@ class DiffusionTransformer(nn.Module):
         if self.patch_size > 1:
             x = rearrange(x, "b (t p) c -> b t (c p)", p=self.patch_size)
 
-        if self.transformer_type == "x-transformers" or self.transformer_type == "continuous_transformer":
+        if self.transformer_type == "x-transformers":
             output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, **extra_args, **kwargs)
+        elif self.transformer_type == "continuous_transformer":
+            output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, return_info=return_info, **extra_args, **kwargs)
+
+            if return_info:
+                output, info = output
+        elif self.transformer_type == "mm_transformer":
+            output = self.transformer(x, context=cross_attn_cond, mask=mask, context_mask=cross_attn_cond_mask, **extra_args, **kwargs)
 
         output = rearrange(output, "b t c -> b c t")[:,:,prepend_length:]
 
@@ -212,6 +222,9 @@ class DiffusionTransformer(nn.Module):
             output = rearrange(output, "b (c p) t -> b c (t p)", p=self.patch_size)
 
         output = self.postprocess_conv(output) + output
+
+        if return_info:
+            return output, info
 
         return output
 
@@ -233,6 +246,7 @@ class DiffusionTransformer(nn.Module):
         causal=False,
         scale_phi=0.0,
         mask=None,
+        return_info=False,
         **kwargs):
 
         assert causal == False, "Causal mode is not supported for DiffusionTransformer"
@@ -327,21 +341,27 @@ class DiffusionTransformer(nn.Module):
                 global_embed = batch_global_cond,
                 prepend_cond = batch_prepend_cond,
                 prepend_cond_mask = batch_prepend_cond_mask,
+                return_info = return_info,
                 **kwargs)
+
+            if return_info:
+                batch_output, info = batch_output
 
             cond_output, uncond_output = torch.chunk(batch_output, 2, dim=0)
             cfg_output = uncond_output + (cond_output - uncond_output) * cfg_scale
 
+            # CFG Rescale
             if scale_phi != 0.0:
-
                 cond_out_std = cond_output.std(dim=1, keepdim=True)
                 out_cfg_std = cfg_output.std(dim=1, keepdim=True)
-
-                return scale_phi * (cfg_output * (cond_out_std/out_cfg_std)) + (1-scale_phi) * cfg_output
-
+                output = scale_phi * (cfg_output * (cond_out_std/out_cfg_std)) + (1-scale_phi) * cfg_output
             else:
+                output = cfg_output
+            
+            if return_info:
+                return output, info
 
-                return cfg_output
+            return output
             
         else:
             return self._forward(
@@ -354,5 +374,6 @@ class DiffusionTransformer(nn.Module):
                 prepend_cond=prepend_cond, 
                 prepend_cond_mask=prepend_cond_mask,
                 mask=mask,
+                return_info=return_info,
                 **kwargs
             )

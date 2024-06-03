@@ -81,3 +81,9 @@ def sample_top_p(probs: torch.Tensor, p: float) -> torch.Tensor:
     next_token = multinomial(probs_sort, num_samples=1)
     next_token = torch.gather(probs_idx, -1, next_token)
     return next_token
+
+def next_power_of_two(n):
+    return 2 ** (n - 1).bit_length()
+
+def next_multiple_of_64(n):
+    return ((n + 63) // 64) * 64

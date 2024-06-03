@@ -5,7 +5,7 @@ import math
 from torchaudio import transforms as T
 
 from .utils import prepare_audio
-from .sampling import sample, sample_k
+from .sampling import sample, sample_k, sample_rf
 from ..data.utils import PadCrop
 
 def generate_diffusion_uncond(
@@ -69,8 +69,14 @@ def generate_diffusion_uncond(
         mask = None
 
     # Now the generative AI part:
-    # k-diffusion denoising process go!
-    sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, device=device)
+
+    diff_objective = model.diffusion_objective
+
+    if diff_objective == "v":    
+        # k-diffusion denoising process go!
+        sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, device=device)
+    elif diff_objective == "rectified_flow":
+        sampled = sample_rf(model.model, noise, init_data=init_audio, steps=steps, **sampler_kwargs, device=device)
 
     # Denoising process done. 
     # If this is latent diffusion, decode latents back into audio
@@ -135,11 +141,16 @@ def generate_diffusion_cond(
     # Define the initial noise immediately after setting the seed
     noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
 
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
+    torch.backends.cudnn.benchmark = False
+
     # Conditioning
     assert conditioning is not None or conditioning_tensors is not None, "Must provide either conditioning or conditioning_tensors"
     if conditioning_tensors is None:
         conditioning_tensors = model.conditioner(conditioning, device)
-    conditioning_tensors = model.get_conditioning_inputs(conditioning_tensors)
+    conditioning_inputs = model.get_conditioning_inputs(conditioning_tensors)
 
     if negative_conditioning is not None or negative_conditioning_tensors is not None:
         
@@ -201,13 +212,33 @@ def generate_diffusion_cond(
     else:
         mask = None
 
+    model_dtype = next(model.model.parameters()).dtype
+    noise = noise.type(model_dtype)
+    conditioning_inputs = {k: v.type(model_dtype) if v is not None else v for k, v in conditioning_inputs.items()}
     # Now the generative AI part:
     # k-diffusion denoising process go!
-    sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, **conditioning_tensors, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
+
+    diff_objective = model.diffusion_objective
+
+    if diff_objective == "v":    
+        # k-diffusion denoising process go!
+        sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, **conditioning_inputs, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
+    elif diff_objective == "rectified_flow":
+
+        if "sigma_min" in sampler_kwargs:
+            del sampler_kwargs["sigma_min"]
+
+        if "sampler_type" in sampler_kwargs:
+            del sampler_kwargs["sampler_type"]
+
+        sampled = sample_rf(model.model, noise, init_data=init_audio, steps=steps, **sampler_kwargs, **conditioning_inputs, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
 
     # v-diffusion: 
     #sampled = sample(model.model, noise, steps, 0, **conditioning_tensors, embedding_scale=cfg_scale)
-
+    del noise
+    del conditioning_tensors
+    del conditioning_inputs
+    torch.cuda.empty_cache()
     # Denoising process done. 
     # If this is latent diffusion, decode latents back into audio
     if model.pretransform is not None and not return_latents:

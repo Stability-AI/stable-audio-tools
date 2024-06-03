@@ -1,4 +1,3 @@
-import torch
 from torch import nn
 from x_transformers import ContinuousTransformerWrapper, Decoder
 
@@ -151,6 +150,9 @@ class ContinuousTransformerAudioLMBackbone(AudioLMBackbone):
                 prepend_cond_mask = prepend_cond_mask.bool()
 
         if cross_attn_cond is not None:
+            # Cast cross_attn_cond to same dtype as self.to_cross_attn_embed
+            cross_attn_cond = cross_attn_cond.to(self.to_cross_attn_embed[0].weight.dtype)
+
             # Project the cross-attention conditioning to the embedding dimension
             cross_attn_cond = self.to_cross_attn_embed(cross_attn_cond)
 

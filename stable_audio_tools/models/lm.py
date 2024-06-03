@@ -5,20 +5,18 @@ import typing as tp
 from einops import rearrange
 from torch import nn
 
-from .autoencoders import AudioAutoencoder
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .factory import create_pretransform_from_config
 from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone, ContinuousTransformerAudioLMBackbone
 from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform, AudiocraftCompressionPretransform
 from .utils import multinomial, sample_top_k, sample_top_p
 
-from .codebooks_patterns import (
+from .codebook_patterns import (
     CodebooksPatternProvider,
     DelayedPatternProvider,
     MusicLMPattern,
     ParallelPatternProvider,
-    UnrolledPatternProvider,
-    VALLEPattern,
+    UnrolledPatternProvider
 )
 
 # Copied and modified from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/models/lm.py under MIT license
@@ -72,6 +70,19 @@ class AudioLanguageModel(nn.Module):
         assert num_quantizers == self.num_quantizers, "Number of quantizers in sequence must match number of quantizers in model"
 
         backbone_input = sum([self.embeds[i](sequence[:, i]) for i in range(num_quantizers)]) # [batch, seq_len, embed_dim]
+
+        dtype = next(self.parameters()).dtype
+
+        if cross_attn_cond is not None:
+            cross_attn_cond = cross_attn_cond.to(dtype)
+
+        if prepend_cond is not None:
+            prepend_cond = prepend_cond.to(dtype)
+
+            if prepend_cond_mask is not None:
+                prepend_cond_mask = prepend_cond_mask.to(dtype)
+            
+        backbone_input = backbone_input.to(dtype)
 
         output = self.backbone(
             backbone_input,
@@ -473,7 +484,6 @@ def create_audio_lm_from_config(config):
         'parallel': ParallelPatternProvider,
         'delay': DelayedPatternProvider,
         'unroll': UnrolledPatternProvider,
-        'valle': VALLEPattern,
         'musiclm': MusicLMPattern,
     }
 
