@@ -45,7 +45,7 @@ To load audio files and related metadata from .tar files in the WebDataset forma
 # Custom metadata
 To customize the metadata provided to the conditioners during model training, you can provide a separate custom metadata module to the dataset config. This metadata module should be a Python file that must contain a function called `get_custom_metadata` that takes in two parameters, `info`, and `audio`, and returns a dictionary. 
 
-For local training, the `info` parameter will contain a few pieces of information about the loaded audio file, such as the path, and information about how the audio was cropped from the original training sample. For S3 WebDataset datasets, it will also contain the metadata from the related JSON files. 
+For local training, the `info` parameter will contain a few pieces of information about the loaded audio file, such as the path, and information about how the audio was cropped from the original training sample. For WebDataset datasets, it will also contain the metadata from the related JSON files. 
 
 The `audio` parameter contains the audio sample that will be passed to the model at training time. This lets you analyze the audio for extra properties that you can then pass in as extra conditioning signals.
 
@@ -58,10 +58,10 @@ The dictionary returned from the `get_custom_metadata` function will have its pr
     "datasets": [
         {
             "id": "my_audio",
-            "path": "/path/to/audio/dataset/"
+            "path": "/path/to/audio/dataset/",
+            "custom_metadata_module": "/path/to/custom_metadata.py",
         }
     ],
-    "custom_metadata_module": "/path/to/custom_metadata.py",
     "random_crop": true
 }
 ```
