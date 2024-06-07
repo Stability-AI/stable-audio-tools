@@ -6,8 +6,8 @@ import gradio as gr
 import json 
 import torch
 import torchaudio
+import logging
 
-from aeiou.viz import audio_spectrogram_image
 from einops import rearrange
 from safetensors.torch import load_file
 from torch.nn import functional as F
@@ -19,6 +19,12 @@ from ..models.pretrained import get_pretrained_model
 from ..models.utils import load_ckpt_state_dict
 from ..inference.utils import prepare_audio
 from ..training.utils import copy_state_dict
+
+try:
+    from aeiou.viz import audio_spectrogram_image
+except ImportError:
+    audio_spectrogram_image = None
+    logging.warning("Could not import aeiou, audio spectrogram images will not be displayed")
 
 model = None
 sample_rate = 32000
@@ -137,6 +143,8 @@ def generate_cond(
 
     def progress_callback(callback_info):
         global preview_images
+        if not audio_spectrogram_image:
+            return
         denoised = callback_info["denoised"]
         current_step = callback_info["i"]
         sigma = callback_info["sigma"]
@@ -192,10 +200,11 @@ def generate_cond(
     audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
     torchaudio.save("output.wav", audio, sample_rate)
 
-    # Let's look at a nice spectrogram too
-    audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
+    if audio_spectrogram_image:
+        # Let's look at a nice spectrogram too
+        preview_images.insert(0, audio_spectrogram_image(audio, sample_rate=sample_rate))
 
-    return ("output.wav", [audio_spectrogram, *preview_images])
+    return ("output.wav", preview_images)
 
 def generate_uncond(
         steps=250,
@@ -290,9 +299,11 @@ def generate_uncond(
 
     torchaudio.save("output.wav", audio, sample_rate)
 
-    audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
+    if audio_spectrogram_image:
+        audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
+        preview_images.insert(0, audio_spectrogram)
 
-    return ("output.wav", [audio_spectrogram, *preview_images])
+    return ("output.wav", preview_images)
 
 def generate_lm(
         temperature=1.0,
