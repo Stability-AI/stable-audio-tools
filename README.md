@@ -45,7 +45,7 @@ The `run_gradio.py` script accepts the following command line arguments:
   - Optional
 - `--model-half`
   - If true, the model weights to half-precision
-  - Optonal
+  - Optional
 
 # Training
 
