@@ -7,6 +7,13 @@ for /f "delims=" %%i in ('python -c "import json; f=open(%config_path%); data=js
 
 set models_path=.\models\
 
+if not exist %models_path% (
+    mkdir %models_path%
+    echo No model found
+    pause
+    exit /b
+)
+
 if defined model_selected (
     for %%i in (.ckpt .safetensors .pth) do  (
         if exist %models_path%%model_selected%%%i (
