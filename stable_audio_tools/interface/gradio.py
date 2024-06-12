@@ -163,6 +163,7 @@ def generate_cond(
     else:
         mask_args = None 
 
+    seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1, dtype=np.uint32)
     # Do the audio generation
     audio = generate_diffusion_cond(
         model, 
@@ -188,12 +189,16 @@ def generate_cond(
     # Convert to WAV file
     audio = rearrange(audio, "b d n -> d (b n)")
     audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-    torchaudio.save("output.wav", audio, sample_rate)
+    
+    from stable_audio_tools.data.txt2audio_utils import create_output_path, save_generation_data
+    output_path = create_output_path(seed)
+    torchaudio.save(output_path, audio, sample_rate)
+    save_generation_data(output_path, prompt, negative_prompt, seconds_start, seconds_total, steps, preview_every, cfg_scale, seed, sampler_type, sigma_min, sigma_max, cfg_rescale)
 
     # Let's look at a nice spectrogram too
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
-    return ("output.wav", [audio_spectrogram, *preview_images])
+    return (output_path, [audio_spectrogram, *preview_images])
 
 def generate_uncond(
         steps=250,
@@ -380,6 +385,10 @@ def create_sampling_ui(model_config, inpainting=False):
         with gr.Column(scale=6):
             prompt = gr.Textbox(show_label=False, placeholder="Prompt")
             negative_prompt = gr.Textbox(show_label=False, placeholder="Negative prompt")
+            with gr.Row(elem_id="prompt_options"):
+                clear_prompt = gr.Button('\U0001f5d1\ufe0f')
+                paste_generation_data = gr.Button('\u2199\ufe0f')
+                insert_generation_data = gr.File(label="Insert generation data from output.wav", file_types=[".wav"], scale=0)
         generate_button = gr.Button("Generate", variant='primary', scale=1)
     
     model_conditioning_config = model_config["model"].get("conditioning", None)
@@ -492,11 +501,31 @@ def create_sampling_ui(model_config, inpainting=False):
 
         with gr.Column():
             audio_output = gr.Audio(label="Output audio", interactive=False)
-            audio_spectrogram_output = gr.Gallery(label="Output spectrogram", show_label=False)
-            send_to_init_button = gr.Button("Send to init audio", scale=1)
+            audio_spectrogram_output = gr.Gallery(label="Output spectrogram", show_label=False)            
+            with gr.Row():
+                open_outputs_folder = gr.Button("\U0001f4c1", scale=1)
+                send_to_init_button = gr.Button("Send to init audio", scale=1)
+            from stable_audio_tools.data.txt2audio_utils import open_outputs_path
+            open_outputs_folder.click(fn=open_outputs_path)
             send_to_init_button.click(fn=lambda audio: audio, inputs=[audio_output], outputs=[init_audio_input])
     
-    generate_button.click(fn=generate_cond, 
+    from stable_audio_tools.data.txt2audio_utils import get_generation_data
+    paste_generation_data.click(fn=get_generation_data, inputs=[insert_generation_data], outputs=[prompt, 
+                                                                                                negative_prompt, 
+                                                                                                seconds_start_slider, 
+                                                                                                seconds_total_slider,
+                                                                                                steps_slider,
+                                                                                                preview_every_slider,
+                                                                                                cfg_scale_slider,
+                                                                                                seed_textbox,
+                                                                                                sampler_type_dropdown,
+                                                                                                sigma_min_slider,
+                                                                                                sigma_max_slider,
+                                                                                                cfg_rescale_slider])
+    
+    clear_prompt.click(fn=lambda: ("", ""), outputs=[prompt, negative_prompt])
+    
+    generate_button.click(fn=generate_cond,
         inputs=inputs,
         outputs=[
             audio_output, 
@@ -506,7 +535,8 @@ def create_sampling_ui(model_config, inpainting=False):
 
 
 def create_txt2audio_ui(model_config):
-    with gr.Blocks() as ui:
+    from stable_audio_tools.data.txt2audio_utils import txt2audio_css
+    with gr.Blocks(css=txt2audio_css()) as ui:
         with gr.Tab("Generation"):
             create_sampling_ui(model_config) 
         with gr.Tab("Inpainting"):
