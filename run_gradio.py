@@ -15,7 +15,7 @@ def main(args):
         model_half=args.model_half
     )
     interface.queue()
-    interface.launch(share=True, auth=(args.username, args.password) if args.username is not None else None)
+    interface.launch(share=True, auth=(args.username, args.password) if args.username is not None else None, inbrowser=args.inbrowser if args.inbrowser is not None else False)
 
 if __name__ == "__main__":
     import argparse
@@ -27,5 +27,6 @@ if __name__ == "__main__":
     parser.add_argument('--username', type=str, help='Gradio username', required=False)
     parser.add_argument('--password', type=str, help='Gradio password', required=False)
     parser.add_argument('--model-half', action='store_true', help='Whether to use half precision', required=False)
+    parser.add_argument('--inbrowser', action='store_true', help='Open browser on launch', required=False)
     args = parser.parse_args()
     main(args)

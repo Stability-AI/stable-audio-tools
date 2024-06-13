@@ -162,3 +162,5 @@ cython_debug/
 *.ckpt
 *.wav
 wandb/*
+models/*
+outputs/*
