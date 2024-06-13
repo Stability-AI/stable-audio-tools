@@ -31,9 +31,15 @@ def get_models_data():
     return models
 
 def open_outputs_path():
-    outputs = f"outputs/{datetime.now().strftime('%Y-%m-%d')}"
+    outputs_dir = "outputs/"
+    outputs = outputs_dir + datetime.now().strftime('%Y-%m-%d')
+    
     if not os.path.isdir(outputs):
-        return
+        if not os.path.isdir(outputs_dir):
+            return
+        else:
+            outputs = outputs_dir
+            
     outputs = os.path.abspath(outputs)
     if platform.system() == "Windows":
         os.startfile(outputs)
