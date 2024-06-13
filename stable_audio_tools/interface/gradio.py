@@ -21,6 +21,7 @@ from ..training.utils import copy_state_dict
 model = None
 sample_rate = 32000
 sample_size = 1920000
+model_is_half = None
 
 def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, device="cuda", model_half=False):
     global model, sample_rate, sample_size
@@ -54,6 +55,32 @@ def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pr
     print(f"Done loading model")
 
     return model, model_config
+
+def unload_model():
+    global model
+    del model
+    model = None
+    torch.cuda.empty_cache()
+    gc.collect()
+
+def txt2audio_change_model(model_name):
+    from stable_audio_tools.data.txt2audio_utils import get_models_data, set_selected_model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    for model_data in get_models_data():
+        if model_data["name"] == model_name:
+            unload_model()
+            set_selected_model(model_name)
+            model_config = get_model_config_from_path(model_data["config_path"])
+            load_model(model_config, model_data["path"], model_half=model_is_half, device=device)
+            return model_name
+
+def get_model_config_from_path(model_config_path):
+    if model_config_path is not None:
+        # Load config from json file
+        with open(model_config_path) as f:
+            return json.load(f)
+    else:
+        return None
 
 def generate_cond(
         prompt,
@@ -533,10 +560,17 @@ def create_sampling_ui(model_config, inpainting=False):
         ], 
         api_name="generate")
 
-
 def create_txt2audio_ui(model_config):
-    from stable_audio_tools.data.txt2audio_utils import txt2audio_css
+    from stable_audio_tools.data.txt2audio_utils import txt2audio_css, get_models_name, get_config
     with gr.Blocks(css=txt2audio_css()) as ui:
+        with gr.Column(elem_id="selected_model_container"):
+            gr.HTML('<label>Selected Model</label>', visible=True)
+            with gr.Row():
+                selected_model_dropdown = gr.Dropdown(get_models_name(), container=False, value=get_config()["model_selected"], interactive=True, scale=0, min_width=265, elem_id="selected_model_items")
+                selected_model_dropdown.change(fn=txt2audio_change_model, inputs=selected_model_dropdown, outputs=selected_model_dropdown)                
+                refresh_models_button = gr.Button("\U0001f504", scale=0, elem_id="refresh_btn")
+                refresh_models_button.click(fn=lambda: gr.Dropdown(choices=get_models_name()), outputs=selected_model_dropdown)
+                gr.HTML('<div style="/* flex-grow: 2; */">', visible=True)
         with gr.Tab("Generation"):
             create_sampling_ui(model_config) 
         with gr.Tab("Inpainting"):
@@ -685,16 +719,12 @@ def create_lm_ui(model_config):
     return ui
 
 def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, model_half=False):
+    global model_is_half
+    model_is_half = model_half
 
     assert (pretrained_name is not None) ^ (model_config_path is not None and ckpt_path is not None), "Must specify either pretrained name or provide a model config and checkpoint, but not both"
 
-    if model_config_path is not None:
-        # Load config from json file
-        with open(model_config_path) as f:
-            model_config = json.load(f)
-    else:
-        model_config = None
-
+    model_config = get_model_config_from_path(model_config_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     _, model_config = load_model(model_config, ckpt_path, pretrained_name=pretrained_name, pretransform_ckpt_path=pretransform_ckpt_path, model_half=model_half, device=device)
     

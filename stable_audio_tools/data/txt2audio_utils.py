@@ -3,6 +3,32 @@ import os
 from datetime import datetime
 import platform
 import subprocess
+import json
+
+def set_selected_model(model_name):
+    if model_name in [data["name"] for data in get_models_data()]:
+        config = get_config()
+        config["model_selected"] = model_name   
+        with open("config/txt2audio.json", "w") as file:
+            json.dump(config, file, indent=4)
+            file.write('\n')
+
+def get_config():
+    with open("config/txt2audio.json") as file:
+        return json.load(file)
+
+def get_models_name():
+    return [model["name"] for model in get_models_data()]
+
+def get_models_data():
+    models = []
+    file_types = ['.ckpt', '.safetensors', '.pth']
+    for file in os.listdir("models/"):
+        _file = os.path.splitext(file)
+        config_path = f"models/{_file[0]}.json"
+        if _file[1] in file_types and os.path.isfile(config_path):
+            models.append({"name": _file[0], "path": f"models/{file}", "config_path": config_path})
+    return models
 
 def open_outputs_path():
     outputs = f"outputs/{datetime.now().strftime('%Y-%m-%d')}"
@@ -79,8 +105,26 @@ def save_generation_data(sound_path, prompt, negative_prompt, seconds_start, sec
 
 def txt2audio_css():
     return """
+    div.svelte-sa48pu>*, div.svelte-sa48pu>.form>* {
+        flex: 1 1 0%;
+        flex-wrap: wrap;
+        min-width: min(40px, 100%);
+    }
+
+    #refresh_btn {
+        padding: 0px;
+    }
+
+    #selected_model_items div.svelte-1sk0pyu div.wrap.svelte-1sk0pyu div.wrap-inner.svelte-1sk0pyu div.secondary-wrap.svelte-1sk0pyu input.border-none.svelte-1sk0pyu {
+        margin: 0px;
+    }
+
     #prompt_options {
         flex-wrap: nowrap;
         height: 40px;
+    }
+
+    #selected_model_container {
+        gap: 3px;
     }
     """
