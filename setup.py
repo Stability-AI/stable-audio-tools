@@ -16,6 +16,7 @@ setup(
         'einops-exts==0.0.4',
         'ema-pytorch==0.2.3',
         'encodec==0.1.1',
+        'ffmpeg-python==0.2.0',
         'gradio>=3.42.0',
         'huggingface_hub',
         'importlib-resources==5.12.0',

@@ -1,4 +1,7 @@
 import gc
+import os
+import ffmpeg
+
 import numpy as np
 import gradio as gr
 import json 
@@ -185,15 +188,29 @@ def generate_cond(
         scale_phi = cfg_rescale
     )
 
-    # Convert to WAV file
+    # Convert to WAV file (temporary file)
     audio = rearrange(audio, "b d n -> d (b n)")
     audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-    torchaudio.save("output.wav", audio, sample_rate)
+    torchaudio.save("temp_output.wav", audio, sample_rate)
+
+    # Trim audio using ffmpeg
+    trim_audio("temp_output.wav", "output.wav", seconds_total)
 
     # Let's look at a nice spectrogram too
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
     return ("output.wav", [audio_spectrogram, *preview_images])
+
+def trim_audio(input_file, output_file, duration_seconds):
+    stream = ffmpeg.input(input_file)
+    audio_stream = stream.audio
+    trimmed = audio_stream.filter('atrim', end=duration_seconds)
+    output = ffmpeg.output(trimmed, output_file)
+    if os.path.exists(output_file):
+        os.remove(output_file)
+    ffmpeg.run(output)
+    os.remove(input_file) # removes the temp file
+    return
 
 def generate_uncond(
         steps=250,
@@ -399,7 +416,7 @@ def create_sampling_ui(model_config, inpainting=False):
             with gr.Row(visible = has_seconds_start or has_seconds_total):
                 # Timing controls
                 seconds_start_slider = gr.Slider(minimum=0, maximum=512, step=1, value=0, label="Seconds start", visible=has_seconds_start)
-                seconds_total_slider = gr.Slider(minimum=0, maximum=512, step=1, value=sample_size//sample_rate, label="Seconds total", visible=has_seconds_total)
+                seconds_total_slider = gr.Slider(minimum=1, maximum=47, step=1, value=sample_size//sample_rate, label="Seconds total", visible=has_seconds_total)
             
             with gr.Row():
                 # Steps slider
