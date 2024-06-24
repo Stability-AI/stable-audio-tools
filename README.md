@@ -40,6 +40,9 @@ The `run_gradio.py` script accepts the following command line arguments:
 - `--pretransform-ckpt-path` 
   - Path to an unwrapped pretransform checkpoint, replaces the pretransform in the model, useful for testing out fine-tuned decoders
   - Optional
+- `--share`
+  - If true, a publicly shareable link will be created for the Gradio demo
+  - Optional
 - `--username` and `--password`
   - Used together to set a login for the Gradio demo
   - Optional
