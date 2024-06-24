@@ -1,4 +1,6 @@
 import gc
+import platform
+
 import numpy as np
 import gradio as gr
 import json 
@@ -665,7 +667,21 @@ def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pret
     else:
         model_config = None
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    try:
+        has_mps = platform.system() == "Darwin" and torch.backends.mps.is_available()
+    except Exception:
+        # In case this version of Torch doesn't even have `torch.backends.mps`...
+        has_mps = False
+
+    if has_mps:
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    print("Using device:", device)
+
     _, model_config = load_model(model_config, ckpt_path, pretrained_name=pretrained_name, pretransform_ckpt_path=pretransform_ckpt_path, model_half=model_half, device=device)
     
     model_type = model_config["model_type"]
