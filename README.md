@@ -88,7 +88,7 @@ Unwrapped model checkpoints are required for:
   - Fine-tuning a pre-trained model with a modified configuration (i.e. partial initialization)
 
 ## Fine-tuning
-Fine-tuning a model involves continuning a training run from a pre-trained checkpoint. 
+Fine-tuning a model involves continuing a training run from a pre-trained checkpoint. 
 
 To continue a training run from a wrapped model checkpoint, you can pass in the checkpoint path to `train.py` with the `--ckpt-path` flag.
 
