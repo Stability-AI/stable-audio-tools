@@ -1,0 +1,11 @@
+{
+  "dataset_type": "audio_dir",
+  "datasets": [
+      {
+          "id": "my_audio",
+          "path": "/content/stable_open_model_files/sample_songs/",
+          "custom_metadata_module": "/content/stable_open_model_files/custom_metadata.py"
+      }
+  ],
+  "random_crop": true
+}
