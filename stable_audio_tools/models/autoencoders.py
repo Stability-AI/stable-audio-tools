@@ -324,7 +324,7 @@ class AudioAutoencoder(nn.Module):
                 decoded = []
                 for i in range(latents.shape[0]):
                     decoded.append(self.bottleneck.decode(latents[i:i+1]))
-                decoded = torch.cat(decoded, dim=0)
+                latents = torch.cat(decoded, dim=0)
             else:
                 latents = self.bottleneck.decode(latents)
 
