@@ -342,6 +342,8 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
             if not self.pre_encoded:
                 with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+                    self.diffusion.pretransform.train(self.diffusion.pretransform.enable_grad)
+                    
                     diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
                     p.tick("pretransform")
 
