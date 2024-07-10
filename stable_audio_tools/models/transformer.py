@@ -276,7 +276,7 @@ class Attention(nn.Module):
         dim_context = None,
         causal = False,
         zero_init_output=True,
-        qk_norm = False,
+        qk_norm: Literal['l2', 'ln', 'none'] = 'none',
         natten_kernel_size = None
     ):
         super().__init__()
@@ -301,6 +301,10 @@ class Attention(nn.Module):
             nn.init.zeros_(self.to_out.weight)
 
         self.qk_norm = qk_norm
+
+        if self.qk_norm == "ln":
+            self.q_norm = nn.LayerNorm(dim_heads, elementwise_affine=True, eps=1.0e-6)
+            self.k_norm = nn.LayerNorm(dim_heads, elementwise_affine=True, eps=1.0e-6)
 
         # Using 1d neighborhood attention
         self.natten_kernel_size = natten_kernel_size
@@ -416,9 +420,12 @@ class Attention(nn.Module):
             q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (q, k, v))
         
         # Normalize q and k for cosine sim attention
-        if self.qk_norm:
+        if self.qk_norm == "l2":
             q = F.normalize(q, dim=-1)
             k = F.normalize(k, dim=-1)
+        elif self.qk_norm == "ln":
+            q = self.q_norm(q)
+            k = self.k_norm(k)
 
         if rotary_pos_emb is not None and not has_context:
             freqs, _ = rotary_pos_emb
