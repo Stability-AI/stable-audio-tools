@@ -1,6 +1,7 @@
+from torchaudio import transforms as T
+
 from ..data.utils import PadCrop
 
-from torchaudio import transforms as T
 
 def set_audio_channels(audio, target_channels):
     if target_channels == 1:
@@ -14,8 +15,9 @@ def set_audio_channels(audio, target_channels):
             audio = audio[:, :2, :]
     return audio
 
+
 def prepare_audio(audio, in_sr, target_sr, target_length, target_channels, device):
-    
+
     audio = audio.to(device)
 
     if in_sr != target_sr:

@@ -1,11 +1,12 @@
 """The 1D discrete wavelet transform for PyTorch."""
 
-from einops import rearrange
+from typing import Literal
+
 import pywt
 import torch
+from einops import rearrange
 from torch import nn
 from torch.nn import functional as F
-from typing import Literal
 
 
 def get_filter_bank(wavelet):
@@ -14,11 +15,14 @@ def get_filter_bank(wavelet):
         filt = filt[:, 1:]
     return filt
 
+
 class WaveletEncode1d(nn.Module):
-    def __init__(self, 
-                 channels, 
-                 levels,
-                 wavelet: Literal["bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"] = "bior4.4"):
+    def __init__(
+        self,
+        channels,
+        levels,
+        wavelet: Literal["bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"] = "bior4.4",
+    ):
         super().__init__()
         self.wavelet = wavelet
         self.channels = channels
@@ -39,18 +43,18 @@ class WaveletEncode1d(nn.Module):
             pad = self.kernel.shape[-1] // 2
             low = F.pad(low, (pad, pad), "reflect")
             low = F.conv1d(low, self.kernel, stride=2)
-            rest = rearrange(
-                rest, "n (c c2) (l l2) -> n (c l2 c2) l", l2=2, c2=self.channels
-            )
+            rest = rearrange(rest, "n (c c2) (l l2) -> n (c l2 c2) l", l2=2, c2=self.channels)
             x = torch.cat([low, rest], dim=1)
         return x
 
 
 class WaveletDecode1d(nn.Module):
-    def __init__(self, 
-                 channels, 
-                 levels,
-                 wavelet: Literal["bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"] = "bior4.4"):
+    def __init__(
+        self,
+        channels,
+        levels,
+        wavelet: Literal["bior2.2", "bior2.4", "bior2.6", "bior2.8", "bior4.4", "bior6.8"] = "bior4.4",
+    ):
         super().__init__()
         self.wavelet = wavelet
         self.channels = channels
@@ -71,12 +75,8 @@ class WaveletDecode1d(nn.Module):
             low = rearrange(low, "n (l2 c) l -> n c (l l2)", l2=2)
             low = F.pad(low, (pad, pad), "reflect")
             low = rearrange(low, "n c (l l2) -> n (l2 c) l", l2=2)
-            low = F.conv_transpose1d(
-                low, self.kernel, stride=2, padding=self.kernel.shape[-1] // 2
-            )
+            low = F.conv_transpose1d(low, self.kernel, stride=2, padding=self.kernel.shape[-1] // 2)
             low = low[..., pad - 1 : -pad]
-            rest = rearrange(
-                rest, "n (c l2 c2) l -> n (c c2) (l l2)", l2=2, c2=self.channels
-            )
+            rest = rearrange(rest, "n (c l2 c2) l -> n (c c2) (l l2)", l2=2, c2=self.channels)
             x = torch.cat([low, rest], dim=1)
         return x

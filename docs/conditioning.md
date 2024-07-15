@@ -27,7 +27,7 @@ Input concatenation applies a spatial conditioning signal to the model that corr
 Signals used for input concatenation conditioning should be of the shape `[batch, channels, sequence]` and must be the same length as the model's input.
 
 # Conditioners and conditioning configs
-`stable-audio-tools` uses Conditioner modules to translate human-readable metadata such as text prompts or a number of seconds into tensors that the model can take as input. 
+`stable-audio-tools` uses Conditioner modules to translate human-readable metadata such as text prompts or a number of seconds into tensors that the model can take as input.
 
 Each conditioner has a corresponding `id` that it expects to find in the conditioning dictionary provided during training or inference. Each conditioner takes in the relevant conditioning data and returns a tuple containing the corresponding tensor and a mask.
 
@@ -35,7 +35,7 @@ The ConditionedDiffusionModelWrapper manages the translation between the user-pr
 
 To apply conditioning to a model, you must provide a `conditioning` configuration in the model's config. At the moment, we only support conditioning diffusion models though the `diffusion_cond` model type.
 
-The `conditioning` configuration should contain a `configs` array, which allows you to define multiple conditioning signals. 
+The `conditioning` configuration should contain a `configs` array, which allows you to define multiple conditioning signals.
 
 Each item in `configs` array should define the `id` for the corresponding metadata, the type of conditioner to be used, and the config for that conditioner.
 
@@ -74,7 +74,7 @@ If you set `enable_grad` to `true`, the T5 model will be un-frozen and saved wit
 
 T5 encodings are only compatible with cross attention conditioning.
 
-#### Example config 
+#### Example config
 ```json
 {
     "id": "prompt",

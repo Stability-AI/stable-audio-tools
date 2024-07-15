@@ -1,20 +1,33 @@
+import typing as tp
+from functools import partial
+from time import time
+
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from functools import partial
-import numpy as np
-import typing as tp
 
-from .blocks import ResConvBlock, FourierFeatures, Upsample1d, Upsample1d_2, Downsample1d, Downsample1d_2, SelfAttention1d, SkipBlock, expand_to_planes
-from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
+from ..inference.generation import generate_diffusion_cond
+from .adp import UNet1d, UNetCFG1d
+from .blocks import (
+    Downsample1d,
+    Downsample1d_2,
+    FourierFeatures,
+    ResConvBlock,
+    SelfAttention1d,
+    SkipBlock,
+    Upsample1d,
+    Upsample1d_2,
+    expand_to_planes,
+)
+from .conditioners import (
+    MultiConditioner,
+    create_multi_conditioner_from_conditioning_config,
+)
 from .dit import DiffusionTransformer
 from .factory import create_pretransform_from_config
 from .pretransforms import Pretransform
-from ..inference.generation import generate_diffusion_cond
 
-from .adp import UNetCFG1d, UNet1d
-
-from time import time
 
 class Profiler:
 
@@ -33,6 +46,7 @@ class Profiler:
         rep += 80 * "=" + "\n\n\n"
         return rep
 
+
 class DiffusionModel(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -40,15 +54,16 @@ class DiffusionModel(nn.Module):
     def forward(self, x, t, **kwargs):
         raise NotImplementedError()
 
+
 class DiffusionModelWrapper(nn.Module):
     def __init__(
-                self,
-                model: DiffusionModel,
-                io_channels,
-                sample_size,
-                sample_rate,
-                min_input_length,
-                pretransform: tp.Optional[Pretransform] = None,
+        self,
+        model: DiffusionModel,
+        io_channels,
+        sample_size,
+        sample_rate,
+        min_input_length,
+        pretransform: tp.Optional[Pretransform] = None,
     ):
         super().__init__()
         self.io_channels = io_channels
@@ -66,54 +81,61 @@ class DiffusionModelWrapper(nn.Module):
     def forward(self, x, t, **kwargs):
         return self.model(x, t, **kwargs)
 
+
 class ConditionedDiffusionModel(nn.Module):
-    def __init__(self,
-                *args,
-                supports_cross_attention: bool = False,
-                supports_input_concat: bool = False,
-                supports_global_cond: bool = False,
-                supports_prepend_cond: bool = False,
-                **kwargs):
+    def __init__(
+        self,
+        *args,
+        supports_cross_attention: bool = False,
+        supports_input_concat: bool = False,
+        supports_global_cond: bool = False,
+        supports_prepend_cond: bool = False,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.supports_cross_attention = supports_cross_attention
         self.supports_input_concat = supports_input_concat
         self.supports_global_cond = supports_global_cond
         self.supports_prepend_cond = supports_prepend_cond
 
-    def forward(self,
-                x: torch.Tensor,
-                t: torch.Tensor,
-                cross_attn_cond: torch.Tensor = None,
-                cross_attn_mask: torch.Tensor = None,
-                input_concat_cond: torch.Tensor = None,
-                global_embed: torch.Tensor = None,
-                prepend_cond: torch.Tensor = None,
-                prepend_cond_mask: torch.Tensor = None,
-                cfg_scale: float = 1.0,
-                cfg_dropout_prob: float = 0.0,
-                batch_cfg: bool = False,
-                rescale_cfg: bool = False,
-                **kwargs):
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        cross_attn_cond: torch.Tensor = None,
+        cross_attn_mask: torch.Tensor = None,
+        input_concat_cond: torch.Tensor = None,
+        global_embed: torch.Tensor = None,
+        prepend_cond: torch.Tensor = None,
+        prepend_cond_mask: torch.Tensor = None,
+        cfg_scale: float = 1.0,
+        cfg_dropout_prob: float = 0.0,
+        batch_cfg: bool = False,
+        rescale_cfg: bool = False,
+        **kwargs,
+    ):
         raise NotImplementedError()
+
 
 class ConditionedDiffusionModelWrapper(nn.Module):
     """
     A diffusion model that takes in conditioning
     """
+
     def __init__(
-            self,
-            model: ConditionedDiffusionModel,
-            conditioner: MultiConditioner,
-            io_channels,
-            sample_rate,
-            min_input_length: int,
-            diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
-            pretransform: tp.Optional[Pretransform] = None,
-            cross_attn_cond_ids: tp.List[str] = [],
-            global_cond_ids: tp.List[str] = [],
-            input_concat_ids: tp.List[str] = [],
-            prepend_cond_ids: tp.List[str] = [],
-            ):
+        self,
+        model: ConditionedDiffusionModel,
+        conditioner: MultiConditioner,
+        io_channels,
+        sample_rate,
+        min_input_length: int,
+        diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
+        pretransform: tp.Optional[Pretransform] = None,
+        cross_attn_cond_ids: tp.List[str] = [],
+        global_cond_ids: tp.List[str] = [],
+        input_concat_ids: tp.List[str] = [],
+        prepend_cond_ids: tp.List[str] = [],
+    ):
         super().__init__()
 
         self.model = model
@@ -195,7 +217,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
                 "negative_cross_attn_cond": cross_attention_input,
                 "negative_cross_attn_mask": cross_attention_masks,
                 "negative_global_cond": global_cond,
-                "negative_input_concat_cond": input_concat_cond
+                "negative_input_concat_cond": input_concat_cond,
             }
         else:
             return {
@@ -204,7 +226,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
                 "global_cond": global_cond,
                 "input_concat_cond": input_concat_cond,
                 "prepend_cond": prepend_cond,
-                "prepend_cond_mask": prepend_cond_mask
+                "prepend_cond_mask": prepend_cond_mask,
             }
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: tp.Dict[str, tp.Any], **kwargs):
@@ -213,12 +235,9 @@ class ConditionedDiffusionModelWrapper(nn.Module):
     def generate(self, *args, **kwargs):
         return generate_diffusion_cond(self, *args, **kwargs)
 
+
 class UNetCFG1DWrapper(ConditionedDiffusionModel):
-    def __init__(
-        self,
-        *args,
-        **kwargs
-    ):
+    def __init__(self, *args, **kwargs):
         super().__init__(supports_cross_attention=True, supports_global_cond=True, supports_input_concat=True)
 
         self.model = UNetCFG1d(*args, **kwargs)
@@ -227,24 +246,26 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
             for param in self.model.parameters():
                 param *= 0.5
 
-    def forward(self,
-                x,
-                t,
-                cross_attn_cond=None,
-                cross_attn_mask=None,
-                input_concat_cond=None,
-                global_cond=None,
-                cfg_scale=1.0,
-                cfg_dropout_prob: float = 0.0,
-                batch_cfg: bool = False,
-                rescale_cfg: bool = False,
-                negative_cross_attn_cond=None,
-                negative_cross_attn_mask=None,
-                negative_global_cond=None,
-                negative_input_concat_cond=None,
-                prepend_cond=None,
-                prepend_cond_mask=None,
-                **kwargs):
+    def forward(
+        self,
+        x,
+        t,
+        cross_attn_cond=None,
+        cross_attn_mask=None,
+        input_concat_cond=None,
+        global_cond=None,
+        cfg_scale=1.0,
+        cfg_dropout_prob: float = 0.0,
+        batch_cfg: bool = False,
+        rescale_cfg: bool = False,
+        negative_cross_attn_cond=None,
+        negative_cross_attn_mask=None,
+        negative_global_cond=None,
+        negative_input_concat_cond=None,
+        prepend_cond=None,
+        prepend_cond_mask=None,
+        **kwargs,
+    ):
         p = Profiler()
 
         p.tick("start")
@@ -266,19 +287,17 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
             rescale_cfg=rescale_cfg,
             negative_embedding=negative_cross_attn_cond,
             negative_embedding_mask=negative_cross_attn_mask,
-            **kwargs)
+            **kwargs,
+        )
 
         p.tick("UNetCFG1D forward")
 
-        #print(f"Profiler: {p}")
+        # print(f"Profiler: {p}")
         return outputs
 
+
 class UNet1DCondWrapper(ConditionedDiffusionModel):
-    def __init__(
-        self,
-        *args,
-        **kwargs
-    ):
+    def __init__(self, *args, **kwargs):
         super().__init__(supports_cross_attention=False, supports_global_cond=True, supports_input_concat=True)
 
         self.model = UNet1d(*args, **kwargs)
@@ -287,50 +306,43 @@ class UNet1DCondWrapper(ConditionedDiffusionModel):
             for param in self.model.parameters():
                 param *= 0.5
 
-    def forward(self,
-                x,
-                t,
-                input_concat_cond=None,
-                global_cond=None,
-                cross_attn_cond=None,
-                cross_attn_mask=None,
-                prepend_cond=None,
-                prepend_cond_mask=None,
-                cfg_scale=1.0,
-                cfg_dropout_prob: float = 0.0,
-                batch_cfg: bool = False,
-                rescale_cfg: bool = False,
-                negative_cross_attn_cond=None,
-                negative_cross_attn_mask=None,
-                negative_global_cond=None,
-                negative_input_concat_cond=None,
-                **kwargs):
+    def forward(
+        self,
+        x,
+        t,
+        input_concat_cond=None,
+        global_cond=None,
+        cross_attn_cond=None,
+        cross_attn_mask=None,
+        prepend_cond=None,
+        prepend_cond_mask=None,
+        cfg_scale=1.0,
+        cfg_dropout_prob: float = 0.0,
+        batch_cfg: bool = False,
+        rescale_cfg: bool = False,
+        negative_cross_attn_cond=None,
+        negative_cross_attn_mask=None,
+        negative_global_cond=None,
+        negative_input_concat_cond=None,
+        **kwargs,
+    ):
 
         channels_list = None
         if input_concat_cond is not None:
 
             # Interpolate input_concat_cond to the same length as x
             if input_concat_cond.shape[2] != x.shape[2]:
-                input_concat_cond = F.interpolate(input_concat_cond, (x.shape[2], ), mode='nearest')
+                input_concat_cond = F.interpolate(input_concat_cond, (x.shape[2],), mode="nearest")
 
             channels_list = [input_concat_cond]
 
-        outputs = self.model(
-            x,
-            t,
-            features=global_cond,
-            channels_list=channels_list,
-            **kwargs)
+        outputs = self.model(x, t, features=global_cond, channels_list=channels_list, **kwargs)
 
         return outputs
 
+
 class UNet1DUncondWrapper(DiffusionModel):
-    def __init__(
-        self,
-        in_channels,
-        *args,
-        **kwargs
-    ):
+    def __init__(self, in_channels, *args, **kwargs):
         super().__init__()
 
         self.model = UNet1d(in_channels=in_channels, *args, **kwargs)
@@ -344,12 +356,9 @@ class UNet1DUncondWrapper(DiffusionModel):
     def forward(self, x, t, **kwargs):
         return self.model(x, t, **kwargs)
 
+
 class DAU1DCondWrapper(ConditionedDiffusionModel):
-    def __init__(
-        self,
-        *args,
-        **kwargs
-    ):
+    def __init__(self, *args, **kwargs):
         super().__init__(supports_cross_attention=False, supports_global_cond=False, supports_input_concat=True)
 
         self.model = DiffusionAttnUnet1D(*args, **kwargs)
@@ -358,40 +367,43 @@ class DAU1DCondWrapper(ConditionedDiffusionModel):
             for param in self.model.parameters():
                 param *= 0.5
 
-    def forward(self,
-                x,
-                t,
-                input_concat_cond=None,
-                cross_attn_cond=None,
-                cross_attn_mask=None,
-                global_cond=None,
-                cfg_scale=1.0,
-                cfg_dropout_prob: float = 0.0,
-                batch_cfg: bool = False,
-                rescale_cfg: bool = False,
-                negative_cross_attn_cond=None,
-                negative_cross_attn_mask=None,
-                negative_global_cond=None,
-                negative_input_concat_cond=None,
-                prepend_cond=None,
-                **kwargs):
+    def forward(
+        self,
+        x,
+        t,
+        input_concat_cond=None,
+        cross_attn_cond=None,
+        cross_attn_mask=None,
+        global_cond=None,
+        cfg_scale=1.0,
+        cfg_dropout_prob: float = 0.0,
+        batch_cfg: bool = False,
+        rescale_cfg: bool = False,
+        negative_cross_attn_cond=None,
+        negative_cross_attn_mask=None,
+        negative_global_cond=None,
+        negative_input_concat_cond=None,
+        prepend_cond=None,
+        **kwargs,
+    ):
 
-        return self.model(x, t, cond = input_concat_cond)
+        return self.model(x, t, cond=input_concat_cond)
+
 
 class DiffusionAttnUnet1D(nn.Module):
     def __init__(
         self,
-        io_channels = 2,
+        io_channels=2,
         depth=14,
-        n_attn_layers = 6,
-        channels = [128, 128, 256, 256] + [512] * 10,
-        cond_dim = 0,
-        cond_noise_aug = False,
-        kernel_size = 5,
-        learned_resample = False,
-        strides = [2] * 13,
-        conv_bias = True,
-        use_snake = False
+        n_attn_layers=6,
+        channels=[128, 128, 256, 256] + [512] * 10,
+        cond_dim=0,
+        cond_noise_aug=False,
+        kernel_size=5,
+        learned_resample=False,
+        strides=[2] * 13,
+        conv_bias=True,
+        use_snake=False,
     ):
         super().__init__()
 
@@ -410,11 +422,11 @@ class DiffusionAttnUnet1D(nn.Module):
 
         block = nn.Identity()
 
-        conv_block = partial(ResConvBlock, kernel_size=kernel_size, conv_bias = conv_bias, use_snake=use_snake)
+        conv_block = partial(ResConvBlock, kernel_size=kernel_size, conv_bias=conv_bias, use_snake=use_snake)
 
         for i in range(depth, 0, -1):
             c = channels[i - 1]
-            stride = strides[i-1]
+            stride = strides[i - 1]
             if stride > 2 and not learned_resample:
                 raise ValueError("Must have stride 2 without learned resampling")
 
@@ -422,27 +434,25 @@ class DiffusionAttnUnet1D(nn.Module):
                 c_prev = channels[i - 2]
                 add_attn = i >= attn_layer and n_attn_layers > 0
                 block = SkipBlock(
-                    Downsample1d_2(c_prev, c_prev, stride) if (learned_resample or stride == 1) else Downsample1d("cubic"),
+                    (
+                        Downsample1d_2(c_prev, c_prev, stride)
+                        if (learned_resample or stride == 1)
+                        else Downsample1d("cubic")
+                    ),
                     conv_block(c_prev, c, c),
-                    SelfAttention1d(
-                        c, c // 32) if add_attn else nn.Identity(),
+                    SelfAttention1d(c, c // 32) if add_attn else nn.Identity(),
                     conv_block(c, c, c),
-                    SelfAttention1d(
-                        c, c // 32) if add_attn else nn.Identity(),
+                    SelfAttention1d(c, c // 32) if add_attn else nn.Identity(),
                     conv_block(c, c, c),
-                    SelfAttention1d(
-                        c, c // 32) if add_attn else nn.Identity(),
+                    SelfAttention1d(c, c // 32) if add_attn else nn.Identity(),
                     block,
                     conv_block(c * 2 if i != depth else c, c, c),
-                    SelfAttention1d(
-                        c, c // 32) if add_attn else nn.Identity(),
+                    SelfAttention1d(c, c // 32) if add_attn else nn.Identity(),
                     conv_block(c, c, c),
-                    SelfAttention1d(
-                        c, c // 32) if add_attn else nn.Identity(),
+                    SelfAttention1d(c, c // 32) if add_attn else nn.Identity(),
                     conv_block(c, c, c_prev),
-                    SelfAttention1d(c_prev, c_prev //
-                                    32) if add_attn else nn.Identity(),
-                    Upsample1d_2(c_prev, c_prev, stride) if learned_resample else Upsample1d(kernel="cubic")
+                    SelfAttention1d(c_prev, c_prev // 32) if add_attn else nn.Identity(),
+                    Upsample1d_2(c_prev, c_prev, stride) if learned_resample else Upsample1d(kernel="cubic"),
                 )
             else:
                 cond_embed_dim = 16 if not self.cond_noise_aug else 32
@@ -469,7 +479,7 @@ class DiffusionAttnUnet1D(nn.Module):
 
         if cond is not None:
             if cond.shape[2] != x.shape[2]:
-                cond = F.interpolate(cond, (x.shape[2], ), mode='linear', align_corners=False)
+                cond = F.interpolate(cond, (x.shape[2],), mode="linear", align_corners=False)
 
             if self.cond_noise_aug:
                 # Get a random number between 0 and 1, uniformly sampled
@@ -492,12 +502,9 @@ class DiffusionAttnUnet1D(nn.Module):
 
         return outputs
 
+
 class DiTWrapper(ConditionedDiffusionModel):
-    def __init__(
-        self,
-        *args,
-        **kwargs
-    ):
+    def __init__(self, *args, **kwargs):
         super().__init__(supports_cross_attention=True, supports_global_cond=False, supports_input_concat=False)
 
         self.model = DiffusionTransformer(*args, **kwargs)
@@ -506,28 +513,30 @@ class DiTWrapper(ConditionedDiffusionModel):
             for param in self.model.parameters():
                 param *= 0.5
 
-    def forward(self,
-                x,
-                t,
-                cross_attn_cond=None,
-                cross_attn_mask=None,
-                negative_cross_attn_cond=None,
-                negative_cross_attn_mask=None,
-                input_concat_cond=None,
-                negative_input_concat_cond=None,
-                global_cond=None,
-                negative_global_cond=None,
-                prepend_cond=None,
-                prepend_cond_mask=None,
-                cfg_scale=1.0,
-                cfg_dropout_prob: float = 0.0,
-                batch_cfg: bool = True,
-                rescale_cfg: bool = False,
-                scale_phi: float = 0.0,
-                **kwargs):
+    def forward(
+        self,
+        x,
+        t,
+        cross_attn_cond=None,
+        cross_attn_mask=None,
+        negative_cross_attn_cond=None,
+        negative_cross_attn_mask=None,
+        input_concat_cond=None,
+        negative_input_concat_cond=None,
+        global_cond=None,
+        negative_global_cond=None,
+        prepend_cond=None,
+        prepend_cond_mask=None,
+        cfg_scale=1.0,
+        cfg_dropout_prob: float = 0.0,
+        batch_cfg: bool = True,
+        rescale_cfg: bool = False,
+        scale_phi: float = 0.0,
+        **kwargs,
+    ):
 
         assert batch_cfg, "batch_cfg must be True for DiTWrapper"
-        #assert negative_input_concat_cond is None, "negative_input_concat_cond is not supported for DiTWrapper"
+        # assert negative_input_concat_cond is None, "negative_input_concat_cond is not supported for DiTWrapper"
 
         return self.model(
             x,
@@ -543,15 +552,12 @@ class DiTWrapper(ConditionedDiffusionModel):
             cfg_dropout_prob=cfg_dropout_prob,
             scale_phi=scale_phi,
             global_embed=global_cond,
-            **kwargs)
+            **kwargs,
+        )
+
 
 class DiTUncondWrapper(DiffusionModel):
-    def __init__(
-        self,
-        in_channels,
-        *args,
-        **kwargs
-    ):
+    def __init__(self, in_channels, *args, **kwargs):
         super().__init__()
 
         self.model = DiffusionTransformer(io_channels=in_channels, *args, **kwargs)
@@ -565,12 +571,13 @@ class DiTUncondWrapper(DiffusionModel):
     def forward(self, x, t, **kwargs):
         return self.model(x, t, **kwargs)
 
+
 def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
     diffusion_uncond_config = config["model"]
 
-    model_type = diffusion_uncond_config.get('type', None)
+    model_type = diffusion_uncond_config.get("type", None)
 
-    diffusion_config = diffusion_uncond_config.get('config', {})
+    diffusion_config = diffusion_uncond_config.get("config", {})
 
     assert model_type is not None, "Must specify model type in config"
 
@@ -588,32 +595,29 @@ def create_diffusion_uncond_from_config(config: tp.Dict[str, tp.Any]):
     else:
         min_input_length = 1
 
-    if model_type == 'DAU1d':
+    if model_type == "DAU1d":
 
-        model = DiffusionAttnUnet1D(
-            **diffusion_config
-        )
-    
+        model = DiffusionAttnUnet1D(**diffusion_config)
+
     elif model_type == "adp_uncond_1d":
 
-        model = UNet1DUncondWrapper(
-            **diffusion_config
-        )
+        model = UNet1DUncondWrapper(**diffusion_config)
 
     elif model_type == "dit":
-        model = DiTUncondWrapper(
-            **diffusion_config
-        )
+        model = DiTUncondWrapper(**diffusion_config)
 
     else:
-        raise NotImplementedError(f'Unknown model type: {model_type}')
+        raise NotImplementedError(f"Unknown model type: {model_type}")
 
-    return DiffusionModelWrapper(model,
-                                io_channels=model.io_channels,
-                                sample_size=sample_size,
-                                sample_rate=sample_rate,
-                                pretransform=pretransform,
-                                min_input_length=min_input_length)
+    return DiffusionModelWrapper(
+        model,
+        io_channels=model.io_channels,
+        sample_size=sample_size,
+        sample_rate=sample_rate,
+        pretransform=pretransform,
+        min_input_length=min_input_length,
+    )
+
 
 def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 
@@ -621,40 +625,40 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 
     model_type = config["model_type"]
 
-    diffusion_config = model_config.get('diffusion', None)
+    diffusion_config = model_config.get("diffusion", None)
     assert diffusion_config is not None, "Must specify diffusion config"
 
-    diffusion_model_type = diffusion_config.get('type', None)
+    diffusion_model_type = diffusion_config.get("type", None)
     assert diffusion_model_type is not None, "Must specify diffusion model type"
 
-    diffusion_model_config = diffusion_config.get('config', None)
+    diffusion_model_config = diffusion_config.get("config", None)
     assert diffusion_model_config is not None, "Must specify diffusion model config"
 
-    if diffusion_model_type == 'adp_cfg_1d':
+    if diffusion_model_type == "adp_cfg_1d":
         diffusion_model = UNetCFG1DWrapper(**diffusion_model_config)
-    elif diffusion_model_type == 'adp_1d':
+    elif diffusion_model_type == "adp_1d":
         diffusion_model = UNet1DCondWrapper(**diffusion_model_config)
-    elif diffusion_model_type == 'dit':
+    elif diffusion_model_type == "dit":
         diffusion_model = DiTWrapper(**diffusion_model_config)
 
-    io_channels = model_config.get('io_channels', None)
+    io_channels = model_config.get("io_channels", None)
     assert io_channels is not None, "Must specify io_channels in model config"
 
-    sample_rate = config.get('sample_rate', None)
+    sample_rate = config.get("sample_rate", None)
     assert sample_rate is not None, "Must specify sample_rate in config"
 
-    diffusion_objective = diffusion_config.get('diffusion_objective', 'v')
+    diffusion_objective = diffusion_config.get("diffusion_objective", "v")
 
-    conditioning_config = model_config.get('conditioning', None)
+    conditioning_config = model_config.get("conditioning", None)
 
     conditioner = None
     if conditioning_config is not None:
         conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config)
 
-    cross_attention_ids = diffusion_config.get('cross_attention_cond_ids', [])
-    global_cond_ids = diffusion_config.get('global_cond_ids', [])
-    input_concat_ids = diffusion_config.get('input_concat_ids', [])
-    prepend_cond_ids = diffusion_config.get('prepend_cond_ids', [])
+    cross_attention_ids = diffusion_config.get("cross_attention_cond_ids", [])
+    global_cond_ids = diffusion_config.get("global_cond_ids", [])
+    input_concat_ids = diffusion_config.get("input_concat_ids", [])
+    prepend_cond_ids = diffusion_config.get("prepend_cond_ids", [])
 
     pretransform = model_config.get("pretransform", None)
 
@@ -684,8 +688,9 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 
         if prior_type == "mono_stereo":
             from .diffusion_prior import MonoToStereoDiffusionPrior
+
             wrapper_fn = MonoToStereoDiffusionPrior
-            
+
     return wrapper_fn(
         diffusion_model,
         conditioner,
@@ -697,5 +702,5 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
         prepend_cond_ids=prepend_cond_ids,
         pretransform=pretransform,
         io_channels=io_channels,
-        **extra_kwargs
+        **extra_kwargs,
     )

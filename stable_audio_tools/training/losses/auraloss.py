@@ -1,10 +1,12 @@
 # Copied and modified from https://github.com/csteinmetz1/auraloss/blob/main/auraloss/freq.py under Apache License 2.0
 # You can find the license at LICENSES/LICENSE_AURALOSS.txt
 
-import torch
+from typing import Any, List
+
 import numpy as np
-from typing import List, Any
 import scipy.signal
+import torch
+
 
 def apply_reduction(losses, reduction="none"):
     """Apply reduction to collection of losses."""
@@ -13,6 +15,7 @@ def apply_reduction(losses, reduction="none"):
     elif reduction == "sum":
         losses = losses.sum()
     return losses
+
 
 def get_window(win_type: str, win_length: int):
     """Return a window function.
@@ -33,6 +36,7 @@ def get_window(win_type: str, win_length: int):
         win = torch.from_numpy(scipy.signal.windows.get_window(win_type, win_length))
 
     return win
+
 
 class SumAndDifference(torch.nn.Module):
     """Sum and difference signal extraction module."""
@@ -122,9 +126,7 @@ class FIRFilter(torch.nn.Module):
                 [1, 4 * np.pi * f4, (2 * np.pi * f4) ** 2],
                 [1, 4 * np.pi * f1, (2 * np.pi * f1) ** 2],
             )
-            DENs = np.polymul(
-                np.polymul(DENs, [1, 2 * np.pi * f3]), [1, 2 * np.pi * f2]
-            )
+            DENs = np.polymul(np.polymul(DENs, [1, 2 * np.pi * f3]), [1, 2 * np.pi * f2])
 
             # convert analog filter to digital filter
             b, a = scipy.signal.bilinear(NUMs, DENs, fs=fs)
@@ -136,14 +138,13 @@ class FIRFilter(torch.nn.Module):
             taps = scipy.signal.firls(ntaps, w_iir, abs(h_iir), fs=fs)
 
             # now implement this digital FIR filter as a Conv1d layer
-            self.fir = torch.nn.Conv1d(
-                1, 1, kernel_size=ntaps, bias=False, padding=ntaps // 2
-            )
+            self.fir = torch.nn.Conv1d(1, 1, kernel_size=ntaps, bias=False, padding=ntaps // 2)
             self.fir.weight.requires_grad = False
             self.fir.weight.data = torch.tensor(taps.astype("float32")).view(1, 1, -1)
 
             if plot:
                 from .plotting import compare_filters
+
                 compare_filters(b, a, taps, fs=fs)
 
     def forward(self, input, target):
@@ -154,13 +155,10 @@ class FIRFilter(torch.nn.Module):
         Returns:
             Tensor: Filtered signal.
         """
-        input = torch.nn.functional.conv1d(
-            input, self.fir.weight.data, padding=self.ntaps // 2
-        )
-        target = torch.nn.functional.conv1d(
-            target, self.fir.weight.data, padding=self.ntaps // 2
-        )
+        input = torch.nn.functional.conv1d(input, self.fir.weight.data, padding=self.ntaps // 2)
+        target = torch.nn.functional.conv1d(target, self.fir.weight.data, padding=self.ntaps // 2)
         return input, target
+
 
 class SpectralConvergenceLoss(torch.nn.Module):
     """Spectral convergence loss module.
@@ -173,6 +171,7 @@ class SpectralConvergenceLoss(torch.nn.Module):
 
     def forward(self, x_mag, y_mag):
         return (torch.norm(y_mag - x_mag, p="fro", dim=[-1, -2]) / torch.norm(y_mag, p="fro", dim=[-1, -2])).mean()
+
 
 class STFTMagnitudeLoss(torch.nn.Module):
     """STFT magnitude loss module.
@@ -281,7 +280,7 @@ class STFTLoss(torch.nn.Module):
         reduction: str = "mean",
         mag_distance: str = "L1",
         device: Any = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
         self.fft_size = fft_size
@@ -306,18 +305,8 @@ class STFTLoss(torch.nn.Module):
         self.phs_used = bool(self.w_phs)
 
         self.spectralconv = SpectralConvergenceLoss()
-        self.logstft = STFTMagnitudeLoss(
-            log=True,
-            reduction=reduction,
-            distance=mag_distance,
-            **kwargs
-        )
-        self.linstft = STFTMagnitudeLoss(
-            log=False,
-            reduction=reduction,
-            distance=mag_distance,
-            **kwargs
-        )
+        self.logstft = STFTMagnitudeLoss(log=True, reduction=reduction, distance=mag_distance, **kwargs)
+        self.linstft = STFTMagnitudeLoss(log=False, reduction=reduction, distance=mag_distance, **kwargs)
 
         # setup mel filterbank
         if scale is not None:
@@ -336,14 +325,10 @@ class STFTLoss(torch.nn.Module):
             elif self.scale == "chroma":
                 assert sample_rate != None  # Must set sample rate to use chroma scale
                 assert n_bins <= fft_size  # Must be more FFT bins than chroma bins
-                fb = librosa.filters.chroma(
-                    sr=sample_rate, n_fft=fft_size, n_chroma=n_bins
-                )
+                fb = librosa.filters.chroma(sr=sample_rate, n_fft=fft_size, n_chroma=n_bins)
 
             else:
-                raise ValueError(
-                    f"Invalid scale: {self.scale}. Must be 'mel' or 'chroma'."
-                )
+                raise ValueError(f"Invalid scale: {self.scale}. Must be 'mel' or 'chroma'.")
 
             self.register_buffer("fb", fb)
 
@@ -352,9 +337,7 @@ class STFTLoss(torch.nn.Module):
 
         if self.perceptual_weighting:
             if sample_rate is None:
-                raise ValueError(
-                    f"`sample_rate` must be supplied when `perceptual_weighting = True`."
-                )
+                raise ValueError(f"`sample_rate` must be supplied when `perceptual_weighting = True`.")
             self.prefilter = FIRFilter(filter_type="aw", fs=sample_rate)
 
     def stft(self, x):
@@ -374,9 +357,7 @@ class STFTLoss(torch.nn.Module):
             self.window,
             return_complex=True,
         )
-        x_mag = torch.sqrt(
-            torch.clamp((x_stft.real**2) + (x_stft.imag**2), min=self.eps)
-        )
+        x_mag = torch.sqrt(torch.clamp((x_stft.real**2) + (x_stft.imag**2), min=self.eps))
 
         # torch.angle is expensive, so it is only evaluated if the values are used in the loss
         if self.phs_used:
@@ -439,6 +420,7 @@ class STFTLoss(torch.nn.Module):
             return loss
         elif self.output == "full":
             return loss, sc_mag_loss, log_mag_loss, lin_mag_loss, phs_loss
+
 
 class MultiResolutionSTFTLoss(torch.nn.Module):
     """Multi resolution STFT loss module.

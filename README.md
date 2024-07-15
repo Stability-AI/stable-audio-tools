@@ -20,7 +20,7 @@ Development for the repo is done in Python 3.8.10
 
 # Interface
 
-A basic Gradio interface is provided to test out trained models. 
+A basic Gradio interface is provided to test out trained models.
 
 For example, to create an interface for the [`stable-audio-open-1.0`](https://huggingface.co/stabilityai/stable-audio-open-1.0) model, once you've accepted the terms for the model on Hugging Face, you can run:
 ```bash
@@ -37,7 +37,7 @@ The `run_gradio.py` script accepts the following command line arguments:
   - Path to the model config file for a local model
 - `--ckpt-path`
   - Path to unwrapped model checkpoint file for a local model
-- `--pretransform-ckpt-path` 
+- `--pretransform-ckpt-path`
   - Path to an unwrapped pretransform checkpoint, replaces the pretransform in the model, useful for testing out fine-tuned decoders
   - Optional
 - `--share`
@@ -69,7 +69,7 @@ $ python3 ./train.py --dataset-config /path/to/dataset/config --model-config /pa
 The `--name` parameter will set the project name for your Weights and Biases run.
 
 ## Training wrappers and model unwrapping
-`stable-audio-tools` uses PyTorch Lightning to facilitate multi-GPU and multi-node training. 
+`stable-audio-tools` uses PyTorch Lightning to facilitate multi-GPU and multi-node training.
 
 When a model is being trained, it is wrapped in a "training wrapper", which is a `pl.LightningModule` that contains all of the relevant objects needed only for training. That includes things like discriminators for autoencoders, EMA copies of models, and all of the optimizer states.
 
@@ -88,7 +88,7 @@ Unwrapped model checkpoints are required for:
   - Fine-tuning a pre-trained model with a modified configuration (i.e. partial initialization)
 
 ## Fine-tuning
-Fine-tuning a model involves continuning a training run from a pre-trained checkpoint. 
+Fine-tuning a model involves continuning a training run from a pre-trained checkpoint.
 
 To continue a training run from a wrapped model checkpoint, you can pass in the checkpoint path to `train.py` with the `--ckpt-path` flag.
 
@@ -154,4 +154,4 @@ The following properties are defined in the top level of the model configuration
 
 # Todo
 - [ ] Add troubleshooting section
-- [ ] Add contribution guidelines 
+- [ ] Add contribution guidelines

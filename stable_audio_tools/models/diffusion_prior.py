@@ -1,30 +1,33 @@
-from enum import Enum
 import typing as tp
-
-from .diffusion import ConditionedDiffusionModelWrapper
-from ..inference.generation import generate_diffusion_cond
-from ..inference.utils import prepare_audio
+from enum import Enum
 
 import torch
 from torch.nn import functional as F
 from torchaudio import transforms as T
 
+from ..inference.generation import generate_diffusion_cond
+from ..inference.utils import prepare_audio
+from .diffusion import ConditionedDiffusionModelWrapper
+
+
 # Define prior types enum
 class PriorType(Enum):
     MonoToStereo = 1
 
+
 class DiffusionPrior(ConditionedDiffusionModelWrapper):
-    def __init__(self, *args, prior_type: PriorType=None, **kwargs):
+    def __init__(self, *args, prior_type: PriorType = None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.prior_type = prior_type  
+        self.prior_type = prior_type
+
 
 class MonoToStereoDiffusionPrior(DiffusionPrior):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, prior_type=PriorType.MonoToStereo, **kwargs)
 
     def stereoize(
-        self, 
-        audio: torch.Tensor, # (batch, channels, time)
+        self,
+        audio: torch.Tensor,  # (batch, channels, time)
         in_sr: int,
         steps: int,
         sampler_kwargs: dict = {},
@@ -67,13 +70,13 @@ class MonoToStereoDiffusionPrior(DiffusionPrior):
         conditioning = {"source": [dual_mono]}
 
         stereo_audio = generate_diffusion_cond(
-            self, 
+            self,
             conditioning_tensors=conditioning,
             steps=steps,
             sample_size=padded_input_length,
             sample_rate=sample_rate,
             device=device,
             **sampler_kwargs,
-        ) 
+        )
 
         return stereo_audio

@@ -1,5 +1,8 @@
 import argparse
-from lightning.pytorch.utilities.deepspeed import convert_zero_checkpoint_to_fp32_state_dict
+
+from lightning.pytorch.utilities.deepspeed import (
+    convert_zero_checkpoint_to_fp32_state_dict,
+)
 
 if __name__ == "__main__":
 

@@ -1,5 +1,5 @@
 # Autoencoders
-At a high level, autoencoders are models constructed of two parts: an *encoder*, and a *decoder*. 
+At a high level, autoencoders are models constructed of two parts: an *encoder*, and a *decoder*.
 
 The *encoder* takes in an sequence (such as mono or stereo audio) and outputs a compressed representation of that sequence as a d-channel "latent sequence", usually heavily downsampled by a constant factor.
 
@@ -41,7 +41,7 @@ The `training` config in the autoencoder model config file should have the follo
 - `learning_rate`
     - The learning rate to use during training
 - `use_ema`
-    - If true, a copy of the model weights is maintained during training and updated as an exponential moving average of the trained model's weights. 
+    - If true, a copy of the model weights is maintained during training and updated as an exponential moving average of the trained model's weights.
     - Optional. Default: `false`
 - `warmup_steps`
     - The number of training steps before turning on adversarial losses
@@ -62,11 +62,11 @@ There are few different types of losses that are used for autoencoder training, 
 Hyperparameters fo these losses as well as loss weighting factors can be configured in the `loss_configs` property in the `training` config.
 
 ### Spectral losses
-Multi-resolution STFT losses are the main reconstruction loss used for our audio autoencoders. We use the [auraloss](https://github.com/csteinmetz1/auraloss/tree/main/auraloss) library for our spectral loss functions. 
+Multi-resolution STFT losses are the main reconstruction loss used for our audio autoencoders. We use the [auraloss](https://github.com/csteinmetz1/auraloss/tree/main/auraloss) library for our spectral loss functions.
 
-For mono autoencoders (`io_channels` == 1), we use the [MultiResolutionSTFTLoss](https://github.com/csteinmetz1/auraloss/blob/1576b0cd6e927abc002b23cf3bfc455b660f663c/auraloss/freq.py#L329) module. 
+For mono autoencoders (`io_channels` == 1), we use the [MultiResolutionSTFTLoss](https://github.com/csteinmetz1/auraloss/blob/1576b0cd6e927abc002b23cf3bfc455b660f663c/auraloss/freq.py#L329) module.
 
-For stereo autoencoders (`io_channels` == 2), we use the [SumAndDifferenceSTFTLoss](https://github.com/csteinmetz1/auraloss/blob/1576b0cd6e927abc002b23cf3bfc455b660f663c/auraloss/freq.py#L533) module. 
+For stereo autoencoders (`io_channels` == 2), we use the [SumAndDifferenceSTFTLoss](https://github.com/csteinmetz1/auraloss/blob/1576b0cd6e927abc002b23cf3bfc455b660f663c/auraloss/freq.py#L533) module.
 
 #### Example config
 ```json
@@ -130,7 +130,7 @@ The only property to set for autoencoder training demos is the `demo_every` prop
 ```
 
 # Encoder and decoder types
-Encoders and decoders are defined separately in the model configuration, so encoders and decoders from different model architectures and libraries can be used interchangeably. 
+Encoders and decoders are defined separately in the model configuration, so encoders and decoders from different model architectures and libraries can be used interchangeably.
 
 ## Oobleck
 Oobleck is Harmonai's in-house autoencoder architecture, implementing features from a variety of other autoencoder architectures.
@@ -229,7 +229,7 @@ In our terminology, the "bottleneck" of an autoencoder is a module placed betwee
 
 Bottlenecks have a similar interface to the autoencoder with `encode()` and `decode()` functions defined. Some bottlenecks return extra information in addition to the output latent series, such as quantized token indices, or additional losses to be considered during training.
 
-To define a bottleneck for the autoencoder, you can provide the `bottleneck` object in the autoencoder's model configuration, with the following 
+To define a bottleneck for the autoencoder, you can provide the `bottleneck` object in the autoencoder's model configuration, with the following
 
 ## VAE
 
@@ -311,7 +311,7 @@ Residual vector quantization (RVQ) is currently the leading method for learning 
 
 This RVQ bottleneck uses [lucidrains' implementation](https://github.com/lucidrains/vector-quantize-pytorch/tree/master) from the `vector-quantize-pytorch` repo, which provides a lot of different quantizer options. The bottleneck config is passed through to the `ResidualVQ`  [constructor](https://github.com/lucidrains/vector-quantize-pytorch/blob/0c6cea24ce68510b607f2c9997e766d9d55c085b/vector_quantize_pytorch/residual_vq.py#L26).
 
-**Note: This RVQ implementation uses manual replacement of codebook vectors to reduce codebook collapse. This does not work with multi-GPU training as the random replacement is not synchronized across devices.** 
+**Note: This RVQ implementation uses manual replacement of codebook vectors to reduce codebook collapse. This does not work with multi-GPU training as the random replacement is not synchronized across devices.**
 
 ### Example config
 ```json
@@ -327,7 +327,7 @@ This RVQ bottleneck uses [lucidrains' implementation](https://github.com/lucidra
 ```
 
 ## DAC RVQ
-This is the residual vector quantization implementation from the `descript-audio-codec` repo. It differs from the above implementation in that it does not use manual replacements to improve codebook usage, but instead uses learnable linear layers to project the latents down to a lower-dimensional space before performing the individual quantization operations. This means it's compatible with distributed training. 
+This is the residual vector quantization implementation from the `descript-audio-codec` repo. It differs from the above implementation in that it does not use manual replacements to improve codebook usage, but instead uses learnable linear layers to project the latents down to a lower-dimensional space before performing the individual quantization operations. This means it's compatible with distributed training.
 
 The bottleneck config is passed directly into the `ResidualVectorQuantize` [constructor](https://github.com/descriptinc/descript-audio-codec/blob/c7cfc5d2647e26471dc394f95846a0830e7bec34/dac/nn/quantize.py#L97).
 
