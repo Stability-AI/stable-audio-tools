@@ -1,0 +1,28 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          cache: pip
+
+      - name: Install libsndfile1
+        run: sudo apt-get install libsndfile1
+
+      - name: Install dependencies
+        run: pip install .
+
+      - name: Check training script
+        run: python train.py --help
