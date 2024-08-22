@@ -1,8 +1,11 @@
 import torch
 import math
-from tqdm import trange, tqdm
 
-import k_diffusion as K
+from k_diffusion.external import VDenoiser
+from k_diffusion.sampling import get_sigmas_polyexponential, sample_heun, sample_lms, sample_dpmpp_2s_ancestral, \
+    sample_dpm_2, sample_dpm_fast, sample_dpm_adaptive, sample_dpmpp_2m_sde, sample_dpmpp_3m_sde
+from k_diffusion.utils import append_dims
+from tqdm import trange, tqdm
 
 # Define the noise schedule and sampling loop
 def get_alphas_sigmas(t):
@@ -99,7 +102,7 @@ def make_cond_model_fn(model, cond_fn):
             x = x.detach().requires_grad_()
             denoised = model(x, sigma, **kwargs)
             cond_grad = cond_fn(x, sigma, denoised=denoised, **kwargs).detach()
-            cond_denoised = denoised.detach() + cond_grad * K.utils.append_dims(sigma**2, x.ndim)
+            cond_denoised = denoised.detach() + cond_grad * append_dims(sigma**2, x.ndim)
         return cond_denoised
     return cond_model_fn
 
@@ -123,13 +126,13 @@ def sample_k(
         **extra_args
     ):
 
-    denoiser = K.external.VDenoiser(model_fn)
+    denoiser = VDenoiser(model_fn)
 
     if cond_fn is not None:
         denoiser = make_cond_model_fn(denoiser, cond_fn)
 
     # Make the list of sigmas. Sigma values are scalars related to the amount of noise each denoising step has
-    sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)
+    sigmas = get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)
     # Scale the initial noise by sigma 
     noise = noise * sigmas[0]
 
@@ -176,21 +179,21 @@ def sample_k(
 
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":
-            return K.sampling.sample_heun(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return sample_heun(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-lms":
-            return K.sampling.sample_lms(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return sample_lms(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpmpp-2s-ancestral":
-            return K.sampling.sample_dpmpp_2s_ancestral(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return sample_dpmpp_2s_ancestral(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-2":
-            return K.sampling.sample_dpm_2(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return sample_dpm_2(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-fast":
-            return K.sampling.sample_dpm_fast(denoiser, x, sigma_min, sigma_max, steps, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return sample_dpm_fast(denoiser, x, sigma_min, sigma_max, steps, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "k-dpm-adaptive":
-            return K.sampling.sample_dpm_adaptive(denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return sample_dpm_adaptive(denoiser, x, sigma_min, sigma_max, rtol=0.01, atol=0.01, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-2m-sde":
-            return K.sampling.sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return sample_dpmpp_2m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
         elif sampler_type == "dpmpp-3m-sde":
-            return K.sampling.sample_dpmpp_3m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
+            return sample_dpmpp_3m_sde(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)
 
 # Uses discrete Euler sampling for rectified flow models
 # init_data is init_audio as latents (if this is latent diffusion)
