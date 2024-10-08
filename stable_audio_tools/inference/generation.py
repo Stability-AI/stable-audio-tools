@@ -8,13 +8,20 @@ from .utils import prepare_audio
 from .sampling import sample, sample_k, sample_rf
 from ..data.utils import PadCrop
 
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+elif torch.backends.mps.is_available():
+    device = torch.device('mps')
+else:
+    device = torch.device('cpu')
+
 def generate_diffusion_uncond(
         model,
         steps: int = 250,
         batch_size: int = 1,
         sample_size: int = 2097152,
         seed: int = -1,
-        device: str = "cuda",
+        device: str = device.type,
         init_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
         init_noise_level: float = 1.0,
         return_latents = False,

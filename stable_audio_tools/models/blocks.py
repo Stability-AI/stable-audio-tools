@@ -5,10 +5,20 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from torch.backends.cuda import sdp_kernel
 from packaging import version
 
 from dac.nn.layers import Snake1d
+
+# Determine the device to use
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+elif torch.backends.mps.is_available():
+    device = torch.device('mps')
+else:
+    device = torch.device('cpu')
+
+if device.type == 'cuda':
+    from torch.backends.cuda import sdp_kernel
 
 class ResidualBlock(nn.Module):
     def __init__(self, main, skip=None):
@@ -41,7 +51,7 @@ class SelfAttention1d(nn.Module):
         self.out_proj = nn.Conv1d(c_in, c_in, 1)
         self.dropout = nn.Dropout(dropout_rate, inplace=True)
 
-        self.use_flash = torch.cuda.is_available() and version.parse(torch.__version__) >= version.parse('2.0.0')
+        self.use_flash = True if device.type == 'cuda' and version.parse(torch.__version__) >= version.parse('2.0.0') else False
 
         if not self.use_flash:
             return
