@@ -115,8 +115,15 @@ def generate_cond(
 
     if init_audio is not None:
         in_sr, init_audio = init_audio
-        # Turn into torch tensor, converting from int16 to float32
-        init_audio = torch.from_numpy(init_audio).float().div(32767)
+        # Turn into torch tensor, converting to float32
+        if init_audio.dtype == np.float32:
+            init_audio = torch.from_numpy(init_audio)
+        elif init_audio.dtype == np.int16:
+            init_audio = torch.from_numpy(init_audio).float().div(32767)
+        elif init_audio.dtype == np.int32:
+            init_audio = torch.from_numpy(init_audio).float().div(2147483647)
+        else:
+            raise ValueError(f"Unsupported audio data type: {init_audio.dtype}")
         
         if init_audio.dim() == 1:
             init_audio = init_audio.unsqueeze(0) # [1, n]
