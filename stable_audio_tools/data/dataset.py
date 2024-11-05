@@ -11,7 +11,6 @@ import torch
 import torchaudio
 import webdataset as wds
 
-from aeiou.core import is_silence
 from os import path
 from pedalboard.io import AudioFile
 from torchaudio import transforms as T
@@ -367,6 +366,7 @@ def log_and_continue(exn):
 
 
 def is_valid_sample(sample):
+    from aeiou.core import is_silence
     has_json = "json" in sample
     has_audio = "audio" in sample
     is_silent = is_silence(sample["audio"])

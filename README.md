@@ -10,7 +10,7 @@ $ pip install stable-audio-tools
 
 To run the training scripts or inference code, you'll want to clone this repository, navigate to the root, and run:
 ```bash
-$ pip install .
+$ pip install .[train,viz,ui]
 ```
 
 # Requirements
