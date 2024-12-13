@@ -151,7 +151,7 @@ The following properties are defined in the top level of the model configuration
 
 
 ### Optimizer config
-The optimizer config file allows for use of different optimizer implementations, including those that allow for fine tuning with 24GB VRAM.
+The optimizer config, inside of the training subsection of the model config, allows for use of different optimizer implementations, including those that allow for fine tuning with 24GB VRAM.
 
 - `backend`
   - The type of optimizer library being used, currently limited to one of `"bnb", "default"`.
