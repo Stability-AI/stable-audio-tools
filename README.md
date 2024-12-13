@@ -151,7 +151,7 @@ The following properties are defined in the top level of the model configuration
 
 
 ### Optimizer config
-The model config file defines all of the information needed to load a model for training or inference. It also contains the training configuration needed to fine-tune a model or train from scratch.
+The optimizer config file allows for use of different optimizer implementations, including those that allow for fine tuning with 24GB VRAM.
 
 - `backend`
   - The type of optimizer library being used, currently limited to one of `"bnb", "default"`.
