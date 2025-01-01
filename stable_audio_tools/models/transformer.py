@@ -6,8 +6,20 @@ from einops.layers.torch import Rearrange
 import torch
 import torch.nn.functional as F
 from torch import nn, einsum
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from typing import Callable, Literal
+
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
+# Ensure device.type is valid for autocast
+valid_autocast_device_types = {"cuda", "cpu"}
+autocast_device_type = device.type if device.type in valid_autocast_device_types else "cpu"
+
 
 try:
     from flash_attn import flash_attn_func, flash_attn_kvpacked_func
@@ -123,7 +135,7 @@ class RotaryEmbedding(nn.Module):
         t = torch.arange(seq_len, device = device)
         return self.forward(t)
 
-    @autocast(enabled = False)
+    @autocast(device_type=autocast_device_type, enabled=False)
     def forward(self, t):
         device = self.inv_freq.device
 
@@ -148,8 +160,9 @@ def rotate_half(x):
     x1, x2 = x.unbind(dim = -2)
     return torch.cat((-x2, x1), dim = -1)
 
-@autocast(enabled = False)
-def apply_rotary_pos_emb(t, freqs, scale = 1):
+
+@autocast(device_type=autocast_device_type, enabled=False)
+def apply_rotary_pos_emb(t, freqs, scale=1):
     out_dtype = t.dtype
 
     # cast to float32 if necessary for numerical stability
@@ -311,15 +324,17 @@ class Attention(nn.Module):
         if natten_kernel_size is not None:
             return
 
-        self.use_pt_flash = torch.cuda.is_available() and version.parse(torch.__version__) >= version.parse('2.0.0')
+        self.use_pt_flash = device.type == "cuda" and version.parse(
+            torch.__version__
+        ) >= version.parse("2.0.0")
 
-        self.use_fa_flash = torch.cuda.is_available() and flash_attn_func is not None
+        self.use_fa_flash = device.type == "cuda" and flash_attn_func is not None
 
-        self.sdp_kwargs = dict(
-            enable_flash = True,
-            enable_math = True,
-            enable_mem_efficient = True
-        )
+        self.sdp_backends = [
+            torch.nn.attention.SDPBackend.FLASH_ATTENTION,
+            torch.nn.attention.SDPBackend.MATH,
+            torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION,
+        ]
 
     def flash_attn(
             self,
@@ -378,12 +393,15 @@ class Attention(nn.Module):
             mask[..., 0] = mask[..., 0] | row_is_entirely_masked
 
             causal = False
-        
-        with torch.backends.cuda.sdp_kernel(**self.sdp_kwargs):
+
+        if device.type == "cuda":
+            with torch.nn.attention.sdpa_kernel(self.sdp_backends):
+                out = F.scaled_dot_product_attention(
+                    q, k, v, attn_mask=mask, is_causal=causal
+                )
+        else:
             out = F.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask = mask,
-                is_causal = causal
+                q, k, v, attn_mask=mask, is_causal=causal
             )
 
         # for a row that is entirely masked out, should zero out the output of that row token

@@ -24,7 +24,14 @@ model = None
 sample_rate = 32000
 sample_size = 1920000
 
-def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, device="cuda", model_half=False):
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+elif torch.backends.mps.is_available():
+    device = torch.device('mps')
+else:
+    device = torch.device('cpu')
+
+def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, device=device, model_half=False):
     global model, sample_rate, sample_size
     
     if pretrained_name is not None:
