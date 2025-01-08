@@ -38,7 +38,6 @@ setup(
         'vector-quantize-pytorch==1.14.41',
         'wandb==0.15.4',
         'webdataset==0.2.100',
-        'x-transformers<1.27.0',
-        "nnAudio"
+        'x-transformers<1.27.0'
     ],
 )

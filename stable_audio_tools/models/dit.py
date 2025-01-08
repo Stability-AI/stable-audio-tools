@@ -49,7 +49,7 @@ class DiffusionTransformer(nn.Module):
         self.to_timestep_embed = nn.Sequential(
             nn.Linear(timestep_features_dim, timestep_embed_dim, bias=True),
             nn.SiLU(),
-            nn.Linear(embed_dim, timestep_embed_dim, bias=True),
+            nn.Linear(timestep_embed_dim, timestep_embed_dim, bias=True),
         )
 
         if cond_token_dim > 0:

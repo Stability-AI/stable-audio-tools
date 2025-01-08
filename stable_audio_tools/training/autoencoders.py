@@ -9,7 +9,7 @@ from typing import Optional, Literal
 
 from ..models.autoencoders import AudioAutoencoder, fold_channels_into_batch, unfold_channels_from_batch
 from ..models.discriminators import EncodecDiscriminator, OobleckDiscriminator, DACGANLoss, BigVGANDiscriminator
-from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck, ResidualProjectionVAEBottleneck
+from ..models.bottleneck import VAEBottleneck, RVQBottleneck, DACRVQBottleneck, DACRVQVAEBottleneck, RVQVAEBottleneck, WassersteinBottleneck
 from .losses import MelSpectrogramLoss, MultiLoss, AuralossLoss, ValueLoss, TargetValueLoss, L1Loss, LossWithTarget, MSELoss, HubertLoss, PESQMetric
 from .losses import auraloss as auraloss
 from .utils import create_optimizer_from_config, create_scheduler_from_config, log_audio, log_image, log_metric, log_point_cloud, logger_project_name
@@ -26,12 +26,6 @@ def trim_to_shortest(a, b):
     elif b.shape[-1] > a.shape[-1]:
         return a, b[:,:,:a.shape[-1]]
     return a, b
-
-def kurtosis(x):
-    return ((x - x.mean()) ** 4).mean() / (x.std() ** 4)
-
-def skewness(x):
-    return ((x - x.mean()) ** 3).mean() / (x.std() ** 3)
 
 class AutoencoderTrainingWrapper(pl.LightningModule):
     def __init__(
@@ -133,20 +127,6 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
                     "config": {},
                     "weights": {
                         "l1": 0.0,
-                    }
-                },
-                "latent": {
-                    "weights": {
-                        "kurtosis": 0.0,
-                        "skewness": 0.0,
-                        "mean": 0.0,
-                        "std": 0.0
-                    },
-                    "targets": {
-                        "kurtosis": 3.0,
-                        "skewness": 0.0,
-                        "mean": 0.0,
-                        "std": 1.0
                     }
                 }
             }
@@ -659,7 +639,7 @@ class AutoencoderDemoCallback(pl.Callback):
 def create_loss_modules_from_bottleneck(bottleneck, loss_config):
     losses = []
 
-    if isinstance(bottleneck, VAEBottleneck) or isinstance(bottleneck, DACRVQVAEBottleneck) or isinstance(bottleneck, RVQVAEBottleneck) or isinstance(bottleneck, ResidualProjectionVAEBottleneck):
+    if isinstance(bottleneck, VAEBottleneck) or isinstance(bottleneck, DACRVQVAEBottleneck) or isinstance(bottleneck, RVQVAEBottleneck):
         try:
             kl_weight = loss_config['bottleneck']['weights']['kl']
         except:
@@ -668,7 +648,7 @@ def create_loss_modules_from_bottleneck(bottleneck, loss_config):
         kl_loss = ValueLoss(key='kl', weight=kl_weight, name='kl_loss')
         losses.append(kl_loss)
 
-    if isinstance(bottleneck, RVQBottleneck) or isinstance(bottleneck, RVQVAEBottleneck) or isinstance(bottleneck, ResidualProjectionVAEBottleneck):
+    if isinstance(bottleneck, RVQBottleneck) or isinstance(bottleneck, RVQVAEBottleneck):
         quantizer_loss = ValueLoss(key='quantizer_loss', weight=1.0, name='quantizer_loss')
         losses.append(quantizer_loss)
 
