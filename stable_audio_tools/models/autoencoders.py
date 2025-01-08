@@ -88,47 +88,6 @@ class Transpose(nn.Module):
     def forward(self, x):
         return x.transpose(-1,-2)
 
-class TransformerResamplingBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, input_length = 512, type = 'encoder', transformer_depth = 3, sliding_window = [-1,-1], checkpointing = False, conformer = False, layer_scale = True, use_dilated_conv = False, use_strided_conv = False,  **kwargs):
-        super().__init__()
-        if type not in ['encoder', 'decoder']:
-            raise ValueError(f"Unknown type {type}. Must be 'encoder' or 'decoder'")
-        
-        self.checkpointing = checkpointing
-        self.input_length = input_length
-
-        transformer_dim = out_channels if type == 'encoder' else in_channels
-        transformers = []
-        transformers.append(Transpose())
-
-        self.output_length = input_length // stride if type == 'encoder' else input_length * stride
-        self.new_tokens = nn.Parameter(1e-5 * torch.randn(1, out_channels, self.output_length))
-
-        for _ in range(transformer_depth):
-            transformers.append(TransformerBlock(transformer_dim, 
-                                                 dim_heads = 128, 
-                                                 causal = False,  
-                                                 zero_init_branch_outputs = True if not layer_scale else False, 
-                                                 remove_norms = False, 
-                                                 conformer = conformer, 
-                                                 layer_scale = layer_scale, 
-                                                 add_rope = True, 
-                                                 attn_kwargs={'sliding_window': sliding_window, 'qk_norm': "ln"}, 
-                                                 ff_kwargs={'mult': 4, 'no_bias': False},
-                                                 norm_kwargs = {'eps': 1e-2}))
-        transformers.append(Transpose())
-        self.transformers = nn.Sequential(*transformers)
-    def forward(self, x):
-        if x.shape[-1] != self.input_length:
-            raise ValueError(f"Input length must be {self.input_length}")
-        x = torch.cat([x, self.new_tokens.expand([x.shape[0],-1,-1])], dim = -1)
-        if self.checkpointing:
-            x = checkpoint(self.transformers, x)
-        else:
-            x = self.transformers(x)
-        return x[:,:,-self.output_length:]
-
-
 class TAAEBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride, type = 'encoder', transformer_depth = 3, use_snake = False, sliding_window = [31,32], checkpointing = False, conformer = False, layer_scale = True, use_dilated_conv = False):
         super().__init__()
@@ -206,7 +165,6 @@ class TAAEEncoder(nn.Module):
                  conformer = False,
                  layer_scale = True,
                  use_dilated_conv = False,
-                 direct_resampling = False,
                  **kwargs
         ):
         super().__init__()
@@ -216,12 +174,10 @@ class TAAEEncoder(nn.Module):
 
         self.depth = len(c_mults)
 
-        block_type = TAAEBlock if not direct_resampling else TransformerResamplingBlock
-
         layers = [WNConv1d(in_channels=in_channels, out_channels=channel_dims[0], kernel_size=7, padding=3, bias = True)]
 
         for i in range(self.depth):
-            layers += [block_type(in_channels=channel_dims[i], out_channels=channel_dims[i+1], stride=strides[i], transformer_depth = transformer_depths[i], use_snake=use_snake, sliding_window = sliding_window, checkpointing = checkpointing, conformer = conformer, layer_scale = layer_scale, use_dilated_conv = use_dilated_conv, **kwargs)]
+            layers += [TAAEBlock(in_channels=channel_dims[i], out_channels=channel_dims[i+1], stride=strides[i], transformer_depth = transformer_depths[i], use_snake=use_snake, sliding_window = sliding_window, checkpointing = checkpointing, conformer = conformer, layer_scale = layer_scale, use_dilated_conv = use_dilated_conv, **kwargs)]
 
         layers += [
             get_activation("snake" if use_snake else "none", antialias=False, channels=channel_dims[-1]),
@@ -245,8 +201,7 @@ class TAAEDecoder(nn.Module):
                  checkpointing = False,
                  conformer = False,
                  layer_scale = True,
-                 use_dilated_conv = False,
-                 direct_resampling = False,
+                 use_dilated_conv = False
                  **kwargs
         ):
         super().__init__()
@@ -256,14 +211,12 @@ class TAAEDecoder(nn.Module):
 
         self.depth = len(c_mults)
 
-        block_type = TAAEBlock if not direct_resampling else TransformerResamplingBlock
-
         layers = [
             WNConv1d(in_channels=latent_dim, out_channels=channel_dims[-1], kernel_size=3, padding=1, bias = True)
         ]
         
         for i in range(self.depth, 0, -1):
-            layers += [block_type(in_channels=channel_dims[i], out_channels=channel_dims[i-1], stride=strides[i-1], type = 'decoder', transformer_depth = transformer_depths[i-1], use_snake=use_snake, sliding_window = sliding_window, checkpointing = checkpointing, conformer = conformer, layer_scale = layer_scale, use_dilated_conv = use_dilated_conv, **kwargs)]  
+            layers += [TAAEBlock(in_channels=channel_dims[i], out_channels=channel_dims[i-1], stride=strides[i-1], type = 'decoder', transformer_depth = transformer_depths[i-1], use_snake=use_snake, sliding_window = sliding_window, checkpointing = checkpointing, conformer = conformer, layer_scale = layer_scale, use_dilated_conv = use_dilated_conv, **kwargs)]  
 
         layers += [get_activation("snake" if use_snake else "none", antialias=False, channels=channel_dims[0]),
                     WNConv1d(in_channels=channel_dims[0], out_channels=out_channels, kernel_size=7, padding=3, bias = False)]
