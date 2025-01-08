@@ -56,7 +56,6 @@ def generate_cond(
         cfg_interval_min=0.0,
         cfg_interval_max=1.0,
         cfg_rescale=0.0,
-        cfg_norm_threshold=10.0,
         file_format="wav",
         file_naming="verbose",
         cut_to_seconds_total=False,
@@ -199,7 +198,6 @@ def generate_cond(
         "init_noise_level": init_noise_level,
         "callback": progress_callback if preview_every is not None else None,
         "scale_phi": cfg_rescale,
-        "cfg_norm_threshold": cfg_norm_threshold,
         "rho": rho
     }
 
@@ -347,7 +345,6 @@ def create_sampling_ui(model_config):
 
                 with gr.Row():
                     cfg_rescale_slider = gr.Slider(minimum=0.0, maximum=1, step=0.01, value=0.0, label="CFG rescale amount")
-                    cfg_norm_threshold = gr.Slider(minimum=0.0, maximum=100, step=0.1, value=50.0, label="CFG norm threshold")
 
                 with gr.Row():
                     # Sampler params
@@ -398,7 +395,6 @@ def create_sampling_ui(model_config):
                 cfg_interval_min_slider,
                 cfg_interval_max_slider,
                 cfg_rescale_slider,
-                cfg_norm_threshold,
                 file_format_dropdown,
                 file_naming_dropdown,
                 cut_to_seconds_total_checkbox,

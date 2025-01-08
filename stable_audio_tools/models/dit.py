@@ -269,7 +269,6 @@ class DiffusionTransformer(nn.Module):
         cfg_interval = (0, 1),
         causal=False,
         scale_phi=0.0,
-        cfg_norm_threshold=0.0,
         mask=None,
         return_info=False,
         **kwargs):
@@ -326,7 +325,6 @@ class DiffusionTransformer(nn.Module):
 
         if self.diffusion_objective == "v":
             sigma = torch.sin(step_t * math.pi / 2)
-            alpha = torch.cos(step_t * math.pi / 2)
         elif self.diffusion_objective == "rectified_flow":
             sigma = step_t
 
@@ -407,37 +405,15 @@ class DiffusionTransformer(nn.Module):
 
             cond_output, uncond_output = torch.chunk(batch_output, 2, dim=0)
 
-            if self.diffusion_objective == "v":
-                cond_denoised = x * alpha - cond_output * sigma
-                uncond_denoised = x * alpha - uncond_output * sigma
-
-            elif self.diffusion_objective == "rectified_flow":
-                cond_denoised = x - cond_output * sigma
-                uncond_denoised = x - uncond_output * sigma
-
-            diff = cond_denoised - uncond_denoised
-            
-            if cfg_norm_threshold > 0:
-                diff_norm = diff.norm(p=2, dim=[-1, -2], keepdim=True)
-                scale_factor = torch.minimum(torch.ones_like(diff), cfg_norm_threshold / diff_norm)
-                diff *= scale_factor
-
-            diff_parallel, diff_orthogonal = self.apg_project(diff, cond_denoised)
-
-            cfg_diff = diff_orthogonal
-
-            cfg_denoised = cond_denoised + (cfg_scale - 1) * cfg_diff
-                    
-            if self.diffusion_objective == "v":
-                output = (x * alpha - cfg_denoised) / sigma
-            elif self.diffusion_objective == "rectified_flow":
-                output = (x - cfg_denoised) / sigma
+            cfg_output = uncond_output + (cond_output - uncond_output) * cfg_scale
 
             # CFG Rescale
             if scale_phi != 0.0:
                 cond_out_std = cond_output.std(dim=1, keepdim=True)
-                out_cfg_std = output.std(dim=1, keepdim=True)
-                output = scale_phi * (output * (cond_out_std/out_cfg_std)) + (1-scale_phi) * output
+                out_cfg_std = cfg_output.std(dim=1, keepdim=True)
+                output = scale_phi * (cfg_output * (cond_out_std/out_cfg_std)) + (1-scale_phi) * cfg_output
+            else:
+                output = cfg_output
            
             if return_info:
                 info["uncond_output"] = uncond_output

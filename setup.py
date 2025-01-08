@@ -22,7 +22,6 @@ setup(
         'laion-clap==1.1.4',
         'local-attention==1.8.6',
         'pandas==2.0.2',
-        'pedalboard==0.7.4',
         'prefigure==0.0.9',
         'pytorch_lightning==2.1.0',
         'PyWavelets==1.4.1',
