@@ -1,9 +1,13 @@
+from pytorch_lightning.loggers import WandbLogger, CometLogger
+from ..interface.aeiou import pca_point_cloud
+
+import wandb
 import torch
 import os
 
 def get_rank():
     """Get rank of current process."""
-    
+
     print(os.environ.keys())
 
     if "SLURM_PROCID" in os.environ:
@@ -11,7 +15,7 @@ def get_rank():
 
     if not torch.distributed.is_available() or not torch.distributed.is_initialized():
         return 0
-    
+
     return torch.distributed.get_rank()
 
 class InverseLR(torch.optim.lr_scheduler._LRScheduler):
@@ -69,7 +73,7 @@ def copy_state_dict(model, state_dict):
                 # backwards compatibility for serialized parameters
                 state_dict[key] = state_dict[key].data
             model_state_dict[key] = state_dict[key]
-        
+
     model.load_state_dict(model_state_dict, strict=False)
 
 def create_optimizer_from_config(optimizer_config, parameters):
@@ -109,3 +113,36 @@ def create_scheduler_from_config(scheduler_config, optimizer):
         scheduler_fn = getattr(torch.optim.lr_scheduler, scheduler_config["type"])
     scheduler = scheduler_fn(optimizer, **scheduler_config["config"])
     return scheduler
+
+def logger_project_name(logger) -> str:
+    if isinstance(logger, WandbLogger):
+        return logger.experiment.project
+    elif isinstance(logger, CometLogger):
+        return logger.name
+
+def log_metric(logger, key, value, step=None):
+    from pytorch_lightning.loggers import WandbLogger, CometLogger
+    if isinstance(logger, WandbLogger):
+        logger.experiment.log({key: value})
+    elif isinstance(logger, CometLogger):
+        logger.experiment.log_metrics({key: value}, step=step)
+
+def log_audio(logger, key, audio_path, sample_rate, caption=None):
+    if isinstance(logger, WandbLogger):
+        logger.experiment.log({key: wandb.Audio(audio_path, sample_rate=sample_rate, caption=caption)})
+    elif isinstance(logger, CometLogger):
+        logger.experiment.log_audio(audio_path, file_name=key, sample_rate=sample_rate)
+
+def log_image(logger, key, img_data):
+    if isinstance(logger, WandbLogger):
+        logger.experiment.log({key: wandb.Image(img_data)})
+    elif isinstance(logger, CometLogger):
+        logger.experiment.log_image(img_data, name=key)
+
+def log_point_cloud(logger, key, tokens, caption=None):
+    if isinstance(logger, WandbLogger):
+        point_cloud = pca_point_cloud(tokens)
+        logger.experiment.log({key: point_cloud})
+    elif isinstance(logger, CometLogger):
+        point_cloud = pca_point_cloud(tokens, rgb_float=True, output_type="points")
+        #logger.experiment.log_points_3d(scene_name=key, points=point_cloud)
