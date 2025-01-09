@@ -201,7 +201,7 @@ class TAAEDecoder(nn.Module):
                  checkpointing = False,
                  conformer = False,
                  layer_scale = True,
-                 use_dilated_conv = False
+                 use_dilated_conv = False,
                  **kwargs
         ):
         super().__init__()
