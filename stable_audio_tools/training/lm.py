@@ -6,7 +6,6 @@ import torchaudio
 import typing as tp
 import wandb
 
-from aeiou.viz import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 from ema_pytorch import EMA
 from einops import rearrange
 from safetensors.torch import save_file
@@ -14,8 +13,9 @@ from torch import optim
 from torch.nn import functional as F
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
+from ..interface.aeiou import pca_point_cloud, audio_spectrogram_image, tokens_spectrogram_image
 from ..models.lm import AudioLanguageModelWrapper
-from .utils import create_optimizer_from_config, create_scheduler_from_config
+from .utils import create_optimizer_from_config, create_scheduler_from_config, log_audio, log_image
 
 class AudioLanguageModelTrainingWrapper(pl.LightningModule):
     def __init__(
@@ -244,20 +244,17 @@ class AudioLanguageModelDemoCallback(pl.Callback):
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')
 
-                log_dict = {}
-                
                 filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
                 fakes = fakes / fakes.abs().max()
                 fakes = fakes.type(torch.float32).clamp(-1, 1).mul(32767).type(torch.int16).cpu()
                 torchaudio.save(filename, fakes, self.sample_rate)
 
-                log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,
-                                                    sample_rate=self.sample_rate,
-                                                    caption=f'Reconstructed')
-            
-                log_dict[f'demo_melspec_left_cfg_{cfg_scale}'] = wandb.Image(audio_spectrogram_image(fakes))
-
-                trainer.logger.experiment.log(log_dict)
+                log_audio(
+                    trainer.logger, f'demo_cfg_{cfg_scale}', filename,
+                    sample_rate=self.sample_rate, caption='Reconstructed')
+                log_image(
+                    trainer.logger, f'demo_melspec_left_cfg_{cfg_scale}',
+                    audio_spectrogram_image(fakes))
 
         except Exception as e:
             raise e
