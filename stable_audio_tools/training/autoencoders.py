@@ -18,6 +18,7 @@ from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from ..interface.aeiou import audio_spectrogram_image, tokens_spectrogram_image
 from ema_pytorch import EMA
 from einops import rearrange
+from safetensors.torch import save_model
 
 def trim_to_shortest(a, b):
     """Trim the longer of two tensors to the length of the shorter one."""
