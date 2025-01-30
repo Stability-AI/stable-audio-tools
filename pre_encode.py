@@ -104,7 +104,11 @@ class PreEncodedLatentsInferenceWrapper(pl.LightningModule):
                 np.save(f, latent)
 
             md = metadata[i]
-            padding_mask = F.interpolate(md["padding_mask"].unsqueeze(0).unsqueeze(1).float(), size=latent.shape[1], mode="nearest").squeeze().int()
+            padding_mask = F.interpolate(
+                md["padding_mask"].unsqueeze(0).unsqueeze(1).float(),
+                size=latent.shape[1],
+                mode="nearest"
+            ).squeeze().int()
             md["padding_mask"] = padding_mask.cpu().numpy().tolist()
 
             # Convert tensors in md to serializable types
@@ -168,17 +172,15 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Encode audio dataset to VAE latents using PyTorch Lightning')
-
-    # Original arguments from accelerate script
     parser.add_argument('--model-config', type=str, help='Path to model config', required=False)
-    parser.add_argument('--ckpt-path', type=str, help='Path to model checkpoint', required=False)
+    parser.add_argument('--ckpt-path', type=str, help='Path to unwrapped autoencoder model checkpoint', required=False)
     parser.add_argument('--model-half', action='store_true', help='Whether to use half precision')
     parser.add_argument('--dataset-config', type=str, help='Path to dataset config file', required=True)
     parser.add_argument('--output-path', type=str, help='Path to output folder', required=True)
     parser.add_argument('--batch-size', type=int, help='Batch size', default=1)
     parser.add_argument('--sample-size', type=int, help='Number of audio samples to pad/crop to for pre-encoding', default=1)
     parser.add_argument('--is-discrete', action='store_true', help='Whether the model is discrete')
-    parser.add_argument('--num-workers', type=int, help='Number of dataloader workers', default=16)
+    parser.add_argument('--num-workers', type=int, help='Number of dataloader workers', default=4)
     parser.add_argument('--num-gpus', type=int, help='Number of GPUs to use', default=1)
     parser.add_argument('--strategy', type=str, help='PyTorch Lightning strategy', default='auto')
     parser.add_argument('--limit-batches', type=int, help='Limit number of batches (optional)', default=None)
