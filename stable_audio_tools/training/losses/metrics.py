@@ -3,8 +3,6 @@ import torchaudio
 
 from torch.nn import functional as F
 from torch import nn
-from pypesq import pesq
-
 
 ### Metrics are loss-like functions that do not backpropagate gradients.
 
@@ -16,6 +14,8 @@ class PESQMetric(nn.Module):
             if sample_rate != 16000 else None)
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor):
+        from pypesq import pesq
+        
         if self.resampler is not None:
             inputs = self.resampler(inputs)
             targets = self.resampler(targets)
