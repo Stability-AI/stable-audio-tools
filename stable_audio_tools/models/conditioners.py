@@ -212,9 +212,11 @@ class CLAPAudioConditioner(Conditioner):
                  clap_ckpt_path,
                  audio_model_type="HTSAT-base", 
                  enable_fusion=True,
-                 project_out: bool = False):
+                 project_out: bool = False,
+                 finetune: bool = False):
         super().__init__(512, output_dim, project_out=project_out)
 
+        self.finetune = finetune
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Suppress logging from transformers
