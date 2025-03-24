@@ -7,7 +7,7 @@ def load_ckpt_state_dict(ckpt_path):
     if ckpt_path.endswith(".safetensors"):
         state_dict = load_file(ckpt_path)
     else:
-        state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
+        state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)["state_dict"]
     
     return state_dict
 
@@ -18,6 +18,21 @@ def remove_weight_norm_from_model(model):
             remove_weight_norm(module)
 
     return model
+
+# Get torch.compile flag from environment variable ENABLE_TORCH_COMPILE
+
+import os
+enable_torch_compile = os.environ.get("ENABLE_TORCH_COMPILE", "0") == "1"
+
+def compile(function, *args, **kwargs):
+    
+    if enable_torch_compile:
+        try:
+            return torch.compile(function, *args, **kwargs)
+        except RuntimeError:
+            return function
+
+    return function
 
 # Sampling functions copied from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/utils/utils.py under MIT license
 # License can be found in LICENSES/LICENSE_META.txt

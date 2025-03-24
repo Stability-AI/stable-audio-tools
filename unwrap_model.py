@@ -1,6 +1,5 @@
 import argparse
 import json
-import torch
 from torch.nn.parameter import Parameter
 from stable_audio_tools.models import create_model_from_config
 
@@ -82,7 +81,8 @@ if __name__ == '__main__':
         )
     elif model_type == 'diffusion_cond_inpaint':
         from stable_audio_tools.training.diffusion import DiffusionCondInpaintTrainingWrapper
-        training_wrapper = DiffusionCondInpaintTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False)
+        use_ema = training_config.get("use_ema", True)
+        training_wrapper = DiffusionCondInpaintTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False, use_ema=use_ema)
     elif model_type == 'diffusion_prior':
         from stable_audio_tools.training.diffusion import DiffusionPriorTrainingWrapper
 

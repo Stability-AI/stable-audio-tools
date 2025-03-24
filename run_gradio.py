@@ -27,6 +27,6 @@ if __name__ == "__main__":
     parser.add_argument('--share', action='store_true', help='Create a publicly shareable link', required=False)
     parser.add_argument('--username', type=str, help='Gradio username', required=False)
     parser.add_argument('--password', type=str, help='Gradio password', required=False)
-    parser.add_argument('--model-half', action='store_true', help='Whether to use half precision', required=False)
+    parser.add_argument('--model-half', action='store_true', help='Whether to use half precision', required=False, default=True)
     args = parser.parse_args()
     main(args)

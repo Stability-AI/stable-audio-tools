@@ -6,12 +6,18 @@ import numpy as np
 from typing import List, Any
 import scipy.signal
 
-def apply_reduction(losses, reduction="none"):
+def normalized_complex_distance_loss(x, y, eps=1e-7):
+    numerator = torch.nn.functional.l1_loss(x,y, reduction = 'none').abs()
+    denominator =  0.5 * (x.abs() + y.abs()) + eps  # add epsilon for numerical stability
+    return numerator / denominator
+
+def apply_reduction(losses, reduction="none", retain_batch_dim=False):
+    dim = [-1, -2] if retain_batch_dim and len(losses.shape) == 3 else None
     """Apply reduction to collection of losses."""
     if reduction == "mean":
-        losses = losses.mean()
+        losses = losses.mean(dim = dim)
     elif reduction == "sum":
-        losses = losses.sum()
+        losses = losses.sum(dim = dim)
     return losses
 
 def get_window(win_type: str, win_length: int):
@@ -172,7 +178,7 @@ class SpectralConvergenceLoss(torch.nn.Module):
         super(SpectralConvergenceLoss, self).__init__()
 
     def forward(self, x_mag, y_mag):
-        return (torch.norm(y_mag - x_mag, p="fro", dim=[-1, -2]) / torch.norm(y_mag, p="fro", dim=[-1, -2])).mean()
+        return (torch.norm(y_mag - x_mag, p="fro", dim=[-1, -2]) / torch.norm(y_mag, p="fro", dim=[-1, -2])).unsqueeze(-1).unsqueeze(-1)
 
 class STFTMagnitudeLoss(torch.nn.Module):
     """STFT magnitude loss module.
@@ -281,6 +287,7 @@ class STFTLoss(torch.nn.Module):
         reduction: str = "mean",
         mag_distance: str = "L1",
         device: Any = None,
+        retain_batch_dim: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -302,19 +309,20 @@ class STFTLoss(torch.nn.Module):
         self.reduction = reduction
         self.mag_distance = mag_distance
         self.device = device
+        self.retain_batch_dim = retain_batch_dim
 
         self.phs_used = bool(self.w_phs)
 
         self.spectralconv = SpectralConvergenceLoss()
         self.logstft = STFTMagnitudeLoss(
             log=True,
-            reduction=reduction,
+            reduction=reduction if not self.retain_batch_dim else "none",
             distance=mag_distance,
             **kwargs
         )
         self.linstft = STFTMagnitudeLoss(
             log=False,
-            reduction=reduction,
+            reduction=reduction if not self.retain_batch_dim else "none",
             distance=mag_distance,
             **kwargs
         )
@@ -380,7 +388,7 @@ class STFTLoss(torch.nn.Module):
 
         # torch.angle is expensive, so it is only evaluated if the values are used in the loss
         if self.phs_used:
-            x_phs = torch.angle(x_stft)
+            x_phs = x_stft
         else:
             x_phs = None
 
@@ -423,7 +431,7 @@ class STFTLoss(torch.nn.Module):
         sc_mag_loss = self.spectralconv(x_mag, y_mag) if self.w_sc else 0.0
         log_mag_loss = self.logstft(x_mag, y_mag) if self.w_log_mag else 0.0
         lin_mag_loss = self.linstft(x_mag, y_mag) if self.w_lin_mag else 0.0
-        phs_loss = torch.nn.functional.mse_loss(x_phs, y_phs) if self.phs_used else 0.0
+        phs_loss = normalized_complex_distance_loss(x_phs,y_phs) if self.phs_used else 0.0
 
         # combine loss terms
         loss = (
@@ -432,9 +440,9 @@ class STFTLoss(torch.nn.Module):
             + (self.w_lin_mag * lin_mag_loss)
             + (self.w_phs * phs_loss)
         )
+        loss = apply_reduction(loss, reduction=self.reduction, retain_batch_dim=self.retain_batch_dim)
 
-        loss = apply_reduction(loss, reduction=self.reduction)
-
+        
         if self.output == "loss":
             return loss
         elif self.output == "full":
@@ -476,7 +484,7 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
         w_phs: float = 0.0,
         sample_rate: float = None,
         scale: str = None,
-        n_bins: int = None,
+        n_bins: List[int] = None,
         perceptual_weighting: bool = False,
         scale_invariance: bool = False,
         **kwargs,
@@ -488,7 +496,7 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
         self.win_lengths = win_lengths
 
         self.stft_losses = torch.nn.ModuleList()
-        for fs, ss, wl in zip(fft_sizes, hop_sizes, win_lengths):
+        for i, (fs, ss, wl) in enumerate(zip(fft_sizes, hop_sizes, win_lengths)):
             self.stft_losses += [
                 STFTLoss(
                     fs,
@@ -501,7 +509,7 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
                     w_phs,
                     sample_rate,
                     scale,
-                    n_bins,
+                    n_bins[i] if scale == "mel" and n_bins is not None else None,
                     perceptual_weighting,
                     scale_invariance,
                     **kwargs,
@@ -605,3 +613,121 @@ class SumAndDifferenceSTFTLoss(torch.nn.Module):
             return loss
         elif self.output == "full":
             return loss, sum_loss, diff_loss
+
+
+class SISDRLoss(torch.nn.Module):
+    """Scale-invariant signal-to-distortion ratio loss module.
+
+    Note that this returns the negative of the SI-SDR loss.
+
+    See [Le Roux et al., 2018](https://arxiv.org/abs/1811.02508)
+
+    Args:
+        zero_mean (bool, optional) Remove any DC offset in the inputs. Default: ``True``
+        eps (float, optional): Small epsilon value for stablity. Default: 1e-8
+        reduction (string, optional): Specifies the reduction to apply to the output:
+            'none': no reduction will be applied,
+            'mean': the sum of the output will be divided by the number of elements in the output,
+            'sum': the output will be summed. Default: 'mean'
+    Shape:
+        - input : :math:`(batch, nchs, ...)`.
+        - target: :math:`(batch, nchs, ...)`.
+    """
+
+    def __init__(self, zero_mean=True, eps=1e-8, reduction="mean"):
+        super(SISDRLoss, self).__init__()
+        self.zero_mean = zero_mean
+        self.eps = eps
+        self.reduction = reduction
+
+    def forward(self, input, target):
+        if self.zero_mean:
+            input_mean = torch.mean(input, dim=-1, keepdim=True)
+            target_mean = torch.mean(target, dim=-1, keepdim=True)
+            input = input - input_mean
+            target = target - target_mean
+
+        alpha = (input * target).sum(-1) / (((target ** 2).sum(-1)) + self.eps)
+        target = target * alpha.unsqueeze(-1)
+        res = input - target
+
+        losses = 10 * torch.log10(
+            (target ** 2).sum(-1) / ((res ** 2).sum(-1) + self.eps) + self.eps
+        )
+        losses = apply_reduction(losses, self.reduction)
+        return -losses
+
+
+class SDSDRLoss(torch.nn.Module):
+    """Scale-dependent signal-to-distortion ratio loss module.
+
+    Note that this returns the negative of the SD-SDR loss.
+
+    See [Le Roux et al., 2018](https://arxiv.org/abs/1811.02508)
+
+    Args:
+        zero_mean (bool, optional) Remove any DC offset in the inputs. Default: ``True``
+        eps (float, optional): Small epsilon value for stablity. Default: 1e-8
+        reduction (string, optional): Specifies the reduction to apply to the output:
+            'none': no reduction will be applied,
+            'mean': the sum of the output will be divided by the number of elements in the output,
+            'sum': the output will be summed. Default: 'mean'
+    Shape:
+        - input : :math:`(batch, nchs, ...)`.
+        - target: :math:`(batch, nchs, ...)`.
+    """
+
+    def __init__(self, zero_mean=True, eps=1e-8, reduction="mean"):
+        super(SDSDRLoss, self).__init__()
+        self.zero_mean = zero_mean
+        self.eps = eps
+        self.reduction = reduction
+
+    def forward(self, input, target):
+        if self.zero_mean:
+            input_mean = torch.mean(input, dim=-1, keepdim=True)
+            target_mean = torch.mean(target, dim=-1, keepdim=True)
+            input = input - input_mean
+            target = target - target_mean
+
+        alpha = (input * target).sum(-1) / (((target ** 2).sum(-1)) + self.eps)
+        scaled_target = target * alpha.unsqueeze(-1)
+        res = input - target
+
+        losses = 10 * torch.log10(
+            (scaled_target ** 2).sum(-1) / ((res ** 2).sum(-1) + self.eps) + self.eps
+        )
+        losses = apply_reduction(losses, self.reduction)
+        return -losses
+
+class MelSTFTLoss(STFTLoss):
+    """Mel-scale STFT loss module."""
+
+    def __init__(
+        self,
+        sample_rate,
+        fft_size=1024,
+        hop_size=256,
+        win_length=1024,
+        window="hann_window",
+        w_sc=1.0,
+        w_log_mag=1.0,
+        w_lin_mag=0.0,
+        w_phs=0.0,
+        n_mels=128,
+        **kwargs,
+    ):
+        super(MelSTFTLoss, self).__init__(
+            fft_size,
+            hop_size,
+            win_length,
+            window,
+            w_sc,
+            w_log_mag,
+            w_lin_mag,
+            w_phs,
+            sample_rate,
+            "mel",
+            n_mels,
+            **kwargs,
+        )

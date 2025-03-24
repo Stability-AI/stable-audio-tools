@@ -1,12 +1,16 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from functools import reduce
 import typing as tp
+
+from typing import List, Tuple
+from functools import reduce
 from einops import rearrange
-from audiotools import AudioSignal, STFTParams
-from dac.model.discriminator import WNConv1d, WNConv2d
+
+from .autoencoders import checkpoint
+
 
 def get_hinge_losses(score_real, score_fake):
     gen_loss = -score_fake.mean()
@@ -14,31 +18,34 @@ def get_hinge_losses(score_real, score_fake):
     return dis_loss, gen_loss
 
 class EncodecDiscriminator(nn.Module):
-
-    def __init__(self, *args, **kwargs):
+    def __init__(self, normalize_losses = False, *args, **kwargs):
         super().__init__()
 
-        from encodec.msstftd import MultiScaleSTFTDiscriminator
+        from .encodec import MultiScaleSTFTDiscriminator
 
         self.discriminators = MultiScaleSTFTDiscriminator(*args, **kwargs)
+        self.normalize_losses = normalize_losses
+
+        if self.normalize_losses:
+            self.fm_reduction = lambda x, y: abs(x - y).mean()/(abs(x).mean() + 1e-3)
+        else:
+            self.fm_reduction = lambda x, y: abs(x - y).mean()
 
     def forward(self, x):
         logits, features = self.discriminators(x)
         return logits, features
 
-    def loss(self, x, y):
-        feature_matching_distance = 0.
-        logits_true, feature_true = self.forward(x)
-        logits_fake, feature_fake = self.forward(y)
-
-        dis_loss = torch.tensor(0.)
-        adv_loss = torch.tensor(0.)
-
+    def loss(self, reals, fakes):
+        feature_matching_distance = torch.tensor(0., device=reals.device)
+        logits_true, feature_true = self.forward(reals)
+        logits_fake, feature_fake = self.forward(fakes)
+        dis_loss = torch.tensor(0.,device=reals.device)
+        adv_loss = torch.tensor(0.,device=reals.device)
         for i, (scale_true, scale_fake) in enumerate(zip(feature_true, feature_fake)):
-
+            
             feature_matching_distance = feature_matching_distance + sum(
                 map(
-                    lambda x, y: abs(x - y).mean(),
+                    self.fm_reduction,
                     scale_true,
                     scale_fake,
                 )) / len(scale_true)
@@ -46,12 +53,13 @@ class EncodecDiscriminator(nn.Module):
             _dis, _adv = get_hinge_losses(
                 logits_true[i],
                 logits_fake[i],
-            )
+            ) 
 
             dis_loss = dis_loss + _dis
             adv_loss = adv_loss + _adv
 
-        return dis_loss, adv_loss, feature_matching_distance
+        return dis_loss / len(logits_true), adv_loss / len(logits_true), feature_matching_distance / len(logits_true)
+
 
 # Discriminators from oobleck
 
@@ -305,6 +313,8 @@ class MPD(nn.Module):
     def __init__(self, period, channels=1):
         super().__init__()
 
+        from dac.model.discriminator import WNConv2d
+
         self.period = period
         self.convs = nn.ModuleList(
             [
@@ -343,6 +353,8 @@ class MPD(nn.Module):
 class MSD(nn.Module):
     def __init__(self, rate: int = 1, sample_rate: int = 44100, channels=1):
         super().__init__()
+
+        from dac.model.discriminator import WNConv1d
 
         self.convs = nn.ModuleList(
             [
@@ -400,6 +412,9 @@ class MRD(nn.Module):
         """
         super().__init__()
 
+        from dac.model.discriminator import WNConv2d
+        from audiotools import STFTParams
+
         self.window_length = window_length
         self.hop_factor = hop_factor
         self.sample_rate = sample_rate
@@ -429,6 +444,7 @@ class MRD(nn.Module):
         self.conv_post = WNConv2d(ch, 1, (3, 3), (1, 1), padding=(1, 1), act=False)
 
     def spectrogram(self, x):
+        from audiotools import AudioSignal
         x = AudioSignal(x, self.sample_rate, stft_params=self.stft_params)
         x = torch.view_as_real(x.stft())
         x = rearrange(x, "b ch f t c -> (b ch) c t f", ch=self.channels)
@@ -453,6 +469,86 @@ class MRD(nn.Module):
 
         return fmap
 
+class MultiScaleSubbandCQTDiscriminator(nn.Module):
+    def __init__(self, cfg: dict):
+        super().__init__()
+
+        self.cfg = cfg
+        # Using get with defaults
+        self.cfg["cqtd_filters"] = self.cfg.get("cqtd_filters", 32)
+        self.cfg["cqtd_max_filters"] = self.cfg.get("cqtd_max_filters", 1024)
+        self.cfg["cqtd_filters_scale"] = self.cfg.get("cqtd_filters_scale", 1)
+        self.cfg["cqtd_dilations"] = self.cfg.get("cqtd_dilations", [1, 2, 4])
+        self.cfg["cqtd_in_channels"] = self.cfg.get("cqtd_in_channels", 1)
+        self.cfg["cqtd_out_channels"] = self.cfg.get("cqtd_out_channels", 1)
+        # Multi-scale params to loop over
+        self.cfg["cqtd_hop_lengths"] = self.cfg.get("cqtd_hop_lengths", [512, 256, 256])
+        self.cfg["cqtd_n_octaves"] = self.cfg.get("cqtd_n_octaves", [9, 9, 9])
+        self.cfg["cqtd_bins_per_octaves"] = self.cfg.get(
+            "cqtd_bins_per_octaves", [24, 36, 48])
+        self.cfg["cqtd_fmin"] = self.cfg.get("fmin", 32.7)
+
+        n_discriminators = len(self.cfg["cqtd_hop_lengths"])
+        self.discriminators = nn.ModuleList([DiscriminatorCQT(
+            self.cfg,
+            hop_length=self.cfg["cqtd_hop_lengths"][i],
+            n_octaves=self.cfg["cqtd_n_octaves"][i],
+            bins_per_octave=self.cfg["cqtd_bins_per_octaves"][i],
+        ) for i in range(n_discriminators)])
+
+    def forward(self, reals: torch.Tensor, gens: torch.Tensor) -> Tuple[
+        List[torch.Tensor],
+        List[torch.Tensor],
+        List[List[torch.Tensor]],
+        List[List[torch.Tensor]],
+    ]:
+        y_d_rs = []
+        y_d_gs = []
+        fmap_rs = []
+        fmap_gs = []
+
+        for disc in self.discriminators:
+            y_d_r, fmap_r = checkpoint(disc,reals)
+            y_d_g, fmap_g = checkpoint(disc,gens)
+            y_d_rs.append(y_d_r)
+            fmap_rs.append(fmap_r)
+            y_d_gs.append(y_d_g)
+            fmap_gs.append(fmap_g)
+
+        return y_d_rs, y_d_gs, fmap_rs, fmap_gs
+
+    def discriminator_loss(self, fake, real):
+        y_real, y_fake, fmap_real, fmap_fake = self.forward(real, fake.clone().detach())
+
+        loss_d = 0
+        for x_fake, x_real in zip(y_fake, y_real):
+            loss_d += torch.mean(x_fake ** 2)
+            loss_d += torch.mean((1 - x_real) ** 2)
+        loss_d /= len(y_fake)
+        return loss_d
+
+    def generator_loss(self, fake, real):
+        y_real, y_fake, fmap_real, fmap_fake = self.forward(real, fake)
+
+        loss_g = 0
+        for x_fake in y_fake:
+            loss_g += torch.mean((1 - x_fake) ** 2)
+
+        counter = 0
+        loss_feature = 0
+        for i in range(len(fmap_fake)):
+            for j in range(len(fmap_fake[i])):
+                denominator = fmap_real[i][j].abs().mean().detach()
+                loss_feature += F.l1_loss(fmap_fake[i][j], fmap_real[i][j].detach()) / denominator
+                counter += 1
+        loss_feature /= counter
+        loss_g /= len(y_fake)
+        return loss_g, loss_feature
+
+    def loss(self, reals, fakes):
+        gen_loss, feature_distance = self.generator_loss(fakes, reals)
+        dis_loss = self.discriminator_loss(fakes, reals)
+        return dis_loss, gen_loss, feature_distance
 
 class DACDiscriminator(nn.Module):
     def __init__(
@@ -496,7 +592,7 @@ class DACDiscriminator(nn.Module):
 
     def forward(self, x):
         x = self.preprocess(x)
-        fmaps = [d(x) for d in self.discriminators]
+        fmaps = [checkpoint(d,x) for d in self.discriminators]
         return fmaps
 
 class DACGANLoss(nn.Module):
@@ -507,8 +603,9 @@ class DACGANLoss(nn.Module):
     discriminator and the generator in separate functions.
     """
 
-    def __init__(self, **discriminator_kwargs):
+    def __init__(self, use_hinge: bool = False, **discriminator_kwargs):
         super().__init__()
+        self.use_hinge = use_hinge
         self.discriminator = DACDiscriminator(**discriminator_kwargs)
 
     def forward(self, fake, real):
@@ -521,8 +618,14 @@ class DACGANLoss(nn.Module):
 
         loss_d = 0
         for x_fake, x_real in zip(d_fake, d_real):
-            loss_d += torch.mean(x_fake[-1] ** 2)
-            loss_d += torch.mean((1 - x_real[-1]) ** 2)
+            loss_d += (
+                F.relu(x_fake[-1]).mean() +
+                F.relu(1 - x_real[-1]).mean()
+            ) if self.use_hinge else (
+                (x_fake[-1] ** 2).mean() +
+                ((1 - x_real[-1]) ** 2).mean()
+            )
+        loss_d /= len(d_fake)
         return loss_d
 
     def generator_loss(self, fake, real):
@@ -530,17 +633,55 @@ class DACGANLoss(nn.Module):
 
         loss_g = 0
         for x_fake in d_fake:
-            loss_g += torch.mean((1 - x_fake[-1]) ** 2)
+            loss_g += (
+                F.relu(1 - x_fake[-1]).mean()
+                if self.use_hinge else
+                ((1 - x_fake[-1]) ** 2).mean()
+            )
 
+        n_discriminators = len(d_fake)
         loss_feature = 0
+        for i in range(n_discriminators):
+            # Average over N model layers (except for the last item, which is logits).
+            n_layers = len(d_fake[i]) - 1
+            loss_feature += sum(map(
+                lambda j: F.l1_loss(d_fake[i][j], d_real[i][j].detach()),
+                range(n_layers)
+            )) / n_layers
 
-        for i in range(len(d_fake)):
-            for j in range(len(d_fake[i]) - 1):
-                loss_feature += F.l1_loss(d_fake[i][j], d_real[i][j].detach())
+        # Average over K discriminators.
+        loss_feature = loss_feature / n_discriminators
+
+        loss_g /= len(d_fake)
         return loss_g, loss_feature
-    
-    def loss(self, fake, real):
-        gen_loss, feature_distance = self.generator_loss(fake, real)
-        dis_loss = self.discriminator_loss(fake, real)
 
+    def loss(self, reals, fakes):
+        gen_loss, feature_distance = self.generator_loss(fakes, reals)
+        dis_loss = self.discriminator_loss(fakes, reals)
         return dis_loss, gen_loss, feature_distance
+
+class BigVGANDiscriminator(nn.Module):
+    def __init__(self, sample_rate: int,
+        channels: int = 1,
+        use_hinge: bool = False,
+        periods: List[int] = [2, 3, 5, 7, 11],
+        **cqt_kwargs,
+    ):
+        super().__init__()
+
+        # Use MPD discriminator from DAC GAN, disable others.
+        self.mpd = DACGANLoss(use_hinge=use_hinge, sample_rate=sample_rate,
+            periods=periods, rates=[], fft_sizes=[], channels = channels)
+
+        self.cqt = MultiScaleSubbandCQTDiscriminator({
+            "cqtd_in_channels": channels,
+            "sampling_rate": sample_rate, **cqt_kwargs,
+        })
+
+    def loss(self, reals, fakes):
+        cqt_dis_loss, cqt_gen_loss, cqt_feature_distance = self.cqt.loss(reals, fakes)
+        mpd_dis_loss, mpd_gen_loss, mpd_feature_distance = self.mpd.loss(reals, fakes)
+        return (
+            mpd_dis_loss + cqt_dis_loss,
+            mpd_gen_loss + cqt_gen_loss,
+            mpd_feature_distance + cqt_feature_distance)

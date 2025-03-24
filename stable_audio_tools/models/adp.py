@@ -15,7 +15,6 @@ from einops_exts import rearrange_many
 from torch import Tensor, einsum
 from torch.backends.cuda import sdp_kernel
 from torch.nn import functional as F
-from dac.nn.layers import Snake1d
 
 """
 Utils
@@ -221,8 +220,7 @@ class ConvBlock1d(nn.Module):
         stride: int = 1,
         dilation: int = 1,
         num_groups: int = 8,
-        use_norm: bool = True,
-        use_snake: bool = False
+        use_norm: bool = True
     ) -> None:
         super().__init__()
 
@@ -232,10 +230,8 @@ class ConvBlock1d(nn.Module):
             else nn.Identity()
         )
 
-        if use_snake:
-            self.activation = Snake1d(in_channels)
-        else:
-            self.activation = nn.SiLU() 
+        
+        self.activation = nn.SiLU() 
 
         self.project = Conv1d(
             in_channels=in_channels,
@@ -286,7 +282,6 @@ class ResnetBlock1d(nn.Module):
         stride: int = 1,
         dilation: int = 1,
         use_norm: bool = True,
-        use_snake: bool = False,
         num_groups: int = 8,
         context_mapping_features: Optional[int] = None,
     ) -> None:
@@ -301,8 +296,7 @@ class ResnetBlock1d(nn.Module):
             stride=stride,
             dilation=dilation,
             use_norm=use_norm,
-            num_groups=num_groups,
-            use_snake=use_snake
+            num_groups=num_groups
         )
 
         if self.use_mapping:
@@ -315,8 +309,7 @@ class ResnetBlock1d(nn.Module):
             in_channels=out_channels,
             out_channels=out_channels,
             use_norm=use_norm,
-            num_groups=num_groups,
-            use_snake=use_snake
+            num_groups=num_groups
         )
 
         self.to_out = (
@@ -347,7 +340,6 @@ class Patcher(nn.Module):
         out_channels: int,
         patch_size: int,
         context_mapping_features: Optional[int] = None,
-        use_snake: bool = False,
     ):
         super().__init__()
         assert_message = f"out_channels must be divisible by patch_size ({patch_size})"
@@ -358,8 +350,7 @@ class Patcher(nn.Module):
             in_channels=in_channels,
             out_channels=out_channels // patch_size,
             num_groups=1,
-            context_mapping_features=context_mapping_features,
-            use_snake=use_snake
+            context_mapping_features=context_mapping_features
         )
 
     def forward(self, x: Tensor, mapping: Optional[Tensor] = None, causal=False) -> Tensor:
@@ -374,8 +365,7 @@ class Unpatcher(nn.Module):
         in_channels: int,
         out_channels: int,
         patch_size: int,
-        context_mapping_features: Optional[int] = None,
-        use_snake: bool = False
+        context_mapping_features: Optional[int] = None
     ):
         super().__init__()
         assert_message = f"in_channels must be divisible by patch_size ({patch_size})"
@@ -386,8 +376,7 @@ class Unpatcher(nn.Module):
             in_channels=in_channels // patch_size,
             out_channels=out_channels,
             num_groups=1,
-            context_mapping_features=context_mapping_features,
-            use_snake=use_snake
+            context_mapping_features=context_mapping_features
         )
 
     def forward(self, x: Tensor, mapping: Optional[Tensor] = None, causal=False) -> Tensor:
@@ -706,7 +695,6 @@ class DownsampleBlock1d(nn.Module):
         kernel_multiplier: int = 2,
         use_pre_downsample: bool = True,
         use_skip: bool = False,
-        use_snake: bool = False,
         extract_channels: int = 0,
         context_channels: int = 0,
         num_transformer_blocks: int = 0,
@@ -739,7 +727,6 @@ class DownsampleBlock1d(nn.Module):
                     out_channels=channels,
                     num_groups=num_groups,
                     context_mapping_features=context_mapping_features,
-                    use_snake=use_snake
                 )
                 for i in range(num_layers)
             ]
@@ -772,7 +759,6 @@ class DownsampleBlock1d(nn.Module):
                 in_channels=out_channels,
                 out_channels=extract_channels,
                 num_groups=num_extract_groups,
-                use_snake=use_snake
             )
 
     def forward(
@@ -823,7 +809,6 @@ class UpsampleBlock1d(nn.Module):
         use_nearest: bool = False,
         use_pre_upsample: bool = False,
         use_skip: bool = False,
-        use_snake: bool = False,
         skip_channels: int = 0,
         use_skip_scale: bool = False,
         extract_channels: int = 0,
@@ -850,8 +835,7 @@ class UpsampleBlock1d(nn.Module):
                     in_channels=channels + skip_channels,
                     out_channels=channels,
                     num_groups=num_groups,
-                    context_mapping_features=context_mapping_features,
-                    use_snake=use_snake
+                    context_mapping_features=context_mapping_features
                 )
                 for _ in range(num_layers)
             ]
@@ -890,8 +874,7 @@ class UpsampleBlock1d(nn.Module):
             self.to_extracted = ResnetBlock1d(
                 in_channels=out_channels,
                 out_channels=extract_channels,
-                num_groups=num_extract_groups,
-                use_snake=use_snake
+                num_groups=num_extract_groups
             )
 
     def add_skip(self, x: Tensor, skip: Tensor) -> Tensor:
@@ -939,8 +922,7 @@ class BottleneckBlock1d(nn.Module):
         attention_features: Optional[int] = None,
         attention_multiplier: Optional[int] = None,
         context_mapping_features: Optional[int] = None,
-        context_embedding_features: Optional[int] = None,
-        use_snake: bool = False,
+        context_embedding_features: Optional[int] = None
     ):
         super().__init__()
         self.use_transformer = num_transformer_blocks > 0
@@ -949,8 +931,7 @@ class BottleneckBlock1d(nn.Module):
             in_channels=channels,
             out_channels=channels,
             num_groups=num_groups,
-            context_mapping_features=context_mapping_features,
-            use_snake=use_snake
+            context_mapping_features=context_mapping_features
         )
 
         if self.use_transformer:
@@ -978,8 +959,7 @@ class BottleneckBlock1d(nn.Module):
             in_channels=channels,
             out_channels=channels,
             num_groups=num_groups,
-            context_mapping_features=context_mapping_features,
-            use_snake=use_snake
+            context_mapping_features=context_mapping_features
         )
 
     def forward(
@@ -1018,7 +998,6 @@ class UNet1d(nn.Module):
         kernel_multiplier_downsample: int = 2,
         use_nearest_upsample: bool = False,
         use_skip_scale: bool = True,
-        use_snake: bool = False,
         use_stft: bool = False,
         use_stft_context: bool = False,
         out_channels: Optional[int] = None,
@@ -1106,8 +1085,7 @@ class UNet1d(nn.Module):
             in_channels=in_channels + context_channels[0],
             out_channels=channels * multipliers[0],
             patch_size=patch_size,
-            context_mapping_features=context_mapping_features,
-            use_snake=use_snake
+            context_mapping_features=context_mapping_features
         )
 
         self.downsamples = nn.ModuleList(
@@ -1124,7 +1102,6 @@ class UNet1d(nn.Module):
                     num_groups=resnet_groups,
                     use_pre_downsample=True,
                     use_skip=True,
-                    use_snake=use_snake,
                     num_transformer_blocks=attentions[i],
                     **attention_kwargs,
                 )
@@ -1138,7 +1115,6 @@ class UNet1d(nn.Module):
             context_embedding_features=context_embedding_features,
             num_groups=resnet_groups,
             num_transformer_blocks=attentions[-1],
-            use_snake=use_snake,
             **attention_kwargs,
         )
 
@@ -1156,7 +1132,6 @@ class UNet1d(nn.Module):
                     use_skip_scale=use_skip_scale,
                     use_pre_upsample=False,
                     use_skip=True,
-                    use_snake=use_snake,
                     skip_channels=channels * multipliers[i + 1],
                     num_transformer_blocks=attentions[i],
                     **attention_kwargs,
@@ -1169,8 +1144,7 @@ class UNet1d(nn.Module):
             in_channels=channels * multipliers[0],
             out_channels=out_channels,
             patch_size=patch_size,
-            context_mapping_features=context_mapping_features,
-            use_snake=use_snake
+            context_mapping_features=context_mapping_features
         )
 
     def get_channels(

@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from functools import partial
+from functools import partial, reduce
 import numpy as np
 import typing as tp
 
@@ -11,8 +11,7 @@ from .dit import DiffusionTransformer
 from .factory import create_pretransform_from_config
 from .pretransforms import Pretransform
 from ..inference.generation import generate_diffusion_cond
-
-from .adp import UNetCFG1d, UNet1d
+from ..inference.sampling import DistributionShift
 
 from time import time
 
@@ -108,6 +107,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             sample_rate,
             min_input_length: int,
             diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
+            distribution_shift_options = None,
             pretransform: tp.Optional[Pretransform] = None,
             cross_attn_cond_ids: tp.List[str] = [],
             global_cond_ids: tp.List[str] = [],
@@ -127,6 +127,10 @@ class ConditionedDiffusionModelWrapper(nn.Module):
         self.input_concat_ids = input_concat_ids
         self.prepend_cond_ids = prepend_cond_ids
         self.min_input_length = min_input_length
+
+        self.dist_shift = None
+        if distribution_shift_options is not None:
+            self.dist_shift = DistributionShift(**distribution_shift_options)     
 
     def get_conditioning_inputs(self, conditioning_tensors: tp.Dict[str, tp.Any], negative=False):
         cross_attention_input = None
@@ -221,6 +225,8 @@ class UNetCFG1DWrapper(ConditionedDiffusionModel):
     ):
         super().__init__(supports_cross_attention=True, supports_global_cond=True, supports_input_concat=True)
 
+        from .adp import UNetCFG1d
+
         self.model = UNetCFG1d(*args, **kwargs)
 
         with torch.no_grad():
@@ -281,6 +287,8 @@ class UNet1DCondWrapper(ConditionedDiffusionModel):
     ):
         super().__init__(supports_cross_attention=False, supports_global_cond=True, supports_input_concat=True)
 
+        from .adp import UNet1d
+
         self.model = UNet1d(*args, **kwargs)
 
         with torch.no_grad():
@@ -332,6 +340,8 @@ class UNet1DUncondWrapper(DiffusionModel):
         **kwargs
     ):
         super().__init__()
+
+        from .adp import UNet1d
 
         self.model = UNet1d(in_channels=in_channels, *args, **kwargs)
 
@@ -624,6 +634,8 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     diffusion_config = model_config.get('diffusion', None)
     assert diffusion_config is not None, "Must specify diffusion config"
 
+    diffusion_objective = diffusion_config.get('diffusion_objective', 'v')
+
     diffusion_model_type = diffusion_config.get('type', None)
     assert diffusion_model_type is not None, "Must specify diffusion model type"
 
@@ -635,7 +647,7 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     elif diffusion_model_type == 'adp_1d':
         diffusion_model = UNet1DCondWrapper(**diffusion_model_config)
     elif diffusion_model_type == 'dit':
-        diffusion_model = DiTWrapper(**diffusion_model_config)
+        diffusion_model = DiTWrapper(diffusion_objective=diffusion_objective, **diffusion_model_config)
 
     io_channels = model_config.get('io_channels', None)
     assert io_channels is not None, "Must specify io_channels in model config"
@@ -643,13 +655,6 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
     sample_rate = config.get('sample_rate', None)
     assert sample_rate is not None, "Must specify sample_rate in config"
 
-    diffusion_objective = diffusion_config.get('diffusion_objective', 'v')
-
-    conditioning_config = model_config.get('conditioning', None)
-
-    conditioner = None
-    if conditioning_config is not None:
-        conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config)
 
     cross_attention_ids = diffusion_config.get('cross_attention_cond_ids', [])
     global_cond_ids = diffusion_config.get('global_cond_ids', [])
@@ -658,11 +663,19 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
 
     pretransform = model_config.get("pretransform", None)
 
+    distribution_shift_options = diffusion_config.get("distribution_shift_options", None)
+
     if pretransform is not None:
         pretransform = create_pretransform_from_config(pretransform, sample_rate)
         min_input_length = pretransform.downsampling_ratio
     else:
         min_input_length = 1
+
+    conditioning_config = model_config.get('conditioning', None)
+
+    conditioner = None
+    if conditioning_config is not None:
+        conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config, pretransform=pretransform)
 
     if diffusion_model_type == "adp_cfg_1d" or diffusion_model_type == "adp_1d":
         min_input_length *= np.prod(diffusion_model_config["factors"])
@@ -697,5 +710,6 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
         prepend_cond_ids=prepend_cond_ids,
         pretransform=pretransform,
         io_channels=io_channels,
+        distribution_shift_options=distribution_shift_options,
         **extra_kwargs
     )

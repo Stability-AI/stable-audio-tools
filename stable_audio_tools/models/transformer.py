@@ -6,8 +6,11 @@ from einops.layers.torch import Rearrange
 import torch
 import torch.nn.functional as F
 from torch import nn, einsum
-from torch.cuda.amp import autocast
+from torch.amp import autocast
+from torch.nn.utils.parametrizations import weight_norm
 from typing import Callable, Literal
+
+from .utils import compile
 
 try:
     from flash_attn import flash_attn_func, flash_attn_kvpacked_func
@@ -123,7 +126,7 @@ class RotaryEmbedding(nn.Module):
         t = torch.arange(seq_len, device = device)
         return self.forward(t)
 
-    @autocast(enabled = False)
+    @autocast("cuda", enabled = False)
     def forward(self, t):
         device = self.inv_freq.device
 
@@ -148,7 +151,7 @@ def rotate_half(x):
     x1, x2 = x.unbind(dim = -2)
     return torch.cat((-x2, x1), dim = -1)
 
-@autocast(enabled = False)
+@autocast("cuda", enabled = False)
 def apply_rotary_pos_emb(t, freqs, scale = 1):
     out_dtype = t.dtype
 
@@ -171,7 +174,7 @@ def apply_rotary_pos_emb(t, freqs, scale = 1):
 
 # norms
 class LayerNorm(nn.Module):
-    def __init__(self, dim, bias=False, fix_scale=False):
+    def __init__(self, dim, bias=False, fix_scale=False, force_fp32=False, eps=1e-5):
         """
         bias-less layernorm has been shown to be more stable. most newer models have moved towards rmsnorm, also bias-less
         """
@@ -187,9 +190,24 @@ class LayerNorm(nn.Module):
         else:
             self.register_buffer("beta", torch.zeros(dim))
 
+        self.eps = eps
+
+        self.force_fp32 = force_fp32
 
     def forward(self, x):
-        return F.layer_norm(x, x.shape[-1:], weight=self.gamma, bias=self.beta)
+        if not self.force_fp32:
+            return F.layer_norm(x, x.shape[-1:], weight=self.gamma, bias=self.beta, eps=self.eps)
+        else:
+            output = F.layer_norm(x.float(), x.shape[-1:], weight=self.gamma.float(), bias=self.beta.float(), eps=self.eps)
+            return output.to(x.dtype)
+
+class LayerScale(nn.Module):
+    def __init__(self, dim, init_val = 1e-2):
+        super().__init__()
+        self.scale = nn.Parameter(torch.full([dim], init_val))
+    def forward(self, x):
+        return x * self.scale
+
 
 # feedforward
 
@@ -265,6 +283,7 @@ class FeedForward(nn.Module):
             Rearrange('b n d -> b d n') if use_conv else nn.Identity(),
         )
 
+    #@compile
     def forward(self, x):
         return self.ff(x)
 
@@ -277,7 +296,9 @@ class Attention(nn.Module):
         causal = False,
         zero_init_output=True,
         qk_norm: Literal['l2', 'ln', 'none'] = 'none',
-        natten_kernel_size = None
+        natten_kernel_size = None,
+        sliding_window = [-1, -1],
+        feat_scale = False
     ):
         super().__init__()
         self.dim = dim
@@ -300,6 +321,9 @@ class Attention(nn.Module):
         if zero_init_output:
             nn.init.zeros_(self.to_out.weight)
 
+        if qk_norm not in ['l2', 'ln', 'none']:
+            raise ValueError(f'qk_norm must be one of ["l2", "ln", "none"], got {qk_norm}')
+            
         self.qk_norm = qk_norm
 
         if self.qk_norm == "ln":
@@ -320,6 +344,16 @@ class Attention(nn.Module):
             enable_math = True,
             enable_mem_efficient = True
         )
+
+        self.sliding_window = sliding_window
+        if not (sliding_window[0] == -1 and sliding_window[1] == -1)  and not self.use_fa_flash:
+            print('Sliding window is being used, but Flash Attention is not. Please install Flash Attention to get correct results')
+
+        self.feat_scale = feat_scale
+
+        if self.feat_scale:
+            self.lambda_dc = nn.Parameter(torch.zeros(dim))
+            self.lambda_hf = nn.Parameter(torch.zeros(dim))
 
     def flash_attn(
             self,
@@ -379,12 +413,12 @@ class Attention(nn.Module):
 
             causal = False
         
-        with torch.backends.cuda.sdp_kernel(**self.sdp_kwargs):
-            out = F.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask = mask,
-                is_causal = causal
-            )
+        #with torch.backends.cuda.sdp_kernel(**self.sdp_kwargs):
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask = mask,
+            is_causal = causal
+        )
 
         # for a row that is entirely masked out, should zero out the output of that row token
 
@@ -393,6 +427,13 @@ class Attention(nn.Module):
 
         return out
 
+    @compile
+    def apply_qk_layernorm(self, q, k):
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+        return q, k
+
+    #@compile
     def forward(
         self,
         x,
@@ -424,8 +465,7 @@ class Attention(nn.Module):
             q = F.normalize(q, dim=-1)
             k = F.normalize(k, dim=-1)
         elif self.qk_norm == "ln":
-            q = self.q_norm(q)
-            k = self.k_norm(k)
+            q, k = self.apply_qk_layernorm(q, k)
 
         if rotary_pos_emb is not None and not has_context:
             freqs, _ = rotary_pos_emb
@@ -475,23 +515,27 @@ class Attention(nn.Module):
             dtype_in = q.dtype
             q, k, v = map(lambda t: t.to(torch.float32), (q, k, v))
 
-            attn = natten.functional.natten1dqk(q, k, kernel_size = self.natten_kernel_size, dilation=1)
+            attn = natten.functional.na1d_qk(q, k, kernel_size = self.natten_kernel_size, dilation=1)
 
             if final_attn_mask is not None:
                 attn = attn.masked_fill(final_attn_mask, -torch.finfo(attn.dtype).max)
 
             attn = F.softmax(attn, dim=-1, dtype=torch.float32)
 
-            out = natten.functional.natten1dav(attn, v, kernel_size = self.natten_kernel_size, dilation=1).to(dtype_in)
+            out = natten.functional.na1d_av(attn, v, kernel_size = self.natten_kernel_size, dilation=1).to(dtype_in)
 
         # Prioritize Flash Attention 2
         elif self.use_fa_flash:
             assert final_attn_mask is None, 'masking not yet supported for Flash Attention 2'
             # Flash Attention 2 requires FP16 inputs
             fa_dtype_in = q.dtype
-            q, k, v = map(lambda t: rearrange(t, 'b h n d -> b n h d').to(torch.float16), (q, k, v))
+
+            q, k, v = map(lambda t: rearrange(t, 'b h n d -> b n h d'), (q, k, v))
+
+            if fa_dtype_in != torch.float16 and fa_dtype_in != torch.bfloat16:
+                q, k, v = map(lambda t: t.to(torch.float16), (q, k, v))
             
-            out = flash_attn_func(q, k, v, causal = causal)
+            out = flash_attn_func(q, k, v, causal = causal, window_size=self.sliding_window)
             
             out = rearrange(out.to(fa_dtype_in), 'b n h d -> b h n d')
 
@@ -540,6 +584,13 @@ class Attention(nn.Module):
         #     out = self.to_out(out).to(out_dtype)
         out = self.to_out(out)
 
+        if self.feat_scale:
+            out_dc = out.mean(dim=-2, keepdim=True)
+            out_hf = out - out_dc
+
+            # Selectively modulate DC and high frequency components
+            out = out + self.lambda_dc * out_dc + self.lambda_hf * out_hf
+
         if mask is not None:
             mask = rearrange(mask, 'b n -> b n 1')
             out = out.masked_fill(~mask, 0.)
@@ -565,6 +616,7 @@ class ConformerModule(nn.Module):
         self.swish = nn.SiLU()
         self.pointwise_conv_2 = nn.Conv1d(dim, dim, kernel_size=1, bias=False)
 
+    #@compile
     def forward(self, x):
         x = self.in_norm(x)
         x = rearrange(x, 'b n d -> b d n')
@@ -595,6 +647,8 @@ class TransformerBlock(nn.Module):
             conformer = False,
             layer_ix = -1,
             remove_norms = False,
+            add_rope = False,
+            layer_scale = False,
             attn_kwargs = {},
             ff_kwargs = {},
             norm_kwargs = {}
@@ -606,8 +660,14 @@ class TransformerBlock(nn.Module):
         self.cross_attend = cross_attend
         self.dim_context = dim_context
         self.causal = causal
+       
+        if layer_scale and zero_init_branch_outputs:
+            print('zero_init_branch_outputs is redundant with layer_scale, setting zero_init_branch_outputs to False')
+            zero_init_branch_outputs = False
+            
+        self.pre_norm = LayerNorm(dim,**norm_kwargs) if not remove_norms else nn.Identity()
 
-        self.pre_norm = LayerNorm(dim, **norm_kwargs) if not remove_norms else nn.Identity()
+        self.add_rope = add_rope
 
         self.self_attn = Attention(
             dim,
@@ -617,6 +677,9 @@ class TransformerBlock(nn.Module):
             **attn_kwargs
         )
 
+        self.self_attn_scale = LayerScale(dim) if layer_scale else nn.Identity()
+
+        self.cross_attend = cross_attend
         if cross_attend:
             self.cross_attend_norm = LayerNorm(dim, **norm_kwargs) if not remove_norms else nn.Identity()
             self.cross_attn = Attention(
@@ -627,25 +690,27 @@ class TransformerBlock(nn.Module):
                 zero_init_output=zero_init_branch_outputs,
                 **attn_kwargs
             )
+            self.cross_attn_scale = LayerScale(dim) if layer_scale else nn.Identity()
         
         self.ff_norm = LayerNorm(dim, **norm_kwargs) if not remove_norms else nn.Identity()
         self.ff = FeedForward(dim, zero_init_output=zero_init_branch_outputs, **ff_kwargs)
+        self.ff_scale = LayerScale(dim) if layer_scale else nn.Identity()
 
         self.layer_ix = layer_ix
 
-        self.conformer = ConformerModule(dim, norm_kwargs=norm_kwargs) if conformer else None
+        self.conformer = None
+        if conformer:
+            self.conformer = ConformerModule(dim, norm_kwargs=norm_kwargs)
+            self.conformer_scale = LayerScale(dim) if layer_scale else nn.Identity()
 
         self.global_cond_dim = global_cond_dim
 
         if global_cond_dim is not None:
-            self.to_scale_shift_gate = nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(global_cond_dim, dim * 6, bias=False)
-            )
+            self.to_scale_shift_gate = nn.Parameter(torch.randn(6*dim)/dim**0.5)
 
-            nn.init.zeros_(self.to_scale_shift_gate[1].weight)
-            #nn.init.zeros_(self.to_scale_shift_gate_self[1].bias)
+        self.rope = RotaryEmbedding(max(dim_heads // 2, 32)) if add_rope else None
 
+    @compile
     def forward(
         self,
         x,
@@ -655,9 +720,12 @@ class TransformerBlock(nn.Module):
         context_mask = None,
         rotary_pos_emb = None
     ):
+        if rotary_pos_emb is None and self.add_rope:
+            rotary_pos_emb = self.rope.forward_from_seq_len(x.shape[-2])
+
         if self.global_cond_dim is not None and self.global_cond_dim > 0 and global_cond is not None:
             
-            scale_self, shift_self, gate_self, scale_ff, shift_ff, gate_ff = self.to_scale_shift_gate(global_cond).unsqueeze(1).chunk(6, dim = -1)
+            scale_self, shift_self, gate_self, scale_ff, shift_ff, gate_ff = (self.to_scale_shift_gate + global_cond).unsqueeze(1).chunk(6, dim=-1)
 
             # self-attention with adaLN
             residual = x
@@ -665,13 +733,14 @@ class TransformerBlock(nn.Module):
             x = x * (1 + scale_self) + shift_self
             x = self.self_attn(x, mask = mask, rotary_pos_emb = rotary_pos_emb)
             x = x * torch.sigmoid(1 - gate_self)
+            x = self.self_attn_scale(x)
             x = x + residual
 
-            if context is not None:
-                x = x + self.cross_attn(self.cross_attend_norm(x), context = context, context_mask = context_mask)
-
+            if context is not None and self.cross_attend:
+                x = x + self.cross_attn_scale(self.cross_attn(self.cross_attend_norm(x), context = context, context_mask = context_mask))
+            
             if self.conformer is not None:
-                x = x + self.conformer(x)
+                x = x + self.conformer_scale(self.conformer(x))
 
             # feedforward with adaLN
             residual = x
@@ -679,19 +748,19 @@ class TransformerBlock(nn.Module):
             x = x * (1 + scale_ff) + shift_ff
             x = self.ff(x)
             x = x * torch.sigmoid(1 - gate_ff)
+            x = self.ff_scale(x)
             x = x + residual
 
         else:
-            x = x + self.self_attn(self.pre_norm(x), mask = mask, rotary_pos_emb = rotary_pos_emb)
+            x = x + self.self_attn_scale(self.self_attn(self.pre_norm(x), mask = mask, rotary_pos_emb = rotary_pos_emb))
 
-            if context is not None:
-                x = x + self.cross_attn(self.cross_attend_norm(x), context = context, context_mask = context_mask)
-
+            if context is not None and self.cross_attend:
+                x = x + self.cross_attn_scale(self.cross_attn(self.cross_attend_norm(x), context = context, context_mask = context_mask))
+                    
             if self.conformer is not None:
-                x = x + self.conformer(x)
+                x = x + self.conformer_scale(self.conformer(x))
 
-            x = x + self.ff(self.ff_norm(x))
-
+            x = x + self.ff_scale(self.ff(self.ff_norm(x)))
         return x
         
 class ContinuousTransformer(nn.Module):
@@ -705,6 +774,7 @@ class ContinuousTransformer(nn.Module):
         dim_heads = 64,
         cross_attend=False,
         cond_token_dim=None,
+        final_cross_attn_ix=-1,
         global_cond_dim=None,
         causal=False,
         rotary_pos_emb=True,
@@ -739,12 +809,23 @@ class ContinuousTransformer(nn.Module):
         if use_abs_pos_emb:
             self.pos_emb = AbsolutePositionalEmbedding(dim, abs_pos_emb_max_length)
 
+        self.global_cond_embedder = None
+        if global_cond_dim is not None:
+            self.global_cond_embedder = nn.Sequential(
+                nn.Linear(global_cond_dim, dim),
+                nn.SiLU(),
+                nn.Linear(dim, dim * 6)
+            )
+
+        self.final_cross_attn_ix = final_cross_attn_ix
+
         for i in range(depth):
+            should_cross_attend = cross_attend and (self.final_cross_attn_ix == -1 or i <= (self.final_cross_attn_ix))
             self.layers.append(
                 TransformerBlock(
                     dim,
                     dim_heads = dim_heads,
-                    cross_attend = cross_attend,
+                    cross_attend = should_cross_attend,
                     dim_context = cond_token_dim,
                     global_cond_dim = global_cond_dim,
                     causal = causal,
@@ -766,6 +847,9 @@ class ContinuousTransformer(nn.Module):
         **kwargs
     ):
         batch, seq, device = *x.shape[:2], x.device
+
+        model_dtype = next(self.parameters()).dtype
+        x = x.to(model_dtype)
 
         info = {
             "hidden_states": [],
@@ -795,6 +879,9 @@ class ContinuousTransformer(nn.Module):
 
         if self.use_sinusoidal_emb or self.use_abs_pos_emb:
             x = x + self.pos_emb(x)
+
+        if global_cond is not None and self.global_cond_embedder is not None:
+            global_cond = self.global_cond_embedder(global_cond)
 
         # Iterate over the transformer layers
         for layer in self.layers:

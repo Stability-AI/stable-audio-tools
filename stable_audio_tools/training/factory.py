@@ -41,11 +41,12 @@ def create_training_wrapper_from_config(model_config, model):
 
         return AutoencoderTrainingWrapper(
             model, 
-            lr=training_config["learning_rate"],
+            lr=training_config.get("learning_rate", None),
             warmup_steps=training_config.get("warmup_steps", 0), 
             encoder_freeze_on_warmup=training_config.get("encoder_freeze_on_warmup", False),
             sample_rate=model_config["sample_rate"],
             loss_config=training_config.get("loss_configs", None),
+            eval_loss_config=training_config.get("eval_loss_configs", None),
             optimizer_configs=training_config.get("optimizer_configs", None),
             use_ema=use_ema,
             ema_copy=ema_copy if use_ema else None,
@@ -72,7 +73,7 @@ def create_training_wrapper_from_config(model_config, model):
             optimizer_configs=training_config.get("optimizer_configs", None),
             pre_encoded=training_config.get("pre_encoded", False),
             cfg_dropout_prob = training_config.get("cfg_dropout_prob", 0.1),
-            timestep_sampler = training_config.get("timestep_sampler", "uniform")
+            timestep_sampler = training_config.get("timestep_sampler", "uniform"),
         )
     elif model_type == 'diffusion_prior':
         from .diffusion import DiffusionPriorTrainingWrapper
@@ -211,6 +212,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_conditioning=demo_config.get("demo_cond", {}),
             demo_cond_from_batch=demo_config.get("demo_cond_from_batch", False),
             display_audio_cond=demo_config.get("display_audio_cond", False),
+            cond_display_configs=demo_config.get("cond_display_configs", None),
         )
     elif model_type == "diffusion_cond_inpaint":
         from .diffusion import DiffusionCondInpaintDemoCallback
@@ -221,6 +223,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             sample_rate=model_config["sample_rate"],
             demo_steps=demo_config.get("demo_steps", 250),
             demo_cfg_scales=demo_config["demo_cfg_scales"],
+            num_demos=demo_config.get("num_demos", 8),
             **kwargs
         )
     

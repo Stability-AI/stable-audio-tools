@@ -1,11 +1,10 @@
 import typing as tp
-
+import math
 import torch
 
 from einops import rearrange
 from torch import nn
 from torch.nn import functional as F
-from x_transformers import ContinuousTransformerWrapper, Encoder
 
 from .blocks import FourierFeatures
 from .transformer import ContinuousTransformer
@@ -25,6 +24,9 @@ class DiffusionTransformer(nn.Module):
         num_heads=8,
         transformer_type: tp.Literal["x-transformers", "continuous_transformer"] = "x-transformers",
         global_cond_type: tp.Literal["prepend", "adaLN"] = "prepend",
+        timestep_cond_type: tp.Literal["global", "input_concat"] = "global",
+        timestep_embed_dim=None,
+        diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
         **kwargs):
 
         super().__init__()
@@ -32,14 +34,22 @@ class DiffusionTransformer(nn.Module):
         self.cond_token_dim = cond_token_dim
 
         # Timestep embeddings
+        self.timestep_cond_type = timestep_cond_type
+
         timestep_features_dim = 256
 
         self.timestep_features = FourierFeatures(1, timestep_features_dim)
 
+        if timestep_cond_type == "global":
+            timestep_embed_dim = embed_dim
+        elif timestep_cond_type == "input_concat":
+            assert timestep_embed_dim is not None, "timestep_embed_dim must be specified if timestep_cond_type is input_concat"
+            input_concat_dim += timestep_embed_dim
+
         self.to_timestep_embed = nn.Sequential(
-            nn.Linear(timestep_features_dim, embed_dim, bias=True),
+            nn.Linear(timestep_features_dim, timestep_embed_dim, bias=True),
             nn.SiLU(),
-            nn.Linear(embed_dim, embed_dim, bias=True),
+            nn.Linear(timestep_embed_dim, timestep_embed_dim, bias=True),
         )
 
         if cond_token_dim > 0:
@@ -84,6 +94,8 @@ class DiffusionTransformer(nn.Module):
         self.global_cond_type = global_cond_type
 
         if self.transformer_type == "x-transformers":
+            
+            from x_transformers import ContinuousTransformerWrapper, Encoder
             self.transformer = ContinuousTransformerWrapper(
                 dim_in=dim_in * patch_size,
                 dim_out=io_channels * patch_size,
@@ -132,6 +144,8 @@ class DiffusionTransformer(nn.Module):
         self.postprocess_conv = nn.Conv1d(io_channels, io_channels, 1, bias=False)
         nn.init.zeros_(self.postprocess_conv.weight)
 
+        self.diffusion_objective = diffusion_objective
+
     def _forward(
         self, 
         x, 
@@ -165,7 +179,6 @@ class DiffusionTransformer(nn.Module):
                 prepend_mask = prepend_cond_mask
 
         if input_concat_cond is not None:
-
             # Interpolate input_concat_cond to the same length as x
             if input_concat_cond.shape[2] != x.shape[2]:
                 input_concat_cond = F.interpolate(input_concat_cond, (x.shape[2], ), mode='nearest')
@@ -176,13 +189,17 @@ class DiffusionTransformer(nn.Module):
         timestep_embed = self.to_timestep_embed(self.timestep_features(t[:, None])) # (b, embed_dim)
 
         # Timestep embedding is considered a global embedding. Add to the global conditioning if it exists
-        if global_embed is not None:
-            global_embed = global_embed + timestep_embed
-        else:
-            global_embed = timestep_embed
+
+        if self.timestep_cond_type == "global":
+            if global_embed is not None:
+                global_embed = global_embed + timestep_embed
+            else:
+                global_embed = timestep_embed
+        elif self.timestep_cond_type == "input_concat":
+            x = torch.cat([x, timestep_embed.unsqueeze(1).expand(-1, -1, x.shape[2])], dim=1)
 
         # Add the global_embed to the prepend inputs if there is no global conditioning support in the transformer
-        if self.global_cond_type == "prepend":
+        if self.global_cond_type == "prepend" and global_embed is not None:
             if prepend_inputs is None:
                 # Prepend inputs are just the global embed, and the mask is all ones
                 prepend_inputs = global_embed.unsqueeze(1)
@@ -213,9 +230,7 @@ class DiffusionTransformer(nn.Module):
 
             if return_info:
                 output, info = output
-        elif self.transformer_type == "mm_transformer":
-            output = self.transformer(x, context=cross_attn_cond, mask=mask, context_mask=cross_attn_cond_mask, **extra_args, **kwargs)
-
+       
         output = rearrange(output, "b t c -> b c t")[:,:,prepend_length:]
 
         if self.patch_size > 1:
@@ -243,6 +258,7 @@ class DiffusionTransformer(nn.Module):
         prepend_cond_mask=None,
         cfg_scale=1.0,
         cfg_dropout_prob=0.0,
+        cfg_interval = (0, 1),
         causal=False,
         scale_phi=0.0,
         mask=None,
@@ -250,6 +266,30 @@ class DiffusionTransformer(nn.Module):
         **kwargs):
 
         assert causal == False, "Causal mode is not supported for DiffusionTransformer"
+
+        model_dtype = next(self.parameters()).dtype
+        
+        x = x.to(model_dtype)
+
+        t = t.to(model_dtype)
+
+        if cross_attn_cond is not None:
+            cross_attn_cond = cross_attn_cond.to(model_dtype)
+
+        if negative_cross_attn_cond is not None:
+            negative_cross_attn_cond = negative_cross_attn_cond.to(model_dtype)
+
+        if input_concat_cond is not None:
+            input_concat_cond = input_concat_cond.to(model_dtype)
+
+        if global_embed is not None:
+            global_embed = global_embed.to(model_dtype)
+
+        if negative_global_embed is not None:
+            negative_global_embed = negative_global_embed.to(model_dtype)
+
+        if prepend_cond is not None:
+            prepend_cond = prepend_cond.to(model_dtype)
 
         if cross_attn_cond_mask is not None:
             cross_attn_cond_mask = cross_attn_cond_mask.bool()
@@ -272,7 +312,15 @@ class DiffusionTransformer(nn.Module):
                 prepend_cond = torch.where(dropout_mask, null_embed, prepend_cond)
 
 
-        if cfg_scale != 1.0 and (cross_attn_cond is not None or prepend_cond is not None):
+        # Get the current t value from the first timestep
+        step_t = t[0]
+
+        if self.diffusion_objective == "v":
+            sigma = torch.sin(step_t * math.pi / 2)
+        elif self.diffusion_objective == "rectified_flow":
+            sigma = step_t
+
+        if cfg_scale != 1.0 and (cross_attn_cond is not None or prepend_cond is not None) and (cfg_interval[0] <= sigma <= cfg_interval[1]):
             # Classifier-free guidance
             # Concatenate conditioned and unconditioned inputs on the batch dimension            
             batch_inputs = torch.cat([x, x], dim=0)
@@ -348,6 +396,7 @@ class DiffusionTransformer(nn.Module):
                 batch_output, info = batch_output
 
             cond_output, uncond_output = torch.chunk(batch_output, 2, dim=0)
+
             cfg_output = uncond_output + (cond_output - uncond_output) * cfg_scale
 
             # CFG Rescale
@@ -357,8 +406,9 @@ class DiffusionTransformer(nn.Module):
                 output = scale_phi * (cfg_output * (cond_out_std/out_cfg_std)) + (1-scale_phi) * cfg_output
             else:
                 output = cfg_output
-            
+           
             if return_info:
+                info["uncond_output"] = uncond_output
                 return output, info
 
             return output
