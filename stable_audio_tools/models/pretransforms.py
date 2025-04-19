@@ -107,11 +107,28 @@ class WaveletPretransform(Pretransform):
     
     def decode(self, z):
         return self.decoder(z)
+
+class PatchedPretransform(Pretransform):
+    def __init__(self, channels, patch_size):
+        super().__init__(enable_grad=False, io_channels=channels, is_discrete=False)
+        self.channels = channels
+        self.patch_size = patch_size
+
+        self.downsampling_ratio = patch_size
+        self.io_channels = channels
+        self.encoded_channels = channels * patch_size
     
+    def encode(self, x):
+        x = rearrange(x, "b c (l h) -> b (c h) l", h=self.patch_size)
+        return x
+    def decode(self, z):
+        z = rearrange(z, "b (c h) l -> b c (l h)", h=self.patch_size)
+        return z
+        
 class PQMFPretransform(Pretransform):
-    def __init__(self, attenuation=100, num_bands=16):
+    def __init__(self, attenuation=100, num_bands=16, channels = 1):
         # TODO: Fix PQMF to take in in-channels
-        super().__init__(enable_grad=False, io_channels=1, is_discrete=False)
+        super().__init__(enable_grad=False, io_channels=channels, is_discrete=False)
         from .pqmf import PQMF
         self.pqmf = PQMF(attenuation, num_bands)
 
@@ -250,9 +267,9 @@ class AudiocraftCompressionPretransform(Pretransform):
         # return self.model.decode(z)
 
     def tokenize(self, x):
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast("cuda", enabled=False):
             return self.model.encode(x.to(torch.float16))[0]
     
     def decode_tokens(self, tokens):
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast("cuda", enabled=False):
             return self.model.decode(tokens)

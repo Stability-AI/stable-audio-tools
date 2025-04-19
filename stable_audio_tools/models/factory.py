@@ -71,6 +71,11 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
 
         audiocraft_config = pretransform_config["config"]
         pretransform = AudiocraftCompressionPretransform(**audiocraft_config)
+    elif pretransform_type == "patched":
+        from .pretransforms import PatchedPretransform
+
+        patched_config = pretransform_config["config"]
+        pretransform = PatchedPretransform(**patched_config)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     
@@ -88,7 +93,7 @@ def create_bottleneck_from_config(bottleneck_config):
 
     if bottleneck_type == 'tanh':
         from .bottleneck import TanhBottleneck
-        bottleneck = TanhBottleneck()
+        bottleneck = TanhBottleneck(**bottleneck_config.get('config', {}))
     elif bottleneck_type == 'vae':
         from .bottleneck import VAEBottleneck
         bottleneck = VAEBottleneck()
@@ -142,6 +147,9 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == "fsq":
         from .bottleneck import FSQBottleneck
         bottleneck = FSQBottleneck(**bottleneck_config["config"])
+    elif bottleneck_type == "dithered_fsq":
+        from .bottleneck import DitheredFSQBottleneck
+        return DitheredFSQBottleneck(**bottleneck_config["config"])
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')
     

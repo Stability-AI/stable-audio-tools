@@ -8,7 +8,8 @@ from torch.nn import functional as F
 from torch.backends.cuda import sdp_kernel
 from packaging import version
 
-from dac.nn.layers import Snake1d
+
+from .utils import compile
 
 class ResidualBlock(nn.Module):
     def __init__(self, main, skip=None):
@@ -20,15 +21,15 @@ class ResidualBlock(nn.Module):
         return self.main(input) + self.skip(input)
 
 class ResConvBlock(ResidualBlock):
-    def __init__(self, c_in, c_mid, c_out, is_last=False, kernel_size=5, conv_bias=True, use_snake=False):
+    def __init__(self, c_in, c_mid, c_out, is_last=False, kernel_size=5, conv_bias=True):
         skip = None if c_in == c_out else nn.Conv1d(c_in, c_out, 1, bias=False)
         super().__init__([
             nn.Conv1d(c_in, c_mid, kernel_size, padding=kernel_size//2, bias=conv_bias),
             nn.GroupNorm(1, c_mid),
-            Snake1d(c_mid) if use_snake else nn.GELU(),
+            nn.GELU(),
             nn.Conv1d(c_mid, c_out, kernel_size, padding=kernel_size//2, bias=conv_bias),
             nn.GroupNorm(1, c_out) if not is_last else nn.Identity(),
-            (Snake1d(c_out) if use_snake else nn.GELU()) if not is_last else nn.Identity(),
+            nn.GELU() if not is_last else nn.Identity(),
         ], skip)
 
 class SelfAttention1d(nn.Module):
@@ -206,7 +207,7 @@ def rms_norm(x, scale, eps):
     scale = scale.to(dtype) * torch.rsqrt(mean_sq + eps)
     return x * scale.to(x.dtype)
 
-#rms_norm = torch.compile(rms_norm)
+rms_norm = compile(rms_norm)
 
 class AdaRMSNorm(nn.Module):
     def __init__(self, features, cond_features, eps=1e-6):
@@ -243,17 +244,6 @@ class ForcedWNConv1d(nn.Module):
         return F.conv1d(x, w, padding='same')
         
 # Kernels
-
-use_compile = True
-
-def compile(function, *args, **kwargs):
-    if not use_compile:
-        return function
-    try:
-        return torch.compile(function, *args, **kwargs)
-    except RuntimeError:
-        return function
-
 
 @compile
 def linear_geglu(x, weight, bias=None):

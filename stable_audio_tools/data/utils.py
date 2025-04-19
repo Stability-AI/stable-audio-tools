@@ -5,6 +5,8 @@ import torch
 from torch import nn
 from typing import Tuple
 
+from torchaudio import transforms as T
+
 class PadCrop(nn.Module):
     def __init__(self, n_samples, randomize=True):
         super().__init__()
@@ -94,3 +96,48 @@ class Stereo(nn.Module):
             signal = signal[:2, :]    
 
     return signal
+
+class VolumeNorm(nn.Module):
+    "Volume normalization and augmentation of a signal [LUFS standard]"
+    def __init__(self, params=[-16, 2], sample_rate=16000, energy_threshold=1e-6):
+        super().__init__()
+        self.loudness = T.Loudness(sample_rate)
+        self.value = params[0]
+        self.gain_range = [-params[1], params[1]]
+        self.energy_threshold = energy_threshold
+
+    def __call__(self, signal):
+        """
+        signal: torch.Tensor [channels, time]
+        """
+        # avoid do normalisation for silence
+        energy = torch.mean(signal**2)
+        if energy < self.energy_threshold:
+            return signal
+        
+        input_loudness = self.loudness(signal)
+        # Generate a random target loudness within the specified range
+        target_loudness = self.value + (torch.rand(1).item() * (self.gain_range[1] - self.gain_range[0]) + self.gain_range[0])
+        delta_loudness = target_loudness - input_loudness
+        gain = torch.pow(10.0, delta_loudness / 20.0)
+        output = gain * signal
+
+        # Check for potentially clipped samples
+        if torch.max(torch.abs(output)) >= 1.0:
+            output = self.declip(output)
+
+        return output
+
+    def declip(self, signal):
+        """
+        Declip the signal by scaling down if any samples are clipped
+        """
+        max_val = torch.max(torch.abs(signal))
+        if max_val > 1.0:
+            signal = signal / max_val
+            signal *= 0.95
+        return signal
+
+        
+        
+

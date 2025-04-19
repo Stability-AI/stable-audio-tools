@@ -12,6 +12,7 @@ from .factory import create_pretransform_from_config
 from .pretransforms import Pretransform
 from ..training.utils import copy_state_dict
 from .utils import load_ckpt_state_dict
+from .transformer import AbsolutePositionalEmbedding
 
 from torch import nn
 
@@ -90,6 +91,27 @@ class NumberConditioner(Conditioner):
     
             return [float_embeds, torch.ones(float_embeds.shape[0], 1).to(device)]
 
+class ListConditioner(Conditioner):
+    def __init__(self, 
+                output_dim: int,
+                options: tp.List[str]
+                ):
+        super().__init__(output_dim, output_dim)
+
+        self.options = options
+        self.embedder = nn.Embedding(len(options)+1, output_dim).requires_grad_(True)
+
+    def forward(self, texts: tp.List[str], device=None) -> tp.Any:
+
+        # Cast the inputs to floats, handling the case where the input is not in the options
+        ints = [self.options.index(x) + 1 if x in self.options else 0 for x in texts]
+
+        ints = torch.tensor(ints).to(device) # shape [batch_size]
+
+        int_embeds = self.embedder(ints).unsqueeze(1) # shape [batch_size, 1, output_dim]
+
+        return [int_embeds, torch.ones(int_embeds.shape[0], 1).to(device)]
+
 class CLAPTextConditioner(Conditioner):
     def __init__(self, 
                  output_dim: int, 
@@ -161,6 +183,12 @@ class CLAPTextConditioner(Conditioner):
                 text_attention_mask = text_attention_mask[:1, ...]
             else:
                 text_features, text_attention_mask = self.get_clap_features(texts, layer_ix=self.feature_layer_ix, device=device)
+
+            # Cast text feature to same type as proj_out, unless proj_out is Identity
+            if not isinstance(self.proj_out, nn.Identity):
+                proj_out_dtype = next(self.proj_out.parameters()).dtype
+                text_features = text_features.to(proj_out_dtype)                        
+
             return [self.proj_out(text_features), text_attention_mask]
 
         # Fix for CLAP bug when only one text is passed
@@ -170,6 +198,11 @@ class CLAPTextConditioner(Conditioner):
             text_embedding = self.model.get_text_embedding(texts, use_tensor=True)
 
         text_embedding = text_embedding.unsqueeze(1).to(device)
+
+        # Cast text embedding to same type as proj_out, unless proj_out is Identity
+        if not isinstance(self.proj_out, nn.Identity):
+            proj_out_dtype = next(self.proj_out.parameters()).dtype
+            text_embedding = text_embedding.to(proj_out_dtype)
 
         return [self.proj_out(text_embedding), torch.ones(text_embedding.shape[0], 1).to(device)]
 
@@ -233,13 +266,19 @@ class CLAPAudioConditioner(Conditioner):
 
         audio_embedding = audio_embedding.unsqueeze(1).to(device)
 
+        # Cast audio embedding to same type as proj_out, unless proj_out is Identity
+
+        if not isinstance(self.proj_out, nn.Identity):
+            proj_out_dtype = next(self.proj_out.parameters()).dtype
+            audio_embedding = audio_embedding.to(proj_out_dtype)
+
         return [self.proj_out(audio_embedding), torch.ones(audio_embedding.shape[0], 1).to(device)]
 
 class T5Conditioner(Conditioner):
 
     T5_MODELS = ["t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b",
               "google/flan-t5-small", "google/flan-t5-base", "google/flan-t5-large",
-              "google/flan-t5-xl", "google/flan-t5-xxl"]
+              "google/flan-t5-xl", "google/flan-t5-xxl", "google/t5-v1_1-xl", "google/t5-v1_1-xxl"]
     
     T5_MODEL_DIMS = {
         "t5-small": 512,
@@ -247,8 +286,8 @@ class T5Conditioner(Conditioner):
         "t5-large": 1024,
         "t5-3b": 1024,
         "t5-11b": 1024,
-        "t5-xl": 2048,
-        "t5-xxl": 4096,
+        "google/t5-v1_1-xl": 2048,
+        "google/t5-v1_1-xxl": 4096,
         "google/flan-t5-small": 512,
         "google/flan-t5-base": 768,
         "google/flan-t5-large": 1024,
@@ -315,8 +354,13 @@ class T5Conditioner(Conditioner):
             embeddings = self.model(
                 input_ids=input_ids, attention_mask=attention_mask
             )["last_hidden_state"]    
-            
-        embeddings = self.proj_out(embeddings.float())
+
+        # Cast embeddings to same type as proj_out, unless proj_out is Identity
+        if not isinstance(self.proj_out, nn.Identity):
+            proj_out_dtype = next(self.proj_out.parameters()).dtype
+            embeddings = embeddings.to(proj_out_dtype)
+
+        embeddings = self.proj_out(embeddings)
 
         embeddings = embeddings * attention_mask.unsqueeze(-1).float()
 
@@ -394,7 +438,9 @@ class TokenizerLUTConditioner(Conditioner):
             tokenizer_name: str, # Name of a tokenizer from the Hugging Face transformers library
             output_dim: int,
             max_length: int = 1024,
+            use_abs_pos_emb = False,
             project_out: bool = False,
+            special_tokens: tp.List[str] = []
     ):
         super().__init__(output_dim, output_dim, project_out=project_out)
         
@@ -410,9 +456,18 @@ class TokenizerLUTConditioner(Conditioner):
             finally:
                 logging.disable(previous_level)
 
+        # Add special tokens
+        if len(special_tokens) > 0:
+            self.tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
+
         self.max_length = max_length
 
         self.token_embedder = nn.Embedding(len(self.tokenizer), output_dim)
+
+        self.abs_pos_emb = None
+
+        if use_abs_pos_emb:
+            self.abs_pos_emb = AbsolutePositionalEmbedding(output_dim, max_length)
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         self.proj_out.to(device)
@@ -434,6 +489,9 @@ class TokenizerLUTConditioner(Conditioner):
 
         embeddings = embeddings * attention_mask.unsqueeze(-1).float()
 
+        if self.abs_pos_emb is not None:
+            embeddings = embeddings + self.abs_pos_emb(embeddings)
+
         return embeddings, attention_mask
 
 class PretransformConditioner(Conditioner):
@@ -444,10 +502,15 @@ class PretransformConditioner(Conditioner):
         pretransform: an instantiated pretransform to use for conditioning
         output_dim: the dimension of the output embeddings
     """
-    def __init__(self, pretransform: Pretransform, output_dim: int):
+    def __init__(self, pretransform: Pretransform, output_dim: int, save_pretransform: bool = False):
         super().__init__(pretransform.encoded_channels, output_dim)
 
-        self.pretransform = pretransform
+
+        if not save_pretransform:
+            self.__dict__["pretransform"] = pretransform
+        else:
+            self.pretransform = pretransform
+        
 
     def forward(self, audio: tp.Union[torch.Tensor, tp.List[torch.Tensor], tp.Tuple[torch.Tensor]], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
 
@@ -455,16 +518,115 @@ class PretransformConditioner(Conditioner):
         self.proj_out.to(device)
 
         if isinstance(audio, list) or isinstance(audio, tuple):
-            audio = torch.cat(audio, dim=0)
+            audio = torch.stack(audio, dim=0)
+
+        # Add batch dimension if needed
+        if audio.dim() == 2:
+            audio = audio.unsqueeze(0)
 
         # Convert audio to pretransform input channels
         audio = set_audio_channels(audio, self.pretransform.io_channels)
+
+        audio = audio.to(device)
         
         latents = self.pretransform.encode(audio)
 
         latents = self.proj_out(latents)
 
         return [latents, torch.ones(latents.shape[0], latents.shape[2]).to(latents.device)]
+
+class SourceMixConditioner(Conditioner):
+    """
+    A conditioner that mixes projected audio embeddings from multiple sources
+
+    Args:
+        pretransform: an instantiated pretransform to use for conditioning
+        output_dim: the dimension of the output embeddings
+        source_keys: a list of keys for the potential sources in the metadata
+
+    """
+    def __init__(
+        self, 
+        pretransform: Pretransform, 
+        output_dim: int, 
+        save_pretransform: bool = False, 
+        source_keys: tp.List[str] = [], 
+        pre_encoded: bool = False, 
+        allow_null_source=False,
+        source_length=None
+    ):
+        super().__init__(pretransform.encoded_channels, output_dim)
+
+        if not save_pretransform:
+            self.__dict__["pretransform"] = pretransform
+        else:
+            self.pretransform = pretransform
+
+        self.source_keys = source_keys
+
+        self.source_heads = nn.ModuleList([nn.Conv1d(pretransform.encoded_channels, output_dim, kernel_size=1) for _ in source_keys])        
+
+        self.pre_encoded = pre_encoded
+
+        self.allow_null_source = allow_null_source
+
+        if self.allow_null_source:
+            self.null_source = nn.Parameter(torch.randn(output_dim, 1))
+
+            assert source_length is not None, "Source length must be specified if allowing null sources"
+
+            self.source_length = source_length
+
+    def forward(self, sources: tp.List[tp.Dict[str, torch.Tensor]], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+
+        self.pretransform.to(device)
+        self.proj_out.to(device)
+
+        dtype = next(self.proj_out.parameters()).dtype
+
+        # Output has to be the batch of summed projections
+        # Input is per-batch-item list of source audio
+
+        mixes = []
+
+        num_null_sources = 0
+        for source_dict in sources: # Iterate over batch items
+
+            mix = None
+
+            for key_ix, key in enumerate(self.source_keys): # Iterate over potential sources
+                if key in source_dict:
+
+                    source = source_dict[key]
+
+                    if not self.pre_encoded:
+                        assert source.dim() == 2, f"Source audio must be shape [channels, samples], got shape: {source.shape}"
+                        audio = set_audio_channels(source.unsqueeze(0), self.pretransform.io_channels)
+
+                        audio = audio.to(device)
+                        latents = self.pretransform.encode(audio).squeeze(0)
+                    else:
+                        latents = source.to(device)           
+
+                    latents = latents.to(dtype)
+
+                    if mix is None:
+                        mix = self.source_heads[key_ix](latents)
+                    else:
+                        mix += self.source_heads[key_ix](latents)
+            
+            if mix is not None:
+                mixes.append(mix)
+            else:
+                if self.allow_null_source:
+                    mixes.append(self.null_source.repeat(1, self.source_length))
+                else:
+                    raise ValueError("No sources found for mix")
+
+        mixes = torch.stack(mixes, dim=0)
+
+        return [mixes, torch.ones(mixes.shape[0], mixes.shape[2]).to(mixes.device)]
+
 
 class MultiConditioner(nn.Module):
     """
@@ -474,11 +636,12 @@ class MultiConditioner(nn.Module):
         conditioners: a dictionary of conditioners with keys corresponding to the keys of the conditioning input dictionary (e.g. "prompt")
         default_keys: a dictionary of default keys to use if the key is not in the input dictionary (e.g. {"prompt_t5": "prompt"})
     """
-    def __init__(self, conditioners: tp.Dict[str, Conditioner], default_keys: tp.Dict[str, str] = {}):
+    def __init__(self, conditioners: tp.Dict[str, Conditioner], default_keys: tp.Dict[str, str] = {}, pre_encoded_keys: tp.List[str] = []):
         super().__init__()
 
         self.conditioners = nn.ModuleDict(conditioners)
         self.default_keys = default_keys
+        self.pre_encoded_keys = pre_encoded_keys
 
     def forward(self, batch_metadata: tp.List[tp.Dict[str, tp.Any]], device: tp.Union[torch.device, str]) -> tp.Dict[str, tp.Any]:
         output = {}
@@ -504,12 +667,15 @@ class MultiConditioner(nn.Module):
                     conditioner_input = x[condition_key]
 
                 conditioner_inputs.append(conditioner_input)
-            
-            output[key] = conditioner(conditioner_inputs, device)
+
+            if key in self.pre_encoded_keys:
+                output[key] = [torch.stack(conditioner_inputs, dim=0).to(device), None]
+            else:
+                output[key] = conditioner(conditioner_inputs, device)
 
         return output
     
-def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.Any]) -> MultiConditioner:
+def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.Any], pretransform=None) -> MultiConditioner:
     """
     Create a MultiConditioner from a conditioning config dictionary
 
@@ -521,6 +687,8 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
     cond_dim = config["cond_dim"]
     
     default_keys = config.get("default_keys", {})
+
+    pre_encoded_keys = config.get("pre_encoded_keys", [])
 
     for conditioner_info in config["configs"]:
         id = conditioner_info["id"]
@@ -541,6 +709,8 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
             conditioners[id] = IntConditioner(**conditioner_config)
         elif conditioner_type == "number":
             conditioners[id] = NumberConditioner(**conditioner_config)
+        elif conditioner_type == "list":
+            conditioners[id] = ListConditioner(**conditioner_config)
         elif conditioner_type == "phoneme":
             conditioners[id] = PhonemeConditioner(**conditioner_config)
         elif conditioner_type == "lut":
@@ -549,13 +719,35 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
             sample_rate = conditioner_config.pop("sample_rate", None)
             assert sample_rate is not None, "Sample rate must be specified for pretransform conditioners"
 
-            pretransform = create_pretransform_from_config(conditioner_config.pop("pretransform_config"), sample_rate=sample_rate)
+            use_model_pretransform = conditioner_config.pop("use_model_pretransform", False)
+
+            if not use_model_pretransform:
+                cond_pretransform = create_pretransform_from_config(conditioner_config.pop("pretransform_config"), sample_rate=sample_rate)
+            else:
+                assert pretransform is not None, "Model pretransform must be specified for pretransform conditioners"
+                cond_pretransform = pretransform
 
             if conditioner_config.get("pretransform_ckpt_path", None) is not None:
-                pretransform.load_state_dict(load_ckpt_state_dict(conditioner_config.pop("pretransform_ckpt_path")))
+                cond_pretransform.load_state_dict(load_ckpt_state_dict(conditioner_config.pop("pretransform_ckpt_path")))
 
-            conditioners[id] = PretransformConditioner(pretransform, **conditioner_config)
+            conditioners[id] = PretransformConditioner(cond_pretransform, **conditioner_config)
+        elif conditioner_type == "source_mix":
+            sample_rate = conditioner_config.pop("sample_rate", None)
+            assert sample_rate is not None, "Sample rate must be specified for source_mix conditioners"
+
+            use_model_pretransform = conditioner_config.pop("use_model_pretransform", False)
+
+            if not use_model_pretransform:
+                cond_pretransform = create_pretransform_from_config(conditioner_config.pop("pretransform_config"), sample_rate=sample_rate)
+            else:
+                assert pretransform is not None, "Model pretransform must be specified for source_mix conditioners if use_model_pretransform is True"
+                cond_pretransform = pretransform
+
+            if conditioner_config.get("pretransform_ckpt_path", None) is not None:
+                cond_pretransform.load_state_dict(load_ckpt_state_dict(conditioner_config.pop("pretransform_ckpt_path")))
+
+            conditioners[id] = SourceMixConditioner(cond_pretransform, **conditioner_config)
         else:
             raise ValueError(f"Unknown conditioner type: {conditioner_type}")
 
-    return MultiConditioner(conditioners, default_keys=default_keys)
+    return MultiConditioner(conditioners, default_keys=default_keys, pre_encoded_keys=pre_encoded_keys)
