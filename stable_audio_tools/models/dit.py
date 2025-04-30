@@ -173,10 +173,12 @@ class DiffusionTransformer(nn.Module):
         if prepend_cond is not None:
             # Project the prepend conditioning to the embedding dimension
             prepend_cond = self.to_prepend_embed(prepend_cond)
-            
+
             prepend_inputs = prepend_cond
             if prepend_cond_mask is not None:
                 prepend_mask = prepend_cond_mask
+
+            prepend_length = prepend_cond.shape[1]
 
         if input_concat_cond is not None:
             # Interpolate input_concat_cond to the same length as x
