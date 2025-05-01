@@ -545,7 +545,16 @@ class SourceMixConditioner(Conditioner):
         source_keys: a list of keys for the potential sources in the metadata
 
     """
-    def __init__(self, pretransform: Pretransform, output_dim: int, save_pretransform: bool = False, source_keys: tp.List[str] = [], pre_encoded: bool = False):
+    def __init__(
+        self, 
+        pretransform: Pretransform, 
+        output_dim: int, 
+        save_pretransform: bool = False, 
+        source_keys: tp.List[str] = [], 
+        pre_encoded: bool = False, 
+        allow_null_source=False,
+        source_length=None
+    ):
         super().__init__(pretransform.encoded_channels, output_dim)
 
         if not save_pretransform:
@@ -559,16 +568,28 @@ class SourceMixConditioner(Conditioner):
 
         self.pre_encoded = pre_encoded
 
+        self.allow_null_source = allow_null_source
+
+        if self.allow_null_source:
+            self.null_source = nn.Parameter(torch.randn(output_dim, 1))
+
+            assert source_length is not None, "Source length must be specified if allowing null sources"
+
+            self.source_length = source_length
+
     def forward(self, sources: tp.List[tp.Dict[str, torch.Tensor]], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
 
         self.pretransform.to(device)
         self.proj_out.to(device)
+
+        dtype = next(self.proj_out.parameters()).dtype
 
         # Output has to be the batch of summed projections
         # Input is per-batch-item list of source audio
 
         mixes = []
 
+        num_null_sources = 0
         for source_dict in sources: # Iterate over batch items
 
             mix = None
@@ -579,13 +600,15 @@ class SourceMixConditioner(Conditioner):
                     source = source_dict[key]
 
                     if not self.pre_encoded:
-                        audio = set_audio_channels(source, self.pretransform.io_channels)
+                        assert source.dim() == 2, f"Source audio must be shape [channels, samples], got shape: {source.shape}"
+                        audio = set_audio_channels(source.unsqueeze(0), self.pretransform.io_channels)
 
                         audio = audio.to(device)
-
-                        latents = self.pretransform.encode(audio)
+                        latents = self.pretransform.encode(audio).squeeze(0)
                     else:
                         latents = source.to(device)           
+
+                    latents = latents.to(dtype)
 
                     if mix is None:
                         mix = self.source_heads[key_ix](latents)
@@ -595,7 +618,10 @@ class SourceMixConditioner(Conditioner):
             if mix is not None:
                 mixes.append(mix)
             else:
-                raise ValueError("No sources found for mix")
+                if self.allow_null_source:
+                    mixes.append(self.null_source.repeat(1, self.source_length))
+                else:
+                    raise ValueError("No sources found for mix")
 
         mixes = torch.stack(mixes, dim=0)
 
