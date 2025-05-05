@@ -91,7 +91,7 @@ def generate_diffusion_uncond(
 def generate_diffusion_cond(
         model,
         steps: int = 250,
-        cfg_scale=6,
+        cfg_scale: float = 6,
         conditioning: dict = None,
         conditioning_tensors: tp.Optional[dict] = None,
         negative_conditioning: dict = None,
