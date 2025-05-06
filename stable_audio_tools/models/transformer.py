@@ -111,6 +111,10 @@ class RotaryEmbedding(nn.Module):
         assert interpolation_factor >= 1.
         self.interpolation_factor = interpolation_factor
 
+        self.cached_freqs = None
+        self.cached_seq_len = 0
+        self.cached_scale = 1.
+
         if not use_xpos:
             self.register_buffer('scale', None)
             return
@@ -120,11 +124,20 @@ class RotaryEmbedding(nn.Module):
         self.scale_base = scale_base
         self.register_buffer('scale', scale)
 
-    def forward_from_seq_len(self, seq_len):
-        device = self.inv_freq.device
+    def _update_cache(self, seq_len):
+        if (self.cached_freqs is None) or (self.cached_seq_len > seq_len):
+            device = self.inv_freq.device
 
-        t = torch.arange(seq_len, device = device)
-        return self.forward(t)
+            t = torch.arange(seq_len, device = device)
+            freqs, scale = self.forward(t)
+
+            self.cached_freqs = freqs
+            self.cached_scale = scale
+            self.cached_seq_len = seq_len
+
+    def forward_from_seq_len(self, seq_len):
+        self._update_cache(seq_len)
+        return self.cached_freqs, self.cached_scale
 
     @autocast("cuda", enabled = False)
     def forward(self, t):
