@@ -1,12 +1,31 @@
 from setuptools import setup, find_packages
 
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
 setup(
     name='stable-audio-tools',
-    version='0.0.18',
+    version='0.0.18',  # Keep the version from the main branch
     url='https://github.com/Stability-AI/stable-audio-tools.git',
     author='Stability AI',
+    author_email='info@stability.ai',
     description='Training and inference tools for generative audio models from Stability AI',
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     packages=find_packages(),
+    include_package_data=True,
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    ],
+    python_requires='>=3.7',
     install_requires=[
         'alias-free-torch==0.0.6',
         'auraloss==0.4.0',
@@ -38,4 +57,9 @@ setup(
         'webdataset==0.2.100',
         'x-transformers<1.27.0'
     ],
+    entry_points={
+        'console_scripts': [
+            'stable-audio-tools=stable_audio_tools.cli:main',
+        ],
+    },
 )
