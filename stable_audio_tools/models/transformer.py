@@ -125,7 +125,7 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer('scale', scale)
 
     def _update_cache(self, seq_len):
-        if (self.cached_freqs is None) or (self.cached_seq_len > seq_len):
+        if (self.cached_freqs is None) or (self.cached_seq_len != seq_len):
             device = self.inv_freq.device
 
             t = torch.arange(seq_len, device = device)
