@@ -149,6 +149,16 @@ The following properties are defined in the top level of the model configuration
 - `training`
   - The training configuration for the model, varies based on `model_type`. Provides parameters for training as well as demos.
 
+
+### Optimizer config
+The optimizer config, inside of the training subsection of the model config, allows for use of different optimizer implementations, including those that allow for fine tuning with 24GB VRAM.
+
+- `backend`
+  - The type of optimizer library being used, currently limited to one of `"bnb", "default"`.
+- `type`
+  - Optimizer name to use. If using bnb, enabled the use of `"AdamW8bit"` and other 8bit optimizers.
+
+
 ## Dataset config
 `stable-audio-tools` currently supports two kinds of data sources: local directories of audio files, and WebDataset datasets stored in Amazon S3. More information can be found in [the dataset config documentation](docs/datasets.md)
 

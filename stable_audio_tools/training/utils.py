@@ -88,13 +88,20 @@ def create_optimizer_from_config(optimizer_config, parameters):
     """
 
     optimizer_type = optimizer_config["type"]
+    optimizer_backend = optimizer_config.get("backend", "")
 
-    if optimizer_type == "FusedAdam":
-        from deepspeed.ops.adam import FusedAdam
-        optimizer = FusedAdam(parameters, **optimizer_config["config"])
-    else:
-        optimizer_fn = getattr(torch.optim, optimizer_type)
+    if optimizer_backend == "bnb":
+        import bitsandbytes as bnb
+        optimizer_fn = getattr(bnb.optim, optimizer_type)
         optimizer = optimizer_fn(parameters, **optimizer_config["config"])
+    else:
+        if optimizer_type == "FusedAdam":
+            from deepspeed.ops.adam import FusedAdam
+            optimizer = FusedAdam(parameters, **optimizer_config["config"])
+        else:
+            optimizer_fn = getattr(torch.optim, optimizer_type)
+            optimizer = optimizer_fn(parameters, **optimizer_config["config"])
+            
     return optimizer
 
 def create_scheduler_from_config(scheduler_config, optimizer):
