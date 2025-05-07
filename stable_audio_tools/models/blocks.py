@@ -289,7 +289,7 @@ class RMSNorm(nn.Module):
         return rms_norm(x, self.scale, self.eps)    
 
 def snake_beta(x, alpha, beta):
-    return x + (1.0 / (beta + 0.000000001)) * pow(torch.sin(x * alpha), 2)
+    return x + (1.0 / (beta + 0.000000001)) * torch.pow(torch.sin(x * alpha), 2)
 
 # try:
 #     snake_beta = torch.compile(snake_beta)
