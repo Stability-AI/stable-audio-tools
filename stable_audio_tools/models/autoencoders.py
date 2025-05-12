@@ -75,8 +75,10 @@ class ResidualUnit(nn.Module):
     def forward(self, x):
         res = x
         
-        x = checkpoint(self.layers, x)
-        #x = self.layers(x)
+        if self.training:
+            x = checkpoint(self.layers, x)
+        else:
+            x = self.layers(x)
 
         return x + res
 
