@@ -7,26 +7,20 @@ import subprocess
 import torch
 import torchaudio
 import threading 
-import os, time
+import os, time, math
 
 from einops import rearrange
-from safetensors.torch import load_file
-from torch.nn import functional as F
 from torchaudio import transforms as T
 
 from ..aeiou import audio_spectrogram_image
-from ...inference.generation import generate_diffusion_cond, generate_diffusion_cond_inpaint #, generate_diffusion_uncond
-#from ..models.factory import create_model_from_config
-#from ..models.pretrained import get_pretrained_model
-#from ..models.utils import load_ckpt_state_dict
-from ...inference.utils import prepare_audio
-#from ..training.utils import copy_state_dict
+from ...inference.generation import generate_diffusion_cond, generate_diffusion_cond_inpaint
 
 model = None
 model_type = None
 sample_size = 2097152
 sample_rate = 44100
 model_half = True
+diffusion_objective = None
 
 # when using a prompt in a filename
 def condense_prompt(prompt):
@@ -129,7 +123,7 @@ def generate_cond(
         if audio_length > sample_size:
 
             #input_sample_size = audio_length + (model.min_input_length - (audio_length % model.min_input_length)) % model.min_input_length
-            init_audio = init_audio[:, :sample_size]
+            init_audio = init_audio[:, :input_sample_size]
 
         init_audio = (sample_rate, init_audio)
 
@@ -162,7 +156,7 @@ def generate_cond(
         if audio_length > sample_size:
 
             #input_sample_size = audio_length + (model.min_input_length - (audio_length % model.min_input_length)) % model.min_input_length
-            inpaint_audio = inpaint_audio[:, :sample_size]
+            inpaint_audio = inpaint_audio[:, :input_sample_size]
 
         inpaint_audio = (sample_rate, inpaint_audio)
 
@@ -170,7 +164,14 @@ def generate_cond(
         global preview_images
         denoised = callback_info["denoised"]
         current_step = callback_info["i"]
+        t = callback_info["t"]
         sigma = callback_info["sigma"]
+
+        if diffusion_objective == "v":
+            alphas, sigmas = math.cos(t * math.pi / 2), math.sin(t * math.pi / 2)
+            log_snr = math.log((alphas / sigmas) + 1e-6)
+        elif diffusion_objective in ["rectified_flow", "rf_denoiser"]:
+            log_snr = math.log(((1 - sigma) / sigma) + 1e-6)
 
         if (current_step - 1) % preview_every == 0:
             if model.pretransform is not None:
@@ -178,7 +179,7 @@ def generate_cond(
             denoised = rearrange(denoised, "b d n -> d (b n)")
             denoised = denoised.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
             audio_spectrogram = audio_spectrogram_image(denoised, sample_rate=sample_rate)
-            preview_images.append((audio_spectrogram, f"Step {current_step} sigma={sigma:.3f})"))
+            preview_images.append((audio_spectrogram, f"Step {current_step} sigma={sigma:.3f} logSNR={log_snr:.3f}"))
 
     generate_args = {
         "model": model,
@@ -297,6 +298,7 @@ def delete_files_async(filenames, delay):
     threading.Thread(target=delete_files_after_delay, args=(filenames, delay)).start() 
 
 def create_sampling_ui(model_config):
+    global diffusion_objective
     has_inpainting = model_config["model_type"] == "diffusion_cond_inpaint"
     
     model_conditioning_config = model_config["model"].get("conditioning", None)
@@ -304,6 +306,8 @@ def create_sampling_ui(model_config):
     diffusion_objective = model.diffusion_objective
 
     is_rf = diffusion_objective == "rectified_flow"
+
+    is_rf_denoiser = diffusion_objective == "rf_denoiser"
 
     has_seconds_start = False
     has_seconds_total = False
@@ -330,10 +334,17 @@ def create_sampling_ui(model_config):
             
             with gr.Row():
                 # Steps slider
-                default_steps = 50 if is_rf else 100
+                if is_rf:
+                    default_steps = 50
+                elif is_rf_denoiser:
+                    default_steps = 8
+                else:
+                    default_steps = 100
+                    
                 steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=default_steps, label="Steps")
                 # CFG scale 
-                cfg_scale_slider = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=7.0, label="CFG scale")
+                default_cfg_scale = 1.0 if is_rf_denoiser else 7.0
+                cfg_scale_slider = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=default_cfg_scale, label="CFG scale")
 
             with gr.Accordion("Sampler params", open=False):
                 with gr.Row():
@@ -351,31 +362,40 @@ def create_sampling_ui(model_config):
                     if is_rf:
                         sampler_types = ["euler", "rk4", "dpmpp"]
                         default_sampler_type = "euler"
+                    elif is_rf_denoiser:
+                        sampler_types = ["pingpong"]
+                        default_sampler_type = "pingpong"
                     else:
                         sampler_types = ["dpmpp-2m-sde", "dpmpp-3m-sde", "dpmpp-2m", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-adaptive", "k-dpm-fast", "v-ddim", "v-ddim-cfgpp"]
                         default_sampler_type = "dpmpp-3m-sde"
+                        
                     sampler_type_dropdown = gr.Dropdown(sampler_types, label="Sampler type", value=default_sampler_type)
-                    sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.01, label="Sigma min", visible=not is_rf)
-                    sigma_max_slider = gr.Slider(minimum=0.0, maximum=1000.0, step=0.1, value=100, label="Sigma max", visible=not is_rf)
-                    rho_slider = gr.Slider(minimum=0.0, maximum=10.0, step=0.01, value=1.0, label="Sigma curve strength", visible=not is_rf)
+                    sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.01, label="Sigma min", visible=not (is_rf or is_rf_denoiser))
+                    sigma_max_slider = gr.Slider(minimum=0.0, maximum=1000.0, step=0.1, value=100, label="Sigma max", visible=not (is_rf or is_rf_denoiser))
+                    rho_slider = gr.Slider(minimum=0.0, maximum=10.0, step=0.01, value=1.0, label="Sigma curve strength", visible=not (is_rf or is_rf_denoiser))
 
             with gr.Accordion("Output params", open=False):
                 # Output params
                 with gr.Row():
                     file_format_dropdown = gr.Dropdown(["wav", "flac", "mp3 320k", "mp3 v0", "mp3 128k", "m4a aac_he_v2 64k", "m4a aac_he_v2 32k"], label="File format", value="wav")
                     file_naming_dropdown = gr.Dropdown(["verbose", "prompt", "output.wav"], label="File naming", value="output.wav")
+                    preview_every_slider = gr.Slider(minimum=0, maximum=100, step=1, value=0, label="Spec Preview Every")
+                
                     cut_to_seconds_total_checkbox = gr.Checkbox(label="Cut to seconds total", value=True)
-                    preview_every_slider = gr.Slider(minimum=0, maximum=100, step=1, value=0, label="Spec Preview Every N Steps")
-                    
+                    autoplay_checkbox = gr.Checkbox(label="Autoplay", value=False, elem_id="autoplay")
+                    infinite_radio_checkbox = gr.Checkbox(label="Infinite Radio", value=False, elem_id="infinite-radio")
+                    automatic_download_checkbox = gr.Checkbox(label="Auto Download", value=False, elem_id="automatic-download")
+
             # Default generation tab
             with gr.Accordion("Init audio", open=False):
-                init_audio_input = gr.Audio(label="Init audio")
-                min_noise_level = 0.01 if is_rf else 0.1
-                max_noise_level = 1.0 if is_rf else 100.0
+                init_audio_input = gr.Audio(label="Init audio", waveform_options=gr.WaveformOptions(show_recording_waveform=False))
+                min_noise_level = 0.01 if (is_rf or is_rf_denoiser) else 0.1
+                max_noise_level = 1.0 if (is_rf or is_rf_denoiser) else 100.0
+
                 init_noise_level_slider = gr.Slider(minimum=min_noise_level, maximum=max_noise_level, step=0.01, value=0.1, label="Init noise level")
 
             with gr.Accordion("Inpainting", open=False, visible=has_inpainting):
-                inpaint_audio_input = gr.Audio(label="Inpaint audio")
+                inpaint_audio_input = gr.Audio(label="Inpaint audio", waveform_options=gr.WaveformOptions(show_recording_waveform=False))
                 mask_maskstart_slider = gr.Slider(minimum=0.0, maximum=sample_size//sample_rate, step=0.1, value=10, label="Mask Start (sec)")
                 mask_maskend_slider = gr.Slider(minimum=0.0, maximum=sample_size//sample_rate, step=0.1, value=sample_size//sample_rate, label="Mask End (sec)")
 
@@ -406,7 +426,8 @@ def create_sampling_ui(model_config):
             ]
 
         with gr.Column():
-            audio_output = gr.Audio(label="Output audio", interactive=False)
+            audio_output = gr.Audio(label="Output audio", interactive=False, 
+                    waveform_options=gr.WaveformOptions(show_recording_waveform=False))
             audio_spectrogram_output = gr.Gallery(label="Output spectrogram", show_label=False)
             send_to_init_button = gr.Button("Send to init audio", scale=1)
             send_to_init_button.click(fn=lambda audio: audio, inputs=[audio_output], outputs=[init_audio_input])
@@ -423,8 +444,7 @@ def create_sampling_ui(model_config):
         ], 
         api_name="generate")
 
-
-def create_diffusion_cond_ui(model_config, in_model, in_model_half=True):
+def create_diffusion_cond_ui(model_config, in_model, in_model_half=True, gradio_title=""):
     global model, sample_size, sample_rate, model_type, model_half
 
     model = in_model
@@ -434,7 +454,75 @@ def create_diffusion_cond_ui(model_config, in_model, in_model_half=True):
 
     model_half = in_model_half
 
-    with gr.Blocks() as ui:
+    js ="""function run_javascript_on_page_load(){
+        const generateBtn = Array.from(document.querySelectorAll('button'))
+            .find(btn => btn.innerText.trim() === 'Generate');
+        function getAudioOutputPlayer () {
+            return [...document.querySelectorAll('label')].find(label => label.textContent.trim() === 'Output audio')?.parentElement.querySelector('audio');
+        }
+        const infiniteRadio = document.querySelector('#infinite-radio input[type="checkbox"]');
+        const autoplay = document.querySelector('#autoplay input[type="checkbox"]');
+        const automaticDownload = document.querySelector('#automatic-download input[type="checkbox"]');
+        let radioAutoStart = false;
+        let listenersSetup = false;
+        const setupListeners = () => {
+            const audioEl = getAudioOutputPlayer();
+            if (!audioEl) return;
+            audioEl.addEventListener('loadedmetadata', () => {
+                if(automaticDownload.checked){
+                    downloadAudio(audioEl);
+                }
+                if(autoplay.checked || radioAutoStart){
+                    audioEl.play();
+                    radioAutoStart = false;
+                }
+                if(infiniteRadio.checked){
+                    audioEl.addEventListener('timeupdate', function checkAudioEnd() {
+                        if (audioEl.duration - audioEl.currentTime <= 1) {                            
+                            generateBtn.click();
+                            radioAutoStart = true;
+                            audioEl.removeEventListener('timeupdate', checkAudioEnd);
+                        }
+                    });
+                }
+            });
+            listenersSetup = true;
+        };
+        generateBtn.addEventListener('click', () => {
+            if(listenersSetup) return;
+            const interval = setInterval(() => {
+                console.log("...")
+                const audioEl = document.querySelector('audio');
+                if (audioEl?.src && audioEl.src !== window.location.href) {
+                    setupListeners();
+                    clearInterval(interval);
+                }
+            }, 100);
+        });
+        // Respond to >> button on MacBookPro and on steering wheel during CarPlay
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.setActionHandler('nexttrack', () => generateBtn.click());
+            navigator.mediaSession.setActionHandler('play', () => getAudioOutputPlayer()?.play());
+            navigator.mediaSession.setActionHandler('pause', () => getAudioOutputPlayer()?.pause());
+        }
+        // Automatic Download
+        function downloadAudio(audioEl) {
+            const audioSrc = audioEl.src;
+            const link = document.createElement('a');
+            link.href = audioSrc;
+            link.download = audioSrc.substring(audioSrc.lastIndexOf('/') + 1);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    }  
+    """
+
+    with gr.Blocks(js=js, theme=gr.themes.Base()) as ui:
+        if gradio_title:
+            gr.Markdown("### %s" % gradio_title)
         with gr.Tab("Generation"):
             create_sampling_ui(model_config) 
+
+        # JavaScript to autoplay audio immediately after generation (if autoplay enabled)
     return ui

@@ -59,23 +59,6 @@ class InverseLR(torch.optim.lr_scheduler._LRScheduler):
         return [warmup * max(self.final_lr, base_lr * lr_mult)
                 for base_lr in self.base_lrs]
 
-def copy_state_dict(model, state_dict):
-    """Load state_dict to model, but only for keys that match exactly.
-
-    Args:
-        model (nn.Module): model to load state_dict.
-        state_dict (OrderedDict): state_dict to load.
-    """
-    model_state_dict = model.state_dict()
-    for key in state_dict:
-        if key in model_state_dict and state_dict[key].shape == model_state_dict[key].shape:
-            if isinstance(state_dict[key], torch.nn.Parameter):
-                # backwards compatibility for serialized parameters
-                state_dict[key] = state_dict[key].data
-            model_state_dict[key] = state_dict[key]
-
-    model.load_state_dict(model_state_dict, strict=False)
-
 def create_optimizer_from_config(optimizer_config, parameters):
     """Create optimizer from config.
 

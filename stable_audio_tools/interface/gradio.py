@@ -16,9 +16,8 @@ from ..interface.aeiou import audio_spectrogram_image
 from ..inference.generation import generate_diffusion_cond, generate_diffusion_cond_inpaint, generate_diffusion_uncond
 from ..models.factory import create_model_from_config
 from ..models.pretrained import get_pretrained_model
-from ..models.utils import load_ckpt_state_dict
+from ..models.utils import copy_state_dict, load_ckpt_state_dict
 from ..inference.utils import prepare_audio
-from ..training.utils import copy_state_dict
 
 from .interfaces.diffusion_cond import create_diffusion_cond_ui
 
@@ -329,51 +328,6 @@ def create_autoencoder_ui(model_config):
 
     return ui
 
-def diffusion_prior_process(audio, steps, sampler_type, sigma_min, sigma_max):
-
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    gc.collect()
-
-    #Get the device from the model
-    device = next(model.parameters()).device
-
-    in_sr, audio = audio
-
-    audio = torch.from_numpy(audio).float().div(32767).to(device)
-    
-    if audio.dim() == 1:
-        audio = audio.unsqueeze(0) # [1, n]
-    elif audio.dim() == 2:
-        audio = audio.transpose(0, 1) # [n, 2] -> [2, n]
-
-    audio = audio.unsqueeze(0)
-
-    audio = model.stereoize(audio, in_sr, steps, sampler_kwargs={"sampler_type": sampler_type, "sigma_min": sigma_min, "sigma_max": sigma_max})
-
-    audio = rearrange(audio, "b d n -> d (b n)")
-
-    audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-
-    torchaudio.save("output.wav", audio, sample_rate)
-
-    return "output.wav"
-
-def create_diffusion_prior_ui(model_config):
-    with gr.Blocks() as ui:
-        input_audio = gr.Audio(label="Input audio")
-        output_audio = gr.Audio(label="Output audio", interactive=False)
-        # Sampler params
-        with gr.Row():
-            steps_slider = gr.Slider(minimum=1, maximum=500, step=1, value=100, label="Steps")
-            sampler_type_dropdown = gr.Dropdown(["dpmpp-2m-sde", "dpmpp-3m-sde", "k-heun", "k-lms", "k-dpmpp-2s-ancestral", "k-dpm-2", "k-dpm-fast"], label="Sampler type", value="dpmpp-3m-sde")
-            sigma_min_slider = gr.Slider(minimum=0.0, maximum=2.0, step=0.01, value=0.03, label="Sigma min")
-            sigma_max_slider = gr.Slider(minimum=0.0, maximum=1000.0, step=0.1, value=500, label="Sigma max")
-        process_button = gr.Button("Process", variant='primary', scale=1)
-        process_button.click(fn=diffusion_prior_process, inputs=[input_audio, steps_slider, sampler_type_dropdown, sigma_min_slider, sigma_max_slider], outputs=output_audio, api_name="process")    
-
-    return ui
-
 def create_lm_ui(model_config):
     with gr.Blocks() as ui:
         output_audio = gr.Audio(label="Output audio", interactive=False)
@@ -399,7 +353,7 @@ def create_lm_ui(model_config):
 
     return ui
 
-def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, model_half=False):
+def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pretransform_ckpt_path=None, model_half=False, gradio_title=""):
     assert (pretrained_name is not None) ^ (model_config_path is not None and ckpt_path is not None), "Must specify either pretrained name or provide a model config and checkpoint, but not both"
 
     if model_config_path is not None:
@@ -413,13 +367,11 @@ def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pret
     _, model_config = load_model(model_config, ckpt_path, pretrained_name=pretrained_name, pretransform_ckpt_path=pretransform_ckpt_path, model_half=model_half, device=device)
     
     if model_type == "diffusion_cond" or model_type == "diffusion_cond_inpaint":
-        ui = create_diffusion_cond_ui(model_config, model, in_model_half=model_half)
+        ui = create_diffusion_cond_ui(model_config, model, in_model_half=model_half, gradio_title=gradio_title)
     elif model_type == "diffusion_uncond":
         ui = create_diffusion_uncond_ui(model_config)
     elif model_type == "autoencoder" or model_type == "diffusion_autoencoder":
         ui = create_autoencoder_ui(model_config)
-    elif model_type == "diffusion_prior":
-        ui = create_diffusion_prior_ui(model_config)
     elif model_type == "lm":
         ui = create_lm_ui(model_config)
         

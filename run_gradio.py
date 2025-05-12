@@ -12,7 +12,8 @@ def main(args):
         ckpt_path=args.ckpt_path, 
         pretrained_name=args.pretrained_name, 
         pretransform_ckpt_path=args.pretransform_ckpt_path,
-        model_half=args.model_half
+        model_half=args.model_half,
+        gradio_title=args.title
     )
     interface.queue()
     interface.launch(share=args.share, auth=(args.username, args.password) if args.username is not None else None)
@@ -28,5 +29,6 @@ if __name__ == "__main__":
     parser.add_argument('--username', type=str, help='Gradio username', required=False)
     parser.add_argument('--password', type=str, help='Gradio password', required=False)
     parser.add_argument('--model-half', action='store_true', help='Whether to use half precision', required=False, default=True)
+    parser.add_argument('--title', type=str, help='Display Title top of Gradio', required=False)
     args = parser.parse_args()
     main(args)

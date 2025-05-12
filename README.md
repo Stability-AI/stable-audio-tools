@@ -14,9 +14,9 @@ $ pip install .
 ```
 
 # Requirements
-Requires PyTorch 2.0 or later for Flash Attention support
+Requires PyTorch 2.5 or later for Flash Attention and Flex Attention support
 
-Development for the repo is done in Python 3.8.10
+Development for the repo is done in Python 3.10
 
 # Interface
 

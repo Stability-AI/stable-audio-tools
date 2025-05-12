@@ -14,8 +14,6 @@ class PESQMetric(nn.Module):
             if sample_rate != 16000 else None)
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor):
-        from pypesq import pesq
-        
         if self.resampler is not None:
             inputs = self.resampler(inputs)
             targets = self.resampler(targets)

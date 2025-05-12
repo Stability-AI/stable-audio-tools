@@ -1,15 +1,17 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from functools import partial, reduce
+from functools import partial
 import numpy as np
 import typing as tp
+import random
 
 from .blocks import ResConvBlock, FourierFeatures, Upsample1d, Upsample1d_2, Downsample1d, Downsample1d_2, SelfAttention1d, SkipBlock, expand_to_planes
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .dit import DiffusionTransformer
 from .factory import create_pretransform_from_config
 from .pretransforms import Pretransform
+from .transformer import ContinuousTransformer
 from ..inference.generation import generate_diffusion_cond
 from ..inference.sampling import DistributionShift
 
@@ -106,7 +108,7 @@ class ConditionedDiffusionModelWrapper(nn.Module):
             io_channels,
             sample_rate,
             min_input_length: int,
-            diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
+            diffusion_objective: tp.Literal["v", "rectified_flow", "rf_denoiser"] = "v",
             distribution_shift_options = None,
             pretransform: tp.Optional[Pretransform] = None,
             cross_attn_cond_ids: tp.List[str] = [],
@@ -505,16 +507,15 @@ class DiffusionAttnUnet1D(nn.Module):
 class DiTWrapper(ConditionedDiffusionModel):
     def __init__(
         self,
+        diffusion_objective: str,
         *args,
         **kwargs
     ):
         super().__init__(supports_cross_attention=True, supports_global_cond=False, supports_input_concat=False)
 
-        self.model = DiffusionTransformer(*args, **kwargs)
+        self.diffusion_objective = diffusion_objective
 
-        with torch.no_grad():
-            for param in self.model.parameters():
-                param *= 0.5
+        self.model = DiffusionTransformer(diffusion_objective=diffusion_objective, *args, **kwargs)
 
     def forward(self,
                 x,
@@ -690,15 +691,7 @@ def create_diffusion_cond_from_config(config: tp.Dict[str, tp.Any]):
         wrapper_fn = ConditionedDiffusionModelWrapper
 
         extra_kwargs["diffusion_objective"] = diffusion_objective
-
-    elif model_type == "diffusion_prior":
-        prior_type = model_config.get("prior_type", None)
-        assert prior_type is not None, "Must specify prior_type in diffusion prior model config"
-
-        if prior_type == "mono_stereo":
-            from .diffusion_prior import MonoToStereoDiffusionPrior
-            wrapper_fn = MonoToStereoDiffusionPrior
-            
+        
     return wrapper_fn(
         diffusion_model,
         conditioner,

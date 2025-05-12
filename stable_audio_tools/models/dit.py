@@ -22,11 +22,11 @@ class DiffusionTransformer(nn.Module):
         prepend_cond_dim=0,
         depth=12,
         num_heads=8,
-        transformer_type: tp.Literal["x-transformers", "continuous_transformer"] = "x-transformers",
+        transformer_type: tp.Literal["continuous_transformer"] = "continuous_transformer",
         global_cond_type: tp.Literal["prepend", "adaLN"] = "prepend",
         timestep_cond_type: tp.Literal["global", "input_concat"] = "global",
         timestep_embed_dim=None,
-        diffusion_objective: tp.Literal["v", "rectified_flow"] = "v",
+        diffusion_objective: tp.Literal["v", "rectified_flow", "rf_denoiser"] = "v",
         **kwargs):
 
         super().__init__()
@@ -51,6 +51,8 @@ class DiffusionTransformer(nn.Module):
             nn.SiLU(),
             nn.Linear(timestep_embed_dim, timestep_embed_dim, bias=True),
         )
+        
+        self.diffusion_objective = diffusion_objective
 
         if cond_token_dim > 0:
             # Conditioning tokens
@@ -93,30 +95,7 @@ class DiffusionTransformer(nn.Module):
 
         self.global_cond_type = global_cond_type
 
-        if self.transformer_type == "x-transformers":
-            
-            from x_transformers import ContinuousTransformerWrapper, Encoder
-            self.transformer = ContinuousTransformerWrapper(
-                dim_in=dim_in * patch_size,
-                dim_out=io_channels * patch_size,
-                max_seq_len=0, #Not relevant without absolute positional embeds
-                attn_layers = Encoder(
-                    dim=embed_dim,
-                    depth=depth,
-                    heads=num_heads,
-                    attn_flash = True,
-                    cross_attend = cond_token_dim > 0,
-                    dim_context=None if cond_embed_dim == 0 else cond_embed_dim,
-                    zero_init_branch_output=True,
-                    use_abs_pos_emb = False,
-                    rotary_pos_emb=True,
-                    ff_swish = True,
-                    ff_glu = True,
-                    **kwargs
-                )
-            )
-
-        elif self.transformer_type == "continuous_transformer":
+        if self.transformer_type == "continuous_transformer":
 
             global_dim = None
 
@@ -135,7 +114,6 @@ class DiffusionTransformer(nn.Module):
                 global_cond_dim=global_dim,
                 **kwargs
             )
-             
         else:
             raise ValueError(f"Unknown transformer type: {self.transformer_type}")
 
@@ -143,8 +121,6 @@ class DiffusionTransformer(nn.Module):
         nn.init.zeros_(self.preprocess_conv.weight)
         self.postprocess_conv = nn.Conv1d(io_channels, io_channels, 1, bias=False)
         nn.init.zeros_(self.postprocess_conv.weight)
-
-        self.diffusion_objective = diffusion_objective
 
     def _forward(
         self, 
@@ -158,6 +134,7 @@ class DiffusionTransformer(nn.Module):
         prepend_cond=None,
         prepend_cond_mask=None,
         return_info=False,
+        exit_layer_ix=None,
         **kwargs):
 
         if cross_attn_cond is not None:
@@ -225,14 +202,20 @@ class DiffusionTransformer(nn.Module):
         if self.patch_size > 1:
             x = rearrange(x, "b (t p) c -> b t (c p)", p=self.patch_size)
 
-        if self.transformer_type == "x-transformers":
-            output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, **extra_args, **kwargs)
-        elif self.transformer_type == "continuous_transformer":
-            output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, context_mask=cross_attn_cond_mask, mask=mask, prepend_mask=prepend_mask, return_info=return_info, **extra_args, **kwargs)
+        if self.transformer_type == "continuous_transformer":
+            # Masks not currently implemented for continuous transformer
+            output = self.transformer(x, prepend_embeds=prepend_inputs, context=cross_attn_cond, return_info=return_info, exit_layer_ix=exit_layer_ix, **extra_args, **kwargs)
 
             if return_info:
                 output, info = output
-       
+
+            # Avoid postprocessing on early exit
+            if exit_layer_ix is not None:
+                if return_info:
+                    return output, info
+                else:
+                    return output
+
         output = rearrange(output, "b t c -> b c t")[:,:,prepend_length:]
 
         if self.patch_size > 1:
@@ -265,6 +248,7 @@ class DiffusionTransformer(nn.Module):
         scale_phi=0.0,
         mask=None,
         return_info=False,
+        exit_layer_ix=None,
         **kwargs):
 
         assert causal == False, "Causal mode is not supported for DiffusionTransformer"
@@ -301,8 +285,26 @@ class DiffusionTransformer(nn.Module):
         if prepend_cond_mask is not None:
             prepend_cond_mask = prepend_cond_mask.bool()
 
+        # Early exit bypasses CFG processing
+        if exit_layer_ix is not None:
+            assert self.transformer_type == "continuous_transformer", "exit_layer_ix is only supported for continuous_transformer"
+            return self._forward(
+                x,
+                t,
+                cross_attn_cond=cross_attn_cond, 
+                cross_attn_cond_mask=cross_attn_cond_mask, 
+                input_concat_cond=input_concat_cond, 
+                global_embed=global_embed, 
+                prepend_cond=prepend_cond, 
+                prepend_cond_mask=prepend_cond_mask,
+                mask=mask,
+                return_info=return_info,
+                exit_layer_ix=exit_layer_ix,
+                **kwargs
+            )
+
         # CFG dropout
-        if cfg_dropout_prob > 0.0:
+        if cfg_dropout_prob > 0.0 and cfg_scale == 1.0:
             if cross_attn_cond is not None:
                 null_embed = torch.zeros_like(cross_attn_cond, device=cross_attn_cond.device)
                 dropout_mask = torch.bernoulli(torch.full((cross_attn_cond.shape[0], 1, 1), cfg_dropout_prob, device=cross_attn_cond.device)).to(torch.bool)
@@ -313,16 +315,14 @@ class DiffusionTransformer(nn.Module):
                 dropout_mask = torch.bernoulli(torch.full((prepend_cond.shape[0], 1, 1), cfg_dropout_prob, device=prepend_cond.device)).to(torch.bool)
                 prepend_cond = torch.where(dropout_mask, null_embed, prepend_cond)
 
-
-        # Get the current t value from the first timestep
-        step_t = t[0]
-
         if self.diffusion_objective == "v":
-            sigma = torch.sin(step_t * math.pi / 2)
-        elif self.diffusion_objective == "rectified_flow":
-            sigma = step_t
+            sigma = torch.sin(t * math.pi / 2)
+            alpha = torch.cos(t * math.pi / 2)
+        elif self.diffusion_objective in ["rectified_flow", "rf_denoiser"]:
+            sigma = t
 
-        if cfg_scale != 1.0 and (cross_attn_cond is not None or prepend_cond is not None) and (cfg_interval[0] <= sigma <= cfg_interval[1]):
+        if cfg_scale != 1.0 and (cross_attn_cond is not None or prepend_cond is not None) and (cfg_interval[0] <= sigma[0] <= cfg_interval[1]):
+
             # Classifier-free guidance
             # Concatenate conditioned and unconditioned inputs on the batch dimension            
             batch_inputs = torch.cat([x, x], dim=0)

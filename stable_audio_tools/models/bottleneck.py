@@ -29,7 +29,55 @@ class DiscreteBottleneck(Bottleneck):
 
     def decode_tokens(self, codes, **kwargs):
         raise NotImplementedError
-    
+
+
+class SoftNormBottleneck(Bottleneck):
+    def __init__(self, dim = 32, noise_augment_dim=0, noise_regularize = False):
+        super().__init__(is_discrete=False)
+
+        self.noise_augment_dim = noise_augment_dim
+        self.scaling_factor = nn.Parameter(torch.ones(1,dim,1))
+        self.bias = nn.Parameter(torch.zeros(1,dim,1))
+        self.noise_scaling_factor = nn.Parameter(torch.ones(1,noise_augment_dim,1))
+        self.noise_regularize = noise_regularize
+        #self.norm = RunningInstanceNorm(dim, momentum = 0.999, trainable_gain = False)
+
+    def encode(self, x, return_info=False):
+        info = {}
+
+        x = x * self.scaling_factor + self.bias
+        #x = rearrange(x, "b c n -> b n c")
+        #x = self.norm(x)
+        #x = rearrange(x, "b n c -> b c n")
+
+        if self.training and return_info:
+            var = (x.std(dim=-1) ** 2).clip(min = 1e-4)
+            logvar = torch.log(var)
+            mean = x.mean(dim=-1)
+            loss = (mean * mean + var - logvar - 1).mean()
+            var = (x.std(dim=-2) ** 2).clip(min = 1e-4)
+            logvar = torch.log(var)
+            mean = x.mean(dim=-2)
+            loss = loss + 0.4 * (mean * mean + var - logvar - 1).mean()
+            info["softnorm_loss"] = loss 
+        
+        if return_info:
+            return x, info
+        
+        return x
+
+    def decode(self, x):
+        if self.noise_regularize and self.training:
+            scaling = x.std(dim = -1)
+            noise = torch.randn_like(x) * scaling.unsqueeze(-1) * 1e-2
+            x = x + noise
+        if self.noise_augment_dim > 0:
+            noise = self.noise_scaling_factor * torch.randn(x.shape[0], self.noise_augment_dim,
+                                x.shape[-1]).type_as(x)
+            x = torch.cat([x, noise], dim=1)
+
+        return x
+
 class TanhBottleneck(Bottleneck):
     def __init__(self, scale=1.0):
         super().__init__(is_discrete=False)
@@ -374,7 +422,7 @@ class FSQBottleneck(DiscreteBottleneck):
         latents = self.quantizer.indices_to_codes(tokens)
 
         return self.decode(latents, **kwargs)
- 
+    
 class DitheredFSQBottleneck(DiscreteBottleneck):
     def __init__(self,
         dim, levels, num_codebooks = 1, dither_inference = True,

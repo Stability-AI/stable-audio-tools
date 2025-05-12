@@ -76,7 +76,7 @@ def generate_diffusion_uncond(
     if diff_objective == "v":    
         # k-diffusion denoising process go!
         sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, device=device)
-    elif diff_objective == "rectified_flow":
+    elif diff_objective in ["rectified_flow", "rf_denoiser"]:
         sampled = sample_rf(model.model, noise, init_data=init_audio, steps=steps, **sampler_kwargs, device=device)
 
     # Denoising process done. 
@@ -193,7 +193,7 @@ def generate_diffusion_cond(
     if diff_objective == "v":    
         # k-diffusion denoising process go!
         sampled = sample_k(model.model, noise, init_audio, steps, **sampler_kwargs, **conditioning_inputs, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
-    elif diff_objective == "rectified_flow":
+    elif diff_objective in ["rectified_flow", "rf_denoiser"]:
 
         if "sigma_min" in sampler_kwargs:
             del sampler_kwargs["sigma_min"]
@@ -378,7 +378,7 @@ def generate_diffusion_cond_inpaint(
     if diff_objective == "v":    
         # k-diffusion denoising process go!
         sampled = sample_k(model.model, noise, init_data=init_audio, steps=steps, **sampler_kwargs, **conditioning_inputs, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
-    elif diff_objective == "rectified_flow":
+    elif diff_objective in ["rectified_flow", "rf_denoiser"]:
 
         if "sigma_min" in sampler_kwargs:
             del sampler_kwargs["sigma_min"]
