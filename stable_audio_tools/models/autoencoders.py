@@ -1,6 +1,7 @@
 import torch
 import math
 import numpy as np
+import math
 
 from torch import nn, sin, pow
 from torch.nn import functional as F
@@ -18,7 +19,6 @@ from .diffusion import ConditionedDiffusionModel, DAU1DCondWrapper, UNet1DCondWr
 from .factory import create_pretransform_from_config, create_bottleneck_from_config
 from .pretransforms import Pretransform, AutoencoderPretransform
 from .transformer import ContinuousTransformer, TransformerBlock, RotaryEmbedding
-
 
 def WNConv1d(*args, **kwargs):
     return weight_norm(nn.Conv1d(*args, **kwargs))
@@ -55,7 +55,6 @@ def unfold_channels_from_batch(x, channels):
     x = rearrange(x, '(b c) ... -> b c ...', c = channels)
     return x
 
-
 class ResidualUnit(nn.Module):
     def __init__(self, in_channels, out_channels, dilation, use_snake=False, antialias_activation=False):
         super().__init__()
@@ -81,12 +80,11 @@ class ResidualUnit(nn.Module):
 
         return x + res
 
-
 class Transpose(nn.Module):
     def __init__(self):
         super().__init__()
-    def forward(self, x):
-        return x.transpose(-1,-2)
+    def forward(self, x, **kwargs):
+        return rearrange(x, '... a b -> ... b a')
 
 class TAAEBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride, type = 'encoder', transformer_depth = 3, use_snake = False, sliding_window = [31,32], checkpointing = False, conformer = False, layer_scale = True, use_dilated_conv = False):
@@ -289,6 +287,7 @@ class OobleckEncoder(nn.Module):
                  antialias_activation=False
         ):
         super().__init__()
+        self.in_channels = in_channels
           
         c_mults = [1] + c_mults
 
@@ -324,6 +323,7 @@ class OobleckDecoder(nn.Module):
                  use_nearest_upsample=False,
                  final_tanh=True):
         super().__init__()
+        self.out_channels = out_channels
 
         c_mults = [1] + c_mults
         
@@ -538,8 +538,7 @@ class AudioAutoencoder(nn.Module):
         latents = self.bottleneck.decode_tokens(tokens, **kwargs)
 
         return self.decode(latents, **kwargs)
-        
-    
+  
     def preprocess_audio_for_encoder(self, audio, in_sr):
         '''
         Preprocess single audio tensor (Channels x Length) to be compatible with the encoder.
@@ -613,7 +612,7 @@ class AudioAutoencoder(nn.Module):
         else:
             # CHUNKED ENCODING
             # samples_per_latent is just the downsampling ratio (which is also the upsampling ratio)
-            samples_per_latent = self.downsampling_ratio
+            samples_per_latent = int(self.downsampling_ratio)
             total_size = audio.shape[2] # in samples
             batch_size = audio.shape[0]
             chunk_size *= samples_per_latent # converting metric in latents to samples
@@ -634,7 +633,7 @@ class AudioAutoencoder(nn.Module):
             # However, the audio should've been padded to a multiple of samples_per_latent by now.
             y_size = total_size // samples_per_latent
             # Create an empty latent, we will populate it with chunks as we encode them
-            y_final = torch.zeros((batch_size,self.latent_dim,y_size)).to(audio.device)
+            y_final = torch.zeros((batch_size,self.latent_dim,y_size), dtype = chunks.dtype).to(audio.device)
             for i in range(num_chunks):
                 x_chunk = chunks[i,:]
                 # encode the chunk
@@ -675,10 +674,6 @@ class AudioAutoencoder(nn.Module):
         The chunk_size vs memory tradeoff isn't linear, and possibly depends on the GPU and CUDA version
         For example, on a A6000 chunk_size 128 is overall faster than 256 and 512 even though it has more chunks
         '''
-
-        model_dtype = next(self.parameters()).dtype
-        latents = latents.to(model_dtype)
-
         if not chunked:
             # default behavior. Decode the entire latent in parallel
             return self.decode(latents, **kwargs)
@@ -698,10 +693,10 @@ class AudioAutoencoder(nn.Module):
             chunks = torch.stack(chunks)
             num_chunks = chunks.shape[0]
             # samples_per_latent is just the downsampling ratio
-            samples_per_latent = self.downsampling_ratio
+            samples_per_latent = int(self.downsampling_ratio)
             # Create an empty waveform, we will populate it with chunks as decode them
             y_size = total_size * samples_per_latent
-            y_final = torch.zeros((batch_size,self.out_channels,y_size)).to(latents.device)
+            y_final = torch.zeros((batch_size,self.out_channels,y_size), dtype = chunks.dtype).to(latents.device)
             for i in range(num_chunks):
                 x_chunk = chunks[i,:]
                 # decode the chunk

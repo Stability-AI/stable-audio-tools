@@ -9,7 +9,6 @@ import torchaudio
 import torch
 from torch import nn
 from einops import rearrange
-from scipy import signal
 
 from torch.nn.utils import weight_norm
 
@@ -55,8 +54,8 @@ class DiscriminatorSTFT(nn.Module):
     def __init__(self, filters: int, in_channels: int = 1, out_channels: int = 1,
                  n_fft: int = 1024, hop_length: int = 256, win_length: int = 1024, max_filters: int = 1024,
                  filters_scale: int = 1, kernel_size: tp.Tuple[int, int] = (3, 9), dilations: tp.List = [1, 2, 4],
-                 stride: tp.Tuple[int, int] = (1, 2), normalized: bool = True,
-                 activation: str = 'LeakyReLU', activation_params: dict = {'negative_slope': 0.2}, spec_scale_pow = 0.0, window="hann"):
+                 stride: tp.Tuple[int, int] = (1, 1), normalized: bool = True,
+                 activation: str = 'LeakyReLU', activation_params: dict = {'negative_slope': 0.2}, spec_scale_pow = 0.0, **kwargs):
         super().__init__()
         assert len(kernel_size) == 2
         assert len(stride) == 2
@@ -68,18 +67,6 @@ class DiscriminatorSTFT(nn.Module):
         self.win_length = win_length
         self.normalized = normalized
         self.activation = getattr(torch.nn, activation)(**activation_params)
-
-        if window == "hann":
-            window_fn = torch.hann_window
-        elif window == "nuttall":
-            window_fn = torch.signal.windows.nuttall
-        elif window == "flattop":
-            def flattop_window(n, dtype = torch.float32):
-                window = signal.windows.flattop(n, sym=False)
-                window = torch.tensor(window, dtype=dtype)
-                return window
-
-            window_fn = flattop_window
 
         self.spec_transform = torchaudio.transforms.Spectrogram(
             n_fft=self.n_fft, hop_length=self.hop_length, win_length=self.win_length, window_fn=torch.hann_window,

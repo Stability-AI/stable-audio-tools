@@ -3,12 +3,12 @@ import json
 import os
 import pytorch_lightning as pl
 
+from typing import Dict, Optional, Union
 from prefigure.prefigure import get_all_args, push_wandb_config
 from stable_audio_tools.data.dataset import create_dataloader_from_config, fast_scandir
 from stable_audio_tools.models import create_model_from_config
-from stable_audio_tools.models.utils import load_ckpt_state_dict, remove_weight_norm_from_model
+from stable_audio_tools.models.utils import copy_state_dict, load_ckpt_state_dict, remove_weight_norm_from_model
 from stable_audio_tools.training import create_training_wrapper_from_config, create_demo_callback_from_config
-from stable_audio_tools.training.utils import copy_state_dict
 
 class ExceptionCallback(pl.Callback):
     def on_exception(self, trainer, module, err):
@@ -94,7 +94,10 @@ def main():
             checkpoint_dir = None
     elif args.logger == 'comet':
         logger = pl.loggers.CometLogger(project_name=args.name)
-        checkpoint_dir = args.save_dir if args.save_dir else None
+        if args.save_dir and isinstance(logger.version, str):
+            checkpoint_dir = os.path.join(args.save_dir, logger.name, logger.version, "checkpoints") 
+        else:
+            checkpoint_dir = args.save_dir if args.save_dir else None
     else:
         logger = None
         checkpoint_dir = args.save_dir if args.save_dir else None

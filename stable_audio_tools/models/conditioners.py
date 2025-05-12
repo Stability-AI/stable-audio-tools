@@ -10,7 +10,6 @@ from .adp import NumberEmbedder
 from ..inference.utils import set_audio_channels
 from .factory import create_pretransform_from_config
 from .pretransforms import Pretransform
-from ..training.utils import copy_state_dict
 from .utils import load_ckpt_state_dict
 from .transformer import AbsolutePositionalEmbedding
 
@@ -112,6 +111,20 @@ class ListConditioner(Conditioner):
 
         return [int_embeds, torch.ones(int_embeds.shape[0], 1).to(device)]
 
+def clap_load_state_dict(clap_ckpt_path, clap_model):
+    state_dict = torch.load(clap_ckpt_path, map_location="cpu", weights_only=False)["state_dict"]
+
+    # Remove "module." from state dict keys
+    state_dict = {k[7:]: v for k, v in state_dict.items()}
+
+    # Fix for transformers library
+    removed_keys = ["text_branch.embeddings.position_ids"]
+    for removed_key in removed_keys:
+        if removed_key in state_dict:
+            del state_dict[removed_key]
+
+    clap_model.load_state_dict(state_dict, strict=False)
+
 class CLAPTextConditioner(Conditioner):
     def __init__(self, 
                  output_dim: int, 
@@ -135,7 +148,6 @@ class CLAPTextConditioner(Conditioner):
             warnings.simplefilter("ignore")
             try:
                 import laion_clap
-                from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
                 
                 model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu')
 
@@ -144,8 +156,7 @@ class CLAPTextConditioner(Conditioner):
                 else: 
                     self.__dict__["model"] = model
 
-                state_dict = clap_load_state_dict(clap_ckpt_path)
-                self.model.model.load_state_dict(state_dict, strict=False)
+                clap_load_state_dict(clap_ckpt_path, self.model.model)
 
                 if self.finetune:
                     self.model.model.text_branch.requires_grad_(True)
@@ -224,7 +235,6 @@ class CLAPAudioConditioner(Conditioner):
             warnings.simplefilter("ignore")
             try:
                 import laion_clap
-                from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
                 
                 model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=audio_model_type, device='cpu')
 
@@ -233,8 +243,7 @@ class CLAPAudioConditioner(Conditioner):
                 else: 
                     self.__dict__["model"] = model
 
-                state_dict = clap_load_state_dict(clap_ckpt_path)
-                self.model.model.load_state_dict(state_dict, strict=False)
+                clap_load_state_dict(clap_ckpt_path, self.model.model)
 
                 if self.finetune:
                     self.model.model.audio_branch.requires_grad_(True)
@@ -589,7 +598,6 @@ class SourceMixConditioner(Conditioner):
 
         mixes = []
 
-        num_null_sources = 0
         for source_dict in sources: # Iterate over batch items
 
             mix = None

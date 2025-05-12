@@ -66,7 +66,7 @@ if __name__ == '__main__':
             ema_copy.state_dict()[name].copy_(param)
 
         training_wrapper = DiffusionAutoencoderTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, ema_copy=ema_copy, strict=False)
-    elif model_type == 'diffusion_cond':
+    elif model_type in ['diffusion_cond', 'diffusion_cond_inpaint']:
         from stable_audio_tools.training.diffusion import DiffusionCondTrainingWrapper
         
         use_ema = training_config.get("use_ema", True)
@@ -79,22 +79,6 @@ if __name__ == '__main__':
             optimizer_configs=training_config.get("optimizer_configs", None),
             strict=False
         )
-    elif model_type == 'diffusion_cond_inpaint':
-        from stable_audio_tools.training.diffusion import DiffusionCondInpaintTrainingWrapper
-        use_ema = training_config.get("use_ema", True)
-        training_wrapper = DiffusionCondInpaintTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False, use_ema=use_ema)
-    elif model_type == 'diffusion_prior':
-        from stable_audio_tools.training.diffusion import DiffusionPriorTrainingWrapper
-
-        ema_copy = create_model_from_config(model_config)
-        
-        for name, param in model.state_dict().items():
-            if isinstance(param, Parameter):
-                # backwards compatibility for serialized parameters
-                param = param.data
-            ema_copy.state_dict()[name].copy_(param)
-
-        training_wrapper = DiffusionPriorTrainingWrapper.load_from_checkpoint(args.ckpt_path, model=model, strict=False, ema_copy=ema_copy)
     elif model_type == 'lm':
         from stable_audio_tools.training.lm import AudioLanguageModelTrainingWrapper
 

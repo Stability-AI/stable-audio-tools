@@ -61,7 +61,57 @@ def create_training_wrapper_from_config(model_config, model):
             lr=training_config["learning_rate"],
             pre_encoded=training_config.get("pre_encoded", False),
         )
-    elif model_type == 'diffusion_cond':
+    elif model_type in ['diffusion_cond', 'diffusion_cond_inpaint']:
+       
+        if "arc" in training_config:
+            from .arc import ARCTrainingWrapper
+
+            arc_config = training_config["arc"]
+
+            teacher_model_config = arc_config.get("teacher_model", None)
+
+            if teacher_model_config is None and arc_config.get("use_model_as_teacher", False):
+                teacher_model_config = model_config
+
+            if teacher_model_config is not None:
+                teacher_model = create_model_from_config(teacher_model_config)
+                teacher_model = teacher_model.eval().requires_grad_(False)
+
+                teacher_model_ckpt = arc_config.get("teacher_model_ckpt", None)
+                if teacher_model_ckpt is not None:
+                    teacher_model.load_state_dict(torch.load(teacher_model_ckpt, weights_only=True)["state_dict"], strict=False)
+                else:
+                    raise ValueError("teacher_model_ckpt must be specified if teacher_model is specified")
+            else:
+                teacher_model = None
+
+            discriminator_model_config = arc_config.get("discriminator_base_model", None)
+
+            if discriminator_model_config is None and arc_config.get("use_model_as_discriminator", False):
+                discriminator_model_config = model_config
+
+            if discriminator_model_config is not None:
+                discriminator = create_model_from_config(discriminator_model_config)
+
+                discriminator_model_ckpt = arc_config.get("discriminator_base_ckpt", None)
+                if discriminator_model_ckpt is not None:
+                    discriminator.load_state_dict(torch.load(discriminator_model_ckpt, weights_only=True)["state_dict"], strict=False)
+
+            return ARCTrainingWrapper(
+                model=model,
+                teacher_model=teacher_model,
+                discriminator=discriminator,
+                arc_config=arc_config,
+                optimizer_configs=training_config.get("optimizer_configs", None),
+                use_ema=training_config.get("use_ema", True),
+                pre_encoded=training_config.get("pre_encoded", False),
+                cfg_dropout_prob=training_config.get("cfg_dropout_prob", 0.1),
+                timestep_sampler=training_config.get("timestep_sampler", "uniform"),
+                clip_grad_norm=training_config.get("clip_grad_norm", 0.0),
+                trim_config=training_config.get("trim_config", None),
+                inpainting_config=training_config.get("inpainting", None)
+            )
+
         from .diffusion import DiffusionCondTrainingWrapper
         return DiffusionCondTrainingWrapper(
             model, 
@@ -74,47 +124,9 @@ def create_training_wrapper_from_config(model_config, model):
             pre_encoded=training_config.get("pre_encoded", False),
             cfg_dropout_prob = training_config.get("cfg_dropout_prob", 0.1),
             timestep_sampler = training_config.get("timestep_sampler", "uniform"),
-        )
-    elif model_type == 'diffusion_prior':
-        from .diffusion import DiffusionPriorTrainingWrapper
-        from ..models.diffusion_prior import PriorType
-
-        ema_copy = create_model_from_config(model_config)
-        
-        # Copy each weight to the ema copy
-        for name, param in model.state_dict().items():
-            if isinstance(param, Parameter):
-                # backwards compatibility for serialized parameters
-                param = param.data
-            ema_copy.state_dict()[name].copy_(param)
-
-        prior_type = training_config.get("prior_type", "mono_stereo")
-
-        if prior_type == "mono_stereo":
-            prior_type_enum = PriorType.MonoToStereo
-        else:
-            raise ValueError(f"Unknown prior type: {prior_type}")
-
-        return DiffusionPriorTrainingWrapper(
-            model, 
-            lr=training_config["learning_rate"],
-            ema_copy=ema_copy,
-            prior_type=prior_type_enum,
-            log_loss_info=training_config.get("log_loss_info", False),
-            use_reconstruction_loss=training_config.get("use_reconstruction_loss", False),
-        )
-    elif model_type == 'diffusion_cond_inpaint':
-        from .diffusion import DiffusionCondInpaintTrainingWrapper
-        return DiffusionCondInpaintTrainingWrapper(
-            model, 
-            lr=training_config.get("learning_rate", None),
-            max_mask_segments = training_config.get("max_mask_segments", 10),
-            log_loss_info=training_config.get("log_loss_info", False),
-            optimizer_configs=training_config.get("optimizer_configs", None),
-            use_ema=training_config.get("use_ema", True),
-            pre_encoded=training_config.get("pre_encoded", False),
-            cfg_dropout_prob = training_config.get("cfg_dropout_prob", 0.1),
-            timestep_sampler = training_config.get("timestep_sampler", "uniform")
+            timestep_sampler_options = training_config.get("timestep_sampler_options", {}),
+            p_one_shot=training_config.get("p_one_shot", 0.0),
+            inpainting_config = training_config.get("inpainting", None)
         )
     elif model_type == 'diffusion_autoencoder':
         from .diffusion import DiffusionAutoencoderTrainingWrapper
@@ -153,7 +165,6 @@ def create_training_wrapper_from_config(model_config, model):
             optimizer_configs=training_config.get("optimizer_configs", None),
             pre_encoded=training_config.get("pre_encoded", False),
         )
-
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
 
@@ -190,15 +201,6 @@ def create_demo_callback_from_config(model_config, **kwargs):
             sample_rate=model_config["sample_rate"],
             **kwargs
         )
-    elif model_type == "diffusion_prior":
-        from .diffusion import DiffusionPriorDemoCallback
-        return DiffusionPriorDemoCallback(
-            demo_every=demo_config.get("demo_every", 2000), 
-            demo_steps=demo_config.get("demo_steps", 250),
-            sample_size=model_config["sample_size"],
-            sample_rate=model_config["sample_rate"],
-            **kwargs
-        )
     elif model_type == "diffusion_cond":
         from .diffusion import DiffusionCondDemoCallback
 
@@ -212,7 +214,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_conditioning=demo_config.get("demo_cond", {}),
             demo_cond_from_batch=demo_config.get("demo_cond_from_batch", False),
             display_audio_cond=demo_config.get("display_audio_cond", False),
-            cond_display_configs=demo_config.get("cond_display_configs", None),
+            cond_display_configs=demo_config.get("cond_display_configs", None)
         )
     elif model_type == "diffusion_cond_inpaint":
         from .diffusion import DiffusionCondInpaintDemoCallback

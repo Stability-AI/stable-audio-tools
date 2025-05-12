@@ -28,7 +28,7 @@ class DistributionShift:
         self.max_length = max_length
         self.min_length = min_length
         self.use_sine = use_sine
-    
+
     def time_shift(self, t: torch.Tensor, seq_len: int):
         sigma = 1.0
         mu = - (self.base_shift + (self.max_shift - self.base_shift) * (seq_len - self.min_length) / (self.max_length - self.min_length))
@@ -39,57 +39,90 @@ class DistributionShift:
 
         return t_out
 
+def sample_timesteps_logsnr(batch_size, mean_logsnr=-1.2, std_logsnr=2.0):
+    """
+    Sample timesteps for diffusion training by sampling logSNR values and converting to t.
+
+    Args:
+        batch_size (int): Number of timesteps to sample
+        mean_logsnr (float): Mean of the logSNR Gaussian distribution
+        std_logsnr (float): Standard deviation of the logSNR Gaussian distribution
+
+    Returns:
+        torch.Tensor: Tensor of shape (batch_size,) containing timestep values t in [0, 1]
+    """
+    # Sample logSNR from Gaussian distribution
+    logsnr = torch.randn(batch_size) * std_logsnr + mean_logsnr
+
+    # Convert logSNR to timesteps using the logistic function
+    # Since logSNR = ln((1-t)/t), we can solve for t:
+    # t = 1 / (1 + exp(logsnr))
+    t = torch.sigmoid(-logsnr)
+
+    # Clamp values to ensure numerical stability
+    t = t.clamp(1e-4, 1 - 1e-4)
+
+    return t
 def truncated_logistic_normal_rescaled(shape, left_trunc=0.075, right_trunc=1):
     """
-  
+
     shape: shape of the output tensor
     left_trunc: left truncation point, fraction of probability to be discarded
     right_trunc: right truncation boundary, should be 1 (never seen at test time)
     """
-    
+
     # Step 1: Sample from the logistic normal distribution (sigmoid of normal)
     logits = torch.randn(shape)
-    
+
     # Step 2: Apply the CDF transformation of the normal distribution
     normal_dist = dist.Normal(0, 1)
     cdf_values = normal_dist.cdf(logits)
-    
+
     # Step 3: Define the truncation bounds on the CDF
     lower_bound = normal_dist.cdf(torch.logit(torch.tensor(left_trunc)))
     upper_bound = normal_dist.cdf(torch.logit(torch.tensor(right_trunc)))
 
     # Step 4: Rescale linear CDF values into the truncated region (between lower_bound and upper_bound)
     truncated_cdf_values = lower_bound + (upper_bound - lower_bound) * cdf_values
-    
+
     # Step 5: Map back to logistic-normal space using inverse CDF
     truncated_samples = torch.sigmoid(normal_dist.icdf(truncated_cdf_values))
-    
+
     # Step 6: Rescale values so that min is 0 and max is just below 1
     rescaled_samples = (truncated_samples - left_trunc) / (right_trunc - left_trunc)
 
     return rescaled_samples
 
 @torch.no_grad()
-def sample_discrete_euler(model, x, steps, sigma_max=1, callback=None, dist_shift=None, **extra_args):
+def sample_discrete_euler(model, x, steps=None, sigma_max=1, sigmas=None, callback=None, dist_shift=None, disable_tqdm=False, **extra_args):
     """Draws samples from a model given starting noise. Euler method"""
+
+    assert steps is not None or sigmas is not None, "Either steps or sigmas must be provided"
 
     # Make tensor of ones to broadcast the single t values
     ts = x.new_ones([x.shape[0]])
 
-    # Create the noise schedule
-    t = torch.linspace(sigma_max, 0, steps + 1)
+    if sigmas is None:
 
-    if dist_shift is not None:
-        t = dist_shift.time_shift(t, x.shape[-1])
+        # Create the noise schedule
+        t = torch.linspace(sigma_max, 0, steps + 1)
+
+        if dist_shift is not None:
+            t = dist_shift.time_shift(t, x.shape[-1])
+
+    else:
+        t = sigmas
 
     #alphas, sigmas = 1-t, t
 
-    for i, (t_curr, t_prev) in enumerate(tqdm(zip(t[:-1], t[1:]))):
+    for i, (t_curr, t_prev) in enumerate(tqdm(zip(t[:-1], t[1:]), disable=disable_tqdm)):
         # Broadcast the current timestep to the correct shape
         t_curr_tensor = t_curr * torch.ones(
             (x.shape[0],), dtype=x.dtype, device=x.device
         )
+
         dt = t_prev - t_curr  # we solve backwards in our formulation
+
         v = model(x, t_curr_tensor, **extra_args)
         x = x + dt * v
 
@@ -101,17 +134,24 @@ def sample_discrete_euler(model, x, steps, sigma_max=1, callback=None, dist_shif
     return x
 
 @torch.no_grad()
-def sample_rk4(model, x, steps, sigma_max=1, callback=None, dist_shift=None, **extra_args):
+def sample_rk4(model, x, steps=None, sigma_max=1, sigmas=None, callback=None, dist_shift=None, **extra_args):
     """Draws samples from a model given starting noise. 4th-order Runge-Kutta"""
+
+    assert steps is not None or sigmas is not None, "Either steps or sigmas must be provided"
 
     # Make tensor of ones to broadcast the single t values
     ts = x.new_ones([x.shape[0]])
 
-    # Create the noise schedule
-    t = torch.linspace(sigma_max, 0, steps + 1)
+    if sigmas is None:
+        
+        # Create the noise schedule
+        t = torch.linspace(sigma_max, 0, steps + 1)
 
-    if dist_shift is not None:
-        t = dist_shift.time_shift(t, x.shape[-1])
+        if dist_shift is not None:
+            t = dist_shift.time_shift(t, x.shape[-1])
+
+    else:
+        t = sigmas
 
     #alphas, sigmas = 1-t, t
 
@@ -119,12 +159,12 @@ def sample_rk4(model, x, steps, sigma_max=1, callback=None, dist_shift=None, **e
         # Broadcast the current timestep to the correct shape
         t_curr_tensor = t_curr * ts
         dt = t_prev - t_curr  # we solve backwards in our formulation
-        
+
         k1 = model(x, t_curr_tensor, **extra_args)
         k2 = model(x + dt / 2 * k1, (t_curr + dt / 2) * ts, **extra_args)
         k3 = model(x + dt / 2 * k2, (t_curr + dt / 2) * ts, **extra_args)
         k4 = model(x + dt * k3, t_prev * ts, **extra_args)
-        
+
         x = x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
         if callback is not None:
@@ -135,27 +175,36 @@ def sample_rk4(model, x, steps, sigma_max=1, callback=None, dist_shift=None, **e
     return x
 
 @torch.no_grad()
-def sample_flow_dpmpp(model, x, steps, sigma_max=1, callback=None, dist_shift=None, **extra_args):
+def sample_flow_dpmpp(model, x, steps=None, sigma_max=1, sigmas=None, callback=None, dist_shift=None, disable_tqdm=False, **extra_args):
     """Draws samples from a model given starting noise. DPM-Solver++ for RF models"""
+
+    assert steps is not None or sigmas is not None, "Either steps or sigmas must be provided"
 
     # Make tensor of ones to broadcast the single t values
     ts = x.new_ones([x.shape[0]])
 
-    # Create the noise schedule
-    t = torch.linspace(sigma_max, 0, steps + 1)
+    if sigmas is None:
 
-    if dist_shift is not None:
-        t = dist_shift.time_shift(t, x.shape[-1])
+        # Create the noise schedule
+        t = torch.linspace(sigma_max, 0, steps + 1)
+
+        if dist_shift is not None:
+            t = dist_shift.time_shift(t, x.shape[-1])
+    
+    else:
+        t = sigmas
 
     old_denoised = None
 
     log_snr = lambda t: ((1-t) / t).log()
 
-    for i in trange(len(t) - 1, disable=False):
-        denoised = x - t[i] * model(x, t[i] * ts, **extra_args)
-        if callback is not None:
-            callback({'x': x, 'i': i, 'sigma': t[i], 'sigma_hat': t[i], 'denoised': denoised})
+    for i in trange(len(t) - 1, disable=disable_tqdm):
+
         t_curr, t_next = t[i], t[i + 1]
+
+        denoised = x - t_curr * model(x, t_curr * ts, **extra_args)
+        if callback is not None:
+            callback({'x': x, 'i': i, 't': t_curr, 'sigma': t_curr, 'denoised': denoised})
         alpha_t = 1-t_next
         h = log_snr(t_next) - log_snr(t_curr)
         if old_denoised is None or t_next == 0:
@@ -166,6 +215,37 @@ def sample_flow_dpmpp(model, x, steps, sigma_max=1, callback=None, dist_shift=No
             denoised_d = (1 + 1 / (2 * r)) * denoised - (1 / (2 * r)) * old_denoised
             x = (t_next / t_curr) * x - alpha_t * (-h).expm1() * denoised_d
         old_denoised = denoised
+    return x
+
+@torch.no_grad()
+def sample_flow_pingpong(model, x, steps=None, sigma_max=1, sigmas=None, callback=None, dist_shift=None, **extra_args):
+    """Draws samples from a model given starting noise. Ping-pong sampling for distilled models"""
+
+    assert steps is not None or sigmas is not None, "Either steps or sigmas must be provided"
+
+    # Make tensor of ones to broadcast the single t values
+    ts = x.new_ones([x.shape[0]])
+
+    if sigmas is None:
+
+        # Create the noise schedule
+        t = torch.linspace(sigma_max, 0, steps + 1)
+
+        if dist_shift is not None:
+            t = dist_shift.time_shift(t, x.shape[-1])
+    
+    else:
+        t = sigmas
+
+    for i in trange(len(t) - 1, disable=False):
+
+        denoised = x - t[i] * model(x, t[i] * ts, **extra_args)
+        if callback is not None:
+            callback({'x': x, 'i': i, 't': t[i], 'sigma': t[i], 'sigma_hat': t[i], 'denoised': denoised})
+
+        t_next = t[i + 1]
+        x = (1-t_next) * denoised + t_next * torch.randn_like(x)
+
     return x
 
 
@@ -246,18 +326,18 @@ def make_cond_model_fn(model, cond_fn):
 # Uses k-diffusion from https://github.com/crowsonkb/k-diffusion
 # init_data is init_audio as latents (if this is latent diffusion)
 # For sampling, init_data to none
-# For variations, set init_data 
+# For variations, set init_data
 def sample_k(
-        model_fn, 
-        noise, 
+        model_fn,
+        noise,
         init_data=None,
-        steps=100, 
-        sampler_type="dpmpp-2m-sde", 
-        sigma_min=0.01, 
-        sigma_max=100, 
-        rho=1.0, 
-        device="cuda", 
-        callback=None, 
+        steps=100,
+        sampler_type="dpmpp-2m-sde",
+        sigma_min=0.01,
+        sigma_max=100,
+        rho=1.0,
+        device="cuda",
+        callback=None,
         cond_fn=None,
         **extra_args
     ):
@@ -274,18 +354,18 @@ def sample_k(
 
         # Make the list of sigmas. Sigma values are scalars related to the amount of noise each denoising step has
         sigmas = K.sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho, device=device)
-        # Scale the initial noise by sigma 
+        # Scale the initial noise by sigma
         noise = noise * sigmas[0]
 
         if init_data is not None:
             # set the initial latent to the init_data, and noise it with initial sigma
-            x = init_data + noise 
+            x = init_data + noise
         else:
             # SAMPLING
             # set the initial latent to noise
             x = noise
 
-        
+
         if sampler_type == "k-heun":
             return K.sampling.sample_heun(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
         elif sampler_type == "k-lms":
@@ -325,20 +405,18 @@ def sample_k(
     else:
         raise ValueError(f"Unknown sampler type {sampler_type}")
 
-# Uses discrete Euler sampling for rectified flow models
 # init_data is init_audio as latents (if this is latent diffusion)
 # For sampling, set both init_data and mask to None
-# For variations, set init_data 
-# For inpainting, set both init_data & mask 
+# For variations, set init_data
 def sample_rf(
-        model_fn, 
-        noise, 
+        model_fn,
+        noise,
         init_data=None,
-        steps=100, 
+        steps=100,
         sampler_type="euler",
         sigma_max=1,
-        device="cuda", 
-        callback=None, 
+        device="cuda",
+        callback=None,
         cond_fn=None,
         **extra_args
     ):
@@ -351,24 +429,29 @@ def sample_rf(
 
     if init_data is not None:
 
-        if "dist_shift" in extra_args:
-            dist_shift = extra_args["dist_shift"]
-
-            # Shift the sigma_max value for init audio to account for the time shift in the sampler
-            if sigma_max < 1:
-                sigma_max = dist_shift.time_shift(torch.tensor(sigma_max), init_data.shape[-1]).item()
-
-        # VARIATION (no inpainting)
+        # VARIATION
         # Interpolate the init data and the noise for init audio
         x = init_data * (1 - sigma_max) + noise * sigma_max
+
     else:
         # SAMPLING
         # set the initial latent to noise
         x = noise
 
+    logsnr_max = math.log(((1-sigma_max)/sigma_max) + 1e-6) if sigma_max < 1 else -6
+
+    logsnr = torch.linspace(logsnr_max, 2, steps + 1)
+
+    t = torch.sigmoid(-logsnr)
+
+    t[0] = sigma_max
+    t[-1] = 0
+
     if sampler_type == "euler":
-        return sample_discrete_euler(model_fn, x, steps, sigma_max, callback=callback, **extra_args)
+        return sample_discrete_euler(model_fn, x, sigmas=t, sigma_max=sigma_max, callback=callback, **extra_args)
     elif sampler_type == "rk4":
         return sample_rk4(model_fn, x, steps, sigma_max, callback=callback, **extra_args)
     elif sampler_type == "dpmpp":
-        return sample_flow_dpmpp(model_fn, x, steps, sigma_max, callback=callback, **extra_args)
+        return sample_flow_dpmpp(model_fn, x, sigmas=t, sigma_max=sigma_max, callback=callback, **extra_args)
+    elif sampler_type == "pingpong":
+        return sample_flow_pingpong(model_fn, x, sigmas=t, sigma_max=sigma_max, callback=callback, **extra_args)

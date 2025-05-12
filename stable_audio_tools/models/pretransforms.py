@@ -1,6 +1,7 @@
 import torch
 from einops import rearrange
 from torch import nn
+from torchaudio.transforms import Resample
 
 class Pretransform(nn.Module):
     def __init__(self, enable_grad, io_channels, is_discrete):
@@ -90,7 +91,7 @@ class AutoencoderPretransform(Pretransform):
         self.model.load_state_dict(state_dict, strict=strict)
 
 class WaveletPretransform(Pretransform):
-    def __init__(self, channels, levels, wavelet):
+    def __init__(self, channels, levels, wavelet, **kwargs):
         super().__init__(enable_grad=False, io_channels=channels, is_discrete=False)
 
         from .wavelets import WaveletEncode1d, WaveletDecode1d
@@ -103,27 +104,45 @@ class WaveletPretransform(Pretransform):
         self.encoded_channels = channels * self.downsampling_ratio
     
     def encode(self, x):
-        return self.encoder(x)
+        x = self.encoder(x)
+        return x
     
     def decode(self, z):
         return self.decoder(z)
 
 class PatchedPretransform(Pretransform):
-    def __init__(self, channels, patch_size):
+    def __init__(self, channels, patch_size, oversampling = 1, **kwargs):
         super().__init__(enable_grad=False, io_channels=channels, is_discrete=False)
         self.channels = channels
         self.patch_size = patch_size
+        self.oversampling = oversampling
 
         self.downsampling_ratio = patch_size
         self.io_channels = channels
         self.encoded_channels = channels * patch_size
-    
+
+        if self.oversampling > 1:
+            self.input_upsampler = Resample(1, self.oversampling)
+            self.output_downsampler = Resample(self.oversampling, 1)
+
+    def _pad(self, x):
+        seq_len = x.shape[-1]
+        pad_len = (self.patch_size - (seq_len % self.patch_size)) % self.patch_size
+        if pad_len > 0:
+            x = torch.cat([x, torch.zeros_like(x[:, :, :pad_len])], dim=-1)
+        return x
+
     def encode(self, x):
+        if self.oversampling > 1:
+            x = self.input_upsampler(x)
+        x = self._pad(x)
         x = rearrange(x, "b c (l h) -> b (c h) l", h=self.patch_size)
         return x
     def decode(self, z):
-        z = rearrange(z, "b (c h) l -> b c (l h)", h=self.patch_size)
-        return z
+        x = rearrange(z, "b (c h) l -> b c (l h)", h=self.patch_size)
+        if self.oversampling > 1:
+            x = self.output_downsampler(x)
+        return x
         
 class PQMFPretransform(Pretransform):
     def __init__(self, attenuation=100, num_bands=16, channels = 1):
