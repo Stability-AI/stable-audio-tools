@@ -156,8 +156,7 @@ class SampleDataset(torch.utils.data.Dataset):
         self.filenames = []
 
         self.augs = torch.nn.Sequential(
-            PhaseFlipper(),
-            #nn.Identity()
+            PhaseFlipper()
         )
 
         self.root_paths = []

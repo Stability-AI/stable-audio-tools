@@ -7,10 +7,6 @@ from torch.nn import functional as F
 
 from einops import rearrange
 
-from .blocks import SnakeBeta
-from .transformer import RunningInstanceNorm
-
-
 class Bottleneck(nn.Module):
     def __init__(self, is_discrete: bool = False):
         super().__init__()
