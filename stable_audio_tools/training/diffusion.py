@@ -352,8 +352,12 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
         # If mask_padding is on, randomly drop the padding masks to allow for learning silence padding
         use_padding_mask = self.mask_padding and random.random() > self.mask_padding_dropout
 
-        # Create batch tensor of attention masks from the "mask" field of the metadata array
-        padding_masks = torch.stack([md["padding_mask"][0] for md in metadata], dim=0).to(self.device) # Shape (batch_size, sequence_length)
+        # Check for wrapped padding masks to avoid interpolation error
+        first_padding_mask = metadata[0]["padding_mask"]
+        if isinstance(first_padding_mask, list) and len(first_padding_mask) == 1:
+            padding_masks = torch.stack([md["padding_mask"][0] for md in metadata], dim=0).to(self.device) # Shape (batch_size, sequence_length)
+        else:
+            padding_masks = torch.stack([md["padding_mask"] for md in metadata], dim=0).to(self.device) # Shape (batch_size, sequence_length)
 
         p.tick("conditioning")
 
