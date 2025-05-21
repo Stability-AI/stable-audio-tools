@@ -100,6 +100,8 @@ class TAAEBlock(nn.Module):
         transformers = []
         transformers.append(Transpose())
 
+        self.sliding_window = sliding_window
+
         for _ in range(transformer_depth):
             transformers.append(TransformerBlock(transformer_dim, 
                                                  dim_heads = 128, 
@@ -109,47 +111,49 @@ class TAAEBlock(nn.Module):
                                                  conformer = conformer, 
                                                  layer_scale = layer_scale, 
                                                  add_rope = True, 
-                                                 attn_kwargs={'sliding_window': sliding_window, 'qk_norm': "ln"}, 
+                                                 attn_kwargs={'qk_norm': "ln"}, 
                                                  ff_kwargs={'mult': 4, 'no_bias': False},
                                                  norm_kwargs = {'eps': 1e-2}))
         transformers.append(Transpose())
-        transformers = nn.Sequential(*transformers)
+        transformers = nn.ModuleList(transformers)
 
         if type == 'encoder':
             layers = []
-            if stride > 1 or in_channels != out_channels:
-                conv_type = WNConv1d
-            else:
-                conv_type = nn.Identity
             if use_dilated_conv:
                 layers.append(ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=1, use_snake=use_snake))
                 layers.append(ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=3, use_snake=use_snake))
                 layers.append(ResidualUnit(in_channels=in_channels, out_channels=in_channels, dilation=9, use_snake=use_snake))
             layers.append(get_activation("snake" if use_snake else "none", antialias=False, channels=in_channels))
-            layers.append(conv_type(in_channels=in_channels, out_channels=out_channels, kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2)))
+            layers.append(WNConv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2)) if stride > 1 else nn.Identity())
             layers.append(transformers)
-            self.layers = nn.Sequential(*layers)
+            self.layers = nn.ModuleList(layers)
         elif type == 'decoder':
             layers = []
-            if stride > 1 or in_channels != out_channels:
-                conv_type = WNConvTranspose1d
-            else:
-                conv_type = nn.Identity
             layers.append(transformers)
-            layers.append(get_activation("snake" if use_snake else "none", antialias=False, channels=in_channels))
-            layers.append(conv_type(in_channels=in_channels,
+            layers.append(get_activation("snake" if use_snake else "none", antialias=False, channels=out_channels))
+            layers.append(WNConvTranspose1d(in_channels=in_channels,
                           out_channels=out_channels,
-                          kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2)))
+                          kernel_size=2*stride, stride=stride, padding=math.ceil(stride/2)) if stride > 1 else nn.Identity())
             if use_dilated_conv:
                 layers.append(ResidualUnit(in_channels=out_channels, out_channels=out_channels, dilation=1, use_snake=use_snake))
                 layers.append(ResidualUnit(in_channels=out_channels, out_channels=out_channels, dilation=3, use_snake=use_snake))
                 layers.append(ResidualUnit(in_channels=out_channels, out_channels=out_channels, dilation=9, use_snake=use_snake))
-            self.layers = nn.Sequential(*layers)
+            self.layers = nn.ModuleList(layers)
+
     def forward(self, x):
-        if self.checkpointing:
-            return checkpoint(self.layers, x)
-        else:
-            return self.layers(x)
+        for layer in self.layers:
+            if isinstance(layer, nn.ModuleList):
+                for transformer in layer:
+                    if self.checkpointing:
+                        x = checkpoint(transformer, x, self_attention_flash_sliding_window = self.sliding_window)
+                    else:
+                        x = transformer(x, self_attention_flash_sliding_window = self.sliding_window)
+            else:
+                if self.checkpointing:
+                    x = checkpoint(layer, x)
+                else:
+                    x = layer(x)
+        return x
 
 class TAAEEncoder(nn.Module):
     def __init__(self, 
