@@ -16,36 +16,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-dependencies = [
-    "alias-free-torch>=0.0.6",
-    "auraloss>=0.4.0",
-    "descript-audio-codec>=1.0.0",
-    "einops",
-    "einops-exts",
-    "ema-pytorch>=0.2.3",
-    "encodec>=0.1.1",
-    "gradio>=5.20.0",
-    "huggingface_hub",
-    "importlib-resources>=5.12.0",
-    "k-diffusion>=0.1.1",
-    "laion-clap>=1.1.4",
-    "local-attention>=1.8.6",
-    "pandas>=2.2.0",
-    "prefigure>=0.0.10",
-    "pytorch_lightning>=2.5.1",
-    "PyWavelets>=1.8.0",
-    "safetensors>=0.5.0",
-    "sentencepiece>=0.2.0",
-    "torch>=2.5.0",
-    "torchaudio>=2.5.0",
-    "torchmetrics>=1.7.0",
-    "tqdm",
-    "transformers>=4.51.3",
-    "v-diffusion-pytorch>=0.0.2",
-    "vector-quantize-pytorch>=1.22.0",
-    "wandb>=0.19.0",
-    "webdataset>=0.2.100"
-]
 
 [project.urls]
 "Homepage" = "https://github.com/Stability-AI/stable-audio-tools"
