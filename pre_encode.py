@@ -11,8 +11,7 @@ from torch.nn import functional as F
 from stable_audio_tools.data.dataset import create_dataloader_from_config
 from stable_audio_tools.models.factory import create_model_from_config
 from stable_audio_tools.models.pretrained import get_pretrained_model
-from stable_audio_tools.models.utils import load_ckpt_state_dict
-from stable_audio_tools.training.utils import copy_state_dict
+from stable_audio_tools.models.utils import load_ckpt_state_dict, copy_state_dict
 
 
 def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, model_half=False):
@@ -161,7 +160,8 @@ def main(args):
 
     trainer = pl.Trainer(
         accelerator="gpu",
-        devices=args.num_gpus,
+        devices="auto",
+        num_nodes = args.num_nodes,
         strategy=args.strategy,
         precision="16-true" if args.model_half else "32",
         max_steps=args.limit_batches if args.limit_batches else -1,
@@ -180,8 +180,8 @@ if __name__ == "__main__":
     parser.add_argument('--batch-size', type=int, help='Batch size', default=1)
     parser.add_argument('--sample-size', type=int, help='Number of audio samples to pad/crop to', default=1320960)
     parser.add_argument('--is-discrete', action='store_true', help='Whether the model is discrete')
+    parser.add_argument('--num-nodes', type=int, help='Number of GPU nodes', default=1)
     parser.add_argument('--num-workers', type=int, help='Number of dataloader workers', default=4)
-    parser.add_argument('--num-gpus', type=int, help='Number of GPUs to use', default=1)
     parser.add_argument('--strategy', type=str, help='PyTorch Lightning strategy', default='auto')
     parser.add_argument('--limit-batches', type=int, help='Limit number of batches (optional)', default=None)
     parser.add_argument('--shuffle', action='store_true', help='Shuffle dataset')

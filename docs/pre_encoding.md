@@ -34,12 +34,12 @@ The `pre_encode.py` script accepts the following command line arguments:
 - `--is-discrete`
   - If true, treats the model as discrete, saving discrete tokens instead of continuous latents
   - Optional
+- `--num-nodes`
+  - Number of nodes to use for distributed processing, if available.
+  - Optional, defaults to 1
 - `--num-workers`
   - Number of dataloader workers
   - Optional, defaults to 4
-- `--num-gpus`
-  - Number of GPUs to use
-  - Optional, defaults to 1
 - `--strategy`
   - PyTorch Lightning strategy
   - Optional, defaults to 'auto'
@@ -50,7 +50,7 @@ The `pre_encode.py` script accepts the following command line arguments:
   - If true, shuffles the dataset
   - Optional
 
-For example, if you wanted to use 1 GPU to encode latents with padding up to 30 seconds long in half precision, you could run the following:
+For example, if you wanted to encode latents with padding up to 30 seconds long in half precision, you could run the following:
 
 ```bash
 $ python3 ./pre_encode.py \
@@ -60,7 +60,6 @@ $ python3 ./pre_encode.py \
 --dataset-config /path/to/dataset/config.json \
 --output-path /path/to/output/dir \
 --sample-size 1320960 \
---num-gpus 1
 ```
 
 When you run the above, the `--output-path` directory will contain numbered subdirectories for each GPU process used to encode the latents, and a `details.json` file that keeps track of settings used when the script was run.
