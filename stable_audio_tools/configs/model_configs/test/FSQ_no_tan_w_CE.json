@@ -1,0 +1,108 @@
+{
+  "model_type": "autoencoder",
+  "sample_rate": 44100,
+  "sample_size": 220147,
+  "audio_channels": 2,
+  "model": {
+    "encoder": {
+      "type": "oobleck",
+      "config": {
+        "in_channels": 2,
+        "channels": 64,
+        "c_mults": [1, 2, 4, 8],
+        "strides": [4, 4, 4, 2],
+        "latent_dim": 32,
+        "use_snake": true
+      }
+    },
+    "decoder": {
+      "type": "oobleck",
+      "config": {
+        "out_channels": 2,
+        "channels": 64,
+        "c_mults": [1, 2, 4, 8],
+        "strides": [4, 4, 4, 2],
+        "latent_dim": 32,
+        "use_snake": true,
+        "final_tanh": false
+      }
+    },
+    "bottleneck": {
+      "type": "dithered_fsq",
+      "config": {
+        "dim": 32,
+        "levels": [8, 8, 8, 8],
+        "num_codebooks": 8,
+        "dither_inference": true,
+        "noise_dropout": 0.05
+      }
+    },
+    "latent_dim": 32,
+    "downsampling_ratio": 128,
+    "io_channels": 2
+  },
+  "training": {
+    "model_type": "autoencoder",
+    "learning_rate": 0.0001,
+    "batch_size": 8,
+    "use_ema": true,
+    "rate_loss_weight": 0.01,
+    "lm_config": {
+      "pretransform": null,
+      "lm": {
+        "type": "x-transformers",
+        "config": {
+          "embed_dim": 256,
+          "depth": 6,
+          "heads": 8,
+          "dim_head": 64,
+          "use_flash_attn": false
+        }
+      },
+      "sample_rate": 44100,
+      "min_input_length": 128
+    },
+    "loss_configs": {
+      "spectral": {
+        "type": "mrstft",
+        "config": {
+          "fft_sizes": [2048, 1024, 512, 256, 128, 64, 32],
+          "hop_sizes": [512, 256, 128, 64, 32, 16, 8],
+          "win_lengths": [2048, 1024, 512, 256, 128, 64, 32],
+          "perceptual_weighting": true
+        },
+        "weights": {
+          "mrstft": 1.0
+        }
+      },
+      "time": {
+        "type": "l1",
+        "weights": {
+          "l1": 0.0
+        }
+      }
+    },
+    "optimizer_configs": {
+      "autoencoder": {
+        "optimizer": {
+          "type": "AdamW",
+          "config": {
+            "betas": [0.9, 0.999],
+            "lr": 0.0001,
+            "weight_decay": 0.0
+          }
+        }
+      },
+      "discriminator": {
+        "optimizer": {
+          "type": "AdamW",
+          "config": {
+            "betas": [0.9, 0.999],
+            "lr": 0.0001,
+            "weight_decay": 0.0
+          }
+        }
+      }
+    }
+  }
+}
