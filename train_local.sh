@@ -9,16 +9,15 @@ fi
 WANDB_PROJECT=$1
 WANDB_RUN_NAME=$2
 
-BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# MODEL_CONFIG=${BASE_DIR}/stable_audio_tools/configs/model_configs/test/FSQ_config.json
-MODEL_CONFIG=${BASE_DIR}/stable_audio_tools/configs/model_configs/test/ditheredFSQ_config.json
-DATA_DIR=/itet-stor/feigao/disco-computing/music_datasets/jamendo/raw_30s
-INPUT_AUDIO=/itet-stor/feigao/home/stable-audio-tools/test_folder/test.mp3
-OUTPUT_DIR=${BASE_DIR}/outputs/${WANDB_PROJECT}/${WANDB_RUN_NAME}
+BASE_DIR=/home/askrbayern/Projects/audio-compression/stable-audio-tools-fsq
+MODEL_CONFIG=${BASE_DIR}/stable_audio_tools/configs/model_configs/test/RVQ_config.json
+DATA_DIR=/home/askrbayern/Projects/audio-compression/7-stable-audio/train_folder/
+INPUT_AUDIO=${BASE_DIR}/test_folder/test.mp3
+OUTPUT_DIR=${BASE_DIR}/test_folder
 
-BATCH_SIZE=8
+BATCH_SIZE=1
 NUM_WORKERS=6
-MAX_EPOCHS=50
+MAX_EPOCHS=10
 
 echo "Model config: $MODEL_CONFIG"
 echo "Project: $WANDB_PROJECT"

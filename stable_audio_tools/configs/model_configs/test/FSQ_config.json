@@ -44,6 +44,16 @@
     "batch_size": 8,
     "use_ema": true,
     "loss_configs": {
+      "discriminator": {
+        "type": "oobleck",
+        "config": {
+          "in_channels": 2
+        },
+        "weights": {
+          "adversarial": 0.1,
+          "feature_matching": 5.0
+        }
+      },
       "spectral": {
         "type": "mrstft",
         "config": {

@@ -8,6 +8,7 @@ import torch
 import torchaudio
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from stable_audio_tools.data.dataset import create_dataloader_from_config
 from stable_audio_tools.models import create_model_from_config
@@ -44,9 +45,24 @@ def recon(autoencoder, input_path: str, output_path: str, device: torch.device, 
     y = y.clamp(-1, 1).cpu()
     save_audio(y, output_path, sample_rate)
 
+class EpochReconCallback(pl.Callback):
+    def __init__(self, input_audio_path: str, output_dir: str, sample_rate: int, device: torch.device):
+        self.input_audio_path = input_audio_path
+        self.output_dir = output_dir
+        self.sample_rate = sample_rate
+        self.device = device
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+    
+    def on_train_epoch_end(self, trainer, pl_module):
+        epoch = trainer.current_epoch + 1  # 1-indexed
+        output_path = os.path.join(self.output_dir, f"post_output_epoch_{epoch}.mp3")
+        recon(pl_module.autoencoder, self.input_audio_path, output_path, self.device, self.sample_rate)
+
 def main():
     parser = argparse.ArgumentParser(
-        description="First recon, then train 50 epochs, then recon again"
+        description="Train with checkpoints and reconstruction after each epoch"
     )
     parser.add_argument("--model-config",     required=True,
                         help="Model configuration JSON with dithered_fsq + lm_config")
@@ -54,20 +70,21 @@ def main():
                         help="Training data directory (audio_dir format)")
     parser.add_argument("--input-audio",      required=True,
                         help="Input audio file path for reconstruction")
-    # parser.add_argument("--pre-output",       required=True,
-    #                     help="Pre-training reconstruction output path")
-    parser.add_argument("--post-output",      required=True,
-                        help="Post-training reconstruction output path after 50 epochs")
+    parser.add_argument("--output-dir",       required=True,
+                        help="Directory to save reconstruction outputs and checkpoints")
     parser.add_argument("--batch-size",   type=int, default=8)
     parser.add_argument("--num-workers",  type=int, default=6)
     parser.add_argument("--max-epochs",   type=int, default=50)
     parser.add_argument("--precision",    type=str, default="16-mixed")
     parser.add_argument("--accelerator",  type=str, default="auto")
     parser.add_argument("--devices",      type=int, default=1)
-    parser.add_argument("--wandb_project", type=str, default="stable_audio_tools", help="Weights & Biases project name")
-    parser.add_argument("--wandb_run_name", type=str, default=None, help="Weights & Biases run name")
+    parser.add_argument("--wandb-project", type=str, default="stable_audio_tools", help="Weights & Biases project name")
+    parser.add_argument("--wandb-run-name", type=str, default=None, help="Weights & Biases run name")
     args = parser.parse_args()
 
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+    
     # 1. Load config
     with open(args.model_config) as f:
         model_cfg = json.load(f)
@@ -100,8 +117,24 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.devices>0 else "cpu")
 
-    # 5. Pre-training reconstruction
-    recon(wrapper.autoencoder, args.input_audio, args.post_output, device, sample_rate)
+    # 5. Setup callbacks
+    # Checkpoint callback - save only the best performing checkpoints
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=os.path.join(args.output_dir, "checkpoints"),
+        filename="best_checkpoint",
+        monitor="train/loss",
+        mode="min",
+        save_top_k=3,
+        save_last=True
+    )
+    
+    # Reconstruction callback - recon after every epoch
+    recon_callback = EpochReconCallback(
+        input_audio_path=args.input_audio,
+        output_dir=args.output_dir,
+        sample_rate=sample_rate,
+        device=device
+    )
 
     # 6. Training
     trainer = pl.Trainer(
@@ -111,11 +144,13 @@ def main():
         max_epochs=args.max_epochs,
         log_every_n_steps=50,
         logger=wandb_logger,
+        callbacks=[checkpoint_callback, recon_callback]
     )
     trainer.fit(wrapper, train_dl)
 
-    # 7. Post-training reconstruction
-    recon(wrapper.autoencoder, args.input_audio, args.post_output, device, sample_rate)
+    # 7. Final reconstruction (optional, since we already have one from last epoch)
+    final_output = os.path.join(args.output_dir, "post_output_final.mp3")
+    recon(wrapper.autoencoder, args.input_audio, final_output, device, sample_rate)
 
 if __name__ == "__main__":
     main()
