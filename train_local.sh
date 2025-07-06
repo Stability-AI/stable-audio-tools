@@ -15,7 +15,7 @@ DATA_DIR=/home/askrbayern/Projects/audio-compression/7-stable-audio/train_folder
 INPUT_AUDIO=${BASE_DIR}/test_folder/test.mp3
 OUTPUT_DIR=${BASE_DIR}/test_folder
 
-BATCH_SIZE=1
+BATCH_SIZE=4
 NUM_WORKERS=6
 MAX_EPOCHS=10
 

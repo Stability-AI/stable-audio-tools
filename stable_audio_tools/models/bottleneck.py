@@ -482,3 +482,64 @@ class DitheredFSQBottleneck(DiscreteBottleneck):
         latents = self.quantizer.indices_to_codes(tokens)
 
         return self.decode(latents, **kwargs)
+
+    
+class DitheredFSQNoTanhBottleneck(DiscreteBottleneck):
+    def __init__(self,
+        dim, levels, num_codebooks = 1, dither_inference = True,
+        noise_dropout: float = 0.05,
+    ):
+        from .fsq import DitheredFSQ
+
+        # Determine codebook size and levels configuration based on the type of 'levels'
+        if isinstance(levels, int):
+            codebook_size = levels ** dim
+            quantizer_levels = [levels] * dim
+
+        elif isinstance(levels, list):
+            if len(levels) != dim:
+                raise ValueError(f"Length of levels list ({len(levels)}) must match dim ({dim}).")
+            codebook_size = 1
+            for level in levels:
+                codebook_size *= level
+            quantizer_levels = levels
+        else:
+            raise TypeError("Levels must be either an int or a list of ints.")
+
+        # Initialize parent class with the determined codebook size
+        super().__init__(
+            num_quantizers=num_codebooks, codebook_size=codebook_size,
+            tokens_id="quantizer_indices"
+        )
+
+        # Initialize the quantizer with the correct levels
+        self.quantizer = DitheredFSQ(
+            levels=quantizer_levels, dither_inference=dither_inference,
+            num_codebooks=num_codebooks, noise_dropout=noise_dropout
+        )
+
+    def norm_std_loss(self, x):
+        return (x.std() - 1.0) ** 2
+
+    def encode(self, x, return_info=False):
+        info = {}
+
+        x = rearrange(x, "b c n -> b n c")
+        x, indices = self.quantizer(x, skip_tanh=True)
+        x = rearrange(x, "b n c -> b c n")
+
+        info["quantizer_indices"] = indices
+        
+
+        if return_info:
+            return x, info
+        else:
+            return x
+        
+    def decode(self, x):
+        return x
+    
+    def decode_tokens(self, tokens, **kwargs):
+        latents = self.quantizer.indices_to_codes(tokens)
+
+        return self.decode(latents, **kwargs)

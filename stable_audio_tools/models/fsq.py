@@ -62,7 +62,10 @@ class DitheredFSQ(Module):
         self.noise_dropout = noise_dropout
 
     def quantize(self, z, skip_tanh: bool = False):
-        if not skip_tanh: z = torch.tanh(z)
+        if not skip_tanh: 
+            z = torch.tanh(z)
+        else:
+            z = leaky_hard_clip(z / self.scale, alpha=1e-3) * self.scale
 
         if not self.training:
             quantized = self._scale_and_shift_inverse(round_ste(self._scale_and_shift(z)))

@@ -45,6 +45,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
             force_input_mono = False,
             latent_mask_ratio = 0.0,
             teacher_model: Optional[AudioAutoencoder] = None,
+            lm_config: Optional[dict] = None,
+            lm_weight: float = 1.0,
             clip_grad_norm = 0.0
     ):
         super().__init__()
@@ -62,6 +64,14 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         self.force_input_mono = force_input_mono
 
         self.teacher_model = teacher_model
+
+        # language model
+        self.lm = None
+        self.lm_weight = lm_weight
+        if lm_config is not None:
+            from ..models.lm_continuous import LaplaceLanguageModel
+            self.lm = LaplaceLanguageModel(self.autoencoder.latent_dim, lm_config)
+            self.lm_config = lm_config
 
         if optimizer_configs is None:
             optimizer_configs ={
@@ -287,11 +297,15 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         if self.use_disc:
             opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], gen_params)
             opt_disc = create_optimizer_from_config(self.optimizer_configs['discriminator']['optimizer'], self.discriminator.parameters())
+            opts = [opt_gen, opt_disc]
+            if self.lm is not None:
+                opt_lm = create_optimizer_from_config(self.lm.optimizer_cfg, self.lm.parameters())
+                opts.append(opt_lm)
             if "scheduler" in self.optimizer_configs['autoencoder'] and "scheduler" in self.optimizer_configs['discriminator']:
                 sched_gen = create_scheduler_from_config(self.optimizer_configs['autoencoder']['scheduler'], opt_gen)
                 sched_disc = create_scheduler_from_config(self.optimizer_configs['discriminator']['scheduler'], opt_disc)
-                return [opt_gen, opt_disc], [sched_gen, sched_disc]
-            return [opt_gen, opt_disc]
+                return opts, [sched_gen, sched_disc]
+            return opts
         else:
             opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], gen_params)
             if "scheduler" in self.optimizer_configs['autoencoder']:
@@ -457,7 +471,8 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         opt_disc = None
 
         if self.use_disc:
-            opt_gen, opt_disc = self.optimizers()
+            opt_gen, opt_disc, *rest = self.optimizers()
+            opt_lm = rest[0] if len(rest) > 0 else None
         else:
             opt_gen = self.optimizers()
 
@@ -501,14 +516,27 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
             loss, losses = self.losses_gen(loss_info)
 
+            if self.lm is not None:
+                mu, log_b = self.lm(latents) # [B,C,T]
+                b = log_b.exp().clamp(min=1e-6)
+                # nll = |x - mu| / b + log(2b)
+                nll = (latents - mu).abs().div(b) + torch.log(2*b)
+                lm_loss = nll.mean() * self.lm_weight
+                loss += lm_loss
+                log_dict['train/lm_loss'] = lm_loss.detach().item()
+
             if self.use_ema:
                 self.autoencoder_ema.update()
 
             opt_gen.zero_grad()
+            if self.lm is not None: # empty grads for LM
+                opt_lm.zero_grad()
             self.manual_backward(loss)
             if self.clip_grad_norm > 0.0:
                 torch.nn.utils.clip_grad_norm_(self.autoencoder.parameters(), self.clip_grad_norm)
             opt_gen.step()
+            if self.lm is not None: # step LM opt
+                opt_lm.step()
 
             if sched_gen is not None:
                 # scheduler step every step
