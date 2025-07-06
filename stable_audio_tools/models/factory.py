@@ -153,6 +153,9 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == "dithered_fsq_no_tanh":
         from .bottleneck import DitheredFSQNoTanhBottleneck
         return DitheredFSQNoTanhBottleneck(**bottleneck_config["config"])
+    elif bottleneck_type == "round_fsq":
+        from .bottleneck import RoundBottleneck
+        return RoundBottleneck(**bottleneck_config["config"])
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')
     

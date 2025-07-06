@@ -6,6 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from einops import rearrange
+from .round_fsq import round_ste
 
 class Bottleneck(nn.Module):
     def __init__(self, is_discrete: bool = False):
@@ -31,6 +32,31 @@ class DiscreteBottleneck(Bottleneck):
         raise NotImplementedError
 
 
+class RoundBottleneck(Bottleneck):
+    """
+    only STE round, no clamp, no codebook
+    return float integer latents (optionally to Laplace LM)
+    """
+    def __init__(self, latent_dim: int = 32, dither: bool = False):
+        super().__init__(is_discrete=False)
+        self.latent_dim = latent_dim
+        self.dither = dither
+
+    def encode(self, x, return_info=False, **kwargs):
+        # x: [B, C, T]
+        assert x.shape[1] == self.latent_dim, f"Expected channels={self.latent_dim}, got {x.shape[1]}"
+
+        if self.dither:
+            x = x + (torch.rand_like(x) - 0.5)
+
+        q = round_ste(x)          # forward round, gradient pass
+        if return_info:
+            return q, {}          # no tokens in info
+        return q
+
+    def decode(self, x):
+        return x
+    
 class SoftNormBottleneck(Bottleneck):
     def __init__(self, dim = 32, noise_augment_dim=0, noise_regularize = False):
         super().__init__(is_discrete=False)
@@ -482,7 +508,6 @@ class DitheredFSQBottleneck(DiscreteBottleneck):
         latents = self.quantizer.indices_to_codes(tokens)
 
         return self.decode(latents, **kwargs)
-
     
 class DitheredFSQNoTanhBottleneck(DiscreteBottleneck):
     def __init__(self,

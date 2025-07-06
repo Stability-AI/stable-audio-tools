@@ -38,7 +38,7 @@ class RoundFSQ(Module):
     @autocast(device_type="cuda", enabled = False)
     def forward(self, z, skip_tanh: bool = False):
         # z: [B, N, T]
-        assert z.shape[-1] == self.dim, f"Expected last dim={self.dim}, got {z.shape[-1]}"
+        assert z.shape[-1] == self.latent_dim, f"Expected last dim={self.latent_dim}, got {z.shape[-1]}"
         q = self.quantize(z)
         indices = q.to(torch.int64)
         return q, indices
