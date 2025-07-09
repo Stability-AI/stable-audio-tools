@@ -74,7 +74,7 @@
         }
       }
     },
-    "lm_weight": 1.0
+    "lm_weight": 0.01
   },
   "training": {
     "learning_rate": 0.0001,

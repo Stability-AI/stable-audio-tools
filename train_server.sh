@@ -40,10 +40,10 @@ INPUT_AUDIO=/itet-stor/feigao/home/stable-audio-tools/test_folder/test.mp3
 OUTPUT_DIR=${BASE_DIR}/outputs/${WANDB_PROJECT}/${WANDB_RUN_NAME}
 CHECKPOINT_PATH=${OUTPUT_DIR}/checkpoints/best_checkpoint.ckpt
 
-NUM_GPUS=6
+NUM_GPUS=2
 BATCH_SIZE=2
 NUM_WORKERS=6
-MAX_EPOCHS=40
+MAX_EPOCHS=16
 
 echo "Model config: $MODEL_CONFIG"
 echo "Lambda (lm_weight): $LAMBDA"

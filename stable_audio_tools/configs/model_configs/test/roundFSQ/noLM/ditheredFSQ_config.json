@@ -57,7 +57,7 @@
     "latent_dim": 32,
     "downsampling_ratio": 128,
     "io_channels": 2,
-    "lm_weight": 0
+    "lm_weight": 0.0
   },
   "training": {
     "learning_rate": 0.0001,
