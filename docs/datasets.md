@@ -45,7 +45,9 @@ To load audio files and related metadata from .tar files in the WebDataset forma
 ## Pre Encoded Datasets
 To use pre encoded latents created with the [pre encoding script](pre_encoding.md), set the `dataset_type` property to `"pre_encoded"`, and provide the path to the directory containing the pre encoded `.npy` latent files and corresponding `.json` metadata files.
 
-You can optionally specify `latent_crop_length` to crop the pre encoded latents to a specific length in latent units (latent length = `audio_samples // 2048`). If not specified, uses the full pre encoded length. The `random_crop` option works similarly to other dataset types, randomly cropping from the pre encoded sequence while taking padding into account.
+You can optionally specify a `latent_crop_length` in latent units (latent length = `audio_samples // 2048`) to crop the pre encoded latents to a smaller length than you encoded to. If not specified, uses the full pre encoded length. When `random_crop` is set to true, it will randomly crop from the sequence at your desired `latent_crop_length` while taking padding into account.
+
+**Note**: `random_crop` does not currently update `seconds_start`, so it will be inaccurate when used with models with that condition (e.g. `stable-audio-open-1.0`), but can be used with models that do not use `seconds_start` (e.g. `stable-audio-open-small`).
 
 ### Example config
 ```json
@@ -55,7 +57,7 @@ You can optionally specify `latent_crop_length` to crop the pre encoded latents 
         {
             "id": "my_pre_encoded_audio",
             "path": "/path/to/pre_encoded/output/",
-            "latent_crop_length": 1024,
+            "latent_crop_length": 512,
             "custom_metadata_module": "/path/to/custom_metadata.py"
         }
     ],

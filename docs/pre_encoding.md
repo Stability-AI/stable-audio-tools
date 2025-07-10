@@ -6,7 +6,7 @@ When training models on encoded latents from a frozen pre-trained autoencoder, t
 
 To pre-encode audio to latents, you'll need a dataset config file, an autoencoder model config file, and an **unwrapped** autoencoder checkpoint file.
 
-**Note:** You can find a copy of the unwrapped VAE checkpoint (`vae_model.ckpt`) and config (`vae_config.json`) in the `stabilityai/stable-audio-open-1.0` Hugging Face [repo](https://huggingface.co/stabilityai/stable-audio-open-1.0). This is the same VAE used in both `stable-audio-open-1.0` and [`stable-audio-open-small`].
+**Note:** You can find a copy of the unwrapped VAE checkpoint (`vae_model.ckpt`) and config (`vae_config.json`) in the `stabilityai/stable-audio-open-1.0` Hugging Face [repo](https://huggingface.co/stabilityai/stable-audio-open-1.0). This is the same VAE used in  `stable-audio-open-small`.
 
 ## Run the Pre Encoding Script
 
@@ -85,7 +85,7 @@ Inside the numbered subdirectories, you will find the encoded latents as `.npy` 
 
 ## Training on Pre Encoded Latents
 
-Once you have saved your latents to disk, you can use them to train a model by providing a dataset config file to `train.py` that points to the pre-encoded latents, specifying `"dataset_type"` is `"pre_encoded"`. Under the hood, this will configure a `stable_audio_tools.data.dataset.PreEncodedDataset`.
+Once you have saved your latents to disk, you can use them to train a model by providing a dataset config file to `train.py` that points to the pre-encoded latents, specifying `"dataset_type"` is `"pre_encoded"`. Under the hood, this will configure a `stable_audio_tools.data.dataset.PreEncodedDataset`. For more information on configuring pre encoded datasets, see the [Pre Encoded Datasets](datasets.md#pre-encoded-datasets) section of the datasets docs.
 
 The dataset config file should look something like this:
 
@@ -95,22 +95,18 @@ The dataset config file should look something like this:
     "datasets": [
         {
             "id": "my_audio",
-            "path": "/path/to/output/dir",
-            "latent_crop_length": 645
+            "path": "/path/to/output/dir"
         }
     ],
     "random_crop": false
 }
 ```
 
-In your associated txt2audio model config file, you'll also need to specify `pre_encoded: true` in the `training` section to tell the training wrapper to operate on pre encoded latents instead of audio.
+In your diffusion model config, you'll also need to specify `pre_encoded: true` in the [`training` section](diffusion.md#training-configs) to tell the training wrapper to operate on pre encoded latents instead of audio.
 
-```
-    "training": {
-        "pre_encoded": true,
+```json
+"training": {
+    "pre_encoded": true,
     ...
+}
 ```
-
-**Note:** The autoencoder downsampling ratio is 2048:1, meaning the latent length is `audio_samples // 2048`. It is recommended to ensure your `--sample-size` is divisible by 2048. For reference, SAO Small uses a latent length of 256, while SAO 1.0 uses 1024.
-
-For detailed information on configuring pre encoded datasets, see the [Pre Encoded Datasets](datasets.md#pre-encoded-datasets) section in the datasets documentation.
