@@ -47,7 +47,7 @@ To use pre encoded latents created with the [pre encoding script](pre_encoding.m
 
 You can optionally specify a `latent_crop_length` in latent units (latent length = `audio_samples // 2048`) to crop the pre encoded latents to a smaller length than you encoded to. If not specified, uses the full pre encoded length. When `random_crop` is set to true, it will randomly crop from the sequence at your desired `latent_crop_length` while taking padding into account.
 
-**Note**: `random_crop` does not currently update `seconds_start`, so it will be inaccurate when used with models with that condition (e.g. `stable-audio-open-1.0`), but can be used with models that do not use `seconds_start` (e.g. `stable-audio-open-small`).
+**Note**: `random_crop` does not currently update `seconds_start`, so it will be inaccurate when used to train or fine-tune models with that condition (e.g. `stable-audio-open-1.0`), but can be used with models that do not use `seconds_start` (e.g. `stable-audio-open-small`).
 
 ### Example config
 ```json
