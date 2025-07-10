@@ -61,6 +61,10 @@ The `training` config in the diffusion model config file should have the followi
     - Optional, overrides `learning_rate`
 - `demo`
     - Configuration for the demos during training, including conditioning information
+- `pre_encoded`
+    - If true, indicates that the model should operate on [pre encoded latents](pre_encoding.md) instead of raw audio
+    - Required when training with [pre encoded datasets](datasets.md#pre-encoded-datasets)
+    - Optional. Default: `false`
 
 ## Example config
 ```json

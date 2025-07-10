@@ -6,6 +6,8 @@ When training models on encoded latents from a frozen pre-trained autoencoder, t
 
 To pre-encode audio to latents, you'll need a dataset config file, an autoencoder model config file, and an **unwrapped** autoencoder checkpoint file.
 
+**Note:** You can find a copy of the unwrapped VAE checkpoint (`vae_model.ckpt`) and config (`vae_config.json`) in the `stabilityai/stable-audio-open-1.0` Hugging Face [repo](https://huggingface.co/stabilityai/stable-audio-open-1.0). This is the same VAE used in both `stable-audio-open-1.0` and [`stable-audio-open-small`].
+
 ## Run the Pre Encoding Script
 
 To pre-encode latents from an autoencoder model, you can use `pre_encode.py`. This script will load a pre-trained autoencoder, encode the latents/tokens, and save them to disk in a format that can be easily loaded during training.
@@ -49,6 +51,8 @@ The `pre_encode.py` script accepts the following command line arguments:
 - `--shuffle`
   - If true, shuffles the dataset
   - Optional
+
+**Note:** When pre encoding, it's recommended to set `"drop_last": false` in your dataset config to ensure the last batch is processed even if it's not full.
 
 For example, if you wanted to encode latents with padding up to 30 seconds long in half precision, you could run the following:
 
@@ -106,3 +110,7 @@ In your associated txt2audio model config file, you'll also need to specify `pre
         "pre_encoded": true,
     ...
 ```
+
+**Note:** The autoencoder downsampling ratio is 2048:1, meaning the latent length is `audio_samples // 2048`. It is recommended to ensure your `--sample-size` is divisible by 2048. For reference, SAO Small uses a latent length of 256, while SAO 1.0 uses 1024.
+
+For detailed information on configuring pre encoded datasets, see the [Pre Encoded Datasets](datasets.md#pre-encoded-datasets) section in the datasets documentation.
