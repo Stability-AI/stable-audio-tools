@@ -98,3 +98,11 @@ The dataset config file should look something like this:
     "random_crop": false
 }
 ```
+
+In your associated txt2audio model config file, you'll also need to specify `pre_encoded: true` in the `training` section to tell the training wrapper to operate on pre encoded latents instead of audio.
+
+```
+    "training": {
+        "pre_encoded": true,
+    ...
+```
