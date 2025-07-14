@@ -42,6 +42,31 @@ To load audio files and related metadata from .tar files in the WebDataset forma
 }
 ```
 
+## Pre Encoded Datasets
+To use pre encoded latents created with the [pre encoding script](pre_encoding.md), set the `dataset_type` property to `"pre_encoded"`, and provide the path to the directory containing the pre encoded `.npy` latent files and corresponding `.json` metadata files.
+
+You can optionally specify a `latent_crop_length` in latent units (latent length = `audio_samples // 2048`) to crop the pre encoded latents to a smaller length than you encoded to. If not specified, uses the full pre encoded length. When `random_crop` is set to true, it will randomly crop from the sequence at your desired `latent_crop_length` while taking padding into account.
+
+**Note**: `random_crop` does not currently update `seconds_start`, so it will be inaccurate when used to train or fine-tune models with that condition (e.g. `stable-audio-open-1.0`), but can be used with models that do not use `seconds_start` (e.g. `stable-audio-open-small`).
+
+### Example config
+```json
+{
+    "dataset_type": "pre_encoded",
+    "datasets": [
+        {
+            "id": "my_pre_encoded_audio",
+            "path": "/path/to/pre_encoded/output/",
+            "latent_crop_length": 512,
+            "custom_metadata_module": "/path/to/custom_metadata.py"
+        }
+    ],
+    "random_crop": true
+}
+```
+
+For information on creating pre encoded datasets, see [Pre Encoding](pre_encoding.md).
+
 # Custom metadata
 To customize the metadata provided to the conditioners during model training, you can provide a separate custom metadata module to the dataset config. This metadata module should be a Python file that must contain a function called `get_custom_metadata` that takes in two parameters, `info`, and `audio`, and returns a dictionary. 
 

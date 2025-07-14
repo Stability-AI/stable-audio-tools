@@ -6,6 +6,8 @@ When training models on encoded latents from a frozen pre-trained autoencoder, t
 
 To pre-encode audio to latents, you'll need a dataset config file, an autoencoder model config file, and an **unwrapped** autoencoder checkpoint file.
 
+**Note:** You can find a copy of the unwrapped VAE checkpoint (`vae_model.ckpt`) and config (`vae_config.json`) in the `stabilityai/stable-audio-open-1.0` Hugging Face [repo](https://huggingface.co/stabilityai/stable-audio-open-1.0). This is the same VAE used in  `stable-audio-open-small`.
+
 ## Run the Pre Encoding Script
 
 To pre-encode latents from an autoencoder model, you can use `pre_encode.py`. This script will load a pre-trained autoencoder, encode the latents/tokens, and save them to disk in a format that can be easily loaded during training.
@@ -50,6 +52,8 @@ The `pre_encode.py` script accepts the following command line arguments:
   - If true, shuffles the dataset
   - Optional
 
+**Note:** When pre encoding, it's recommended to set `"drop_last": false` in your dataset config to ensure the last batch is processed even if it's not full.
+
 For example, if you wanted to encode latents with padding up to 30 seconds long in half precision, you could run the following:
 
 ```bash
@@ -81,7 +85,7 @@ Inside the numbered subdirectories, you will find the encoded latents as `.npy` 
 
 ## Training on Pre Encoded Latents
 
-Once you have saved your latents to disk, you can use them to train a model by providing a dataset config file to `train.py` that points to the pre-encoded latents, specifying `"dataset_type"` is `"pre_encoded"`. Under the hood, this will configure a `stable_audio_tools.data.dataset.PreEncodedDataset`.
+Once you have saved your latents to disk, you can use them to train a model by providing a dataset config file to `train.py` that points to the pre-encoded latents, specifying `"dataset_type"` is `"pre_encoded"`. Under the hood, this will configure a `stable_audio_tools.data.dataset.PreEncodedDataset`. For more information on configuring pre encoded datasets, see the [Pre Encoded Datasets](datasets.md#pre-encoded-datasets) section of the datasets docs.
 
 The dataset config file should look something like this:
 
@@ -91,10 +95,18 @@ The dataset config file should look something like this:
     "datasets": [
         {
             "id": "my_audio",
-            "path": "/path/to/output/dir",
-            "latent_crop_length": 645
+            "path": "/path/to/output/dir"
         }
     ],
     "random_crop": false
+}
+```
+
+In your diffusion model config, you'll also need to specify `pre_encoded: true` in the [`training` section](diffusion.md#training-configs) to tell the training wrapper to operate on pre encoded latents instead of audio.
+
+```json
+"training": {
+    "pre_encoded": true,
+    ...
 }
 ```
