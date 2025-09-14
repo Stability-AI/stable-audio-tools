@@ -283,7 +283,7 @@ class PreEncodedDataset(torch.utils.data.Dataset):
         for config in configs:
             self.filenames.extend(get_latent_filenames(config.path, [latent_extension]))
             if config.custom_metadata_fn is not None:
-                self.custom_metadata_fns[config.path] = config.custom_metadata_fn
+                self.custom_metadata_fns[config.path] = dill.dumps(config.custom_metadata_fn)
 
         self.latent_crop_length = latent_crop_length
         self.random_crop = random_crop
@@ -340,8 +340,9 @@ class PreEncodedDataset(torch.utils.data.Dataset):
 
             for custom_md_path in self.custom_metadata_fns.keys():
                 if custom_md_path in latent_filename:
-                    custom_metadata_fn = self.custom_metadata_fns[custom_md_path]
-                    custom_metadata = custom_metadata_fn(info, None)
+
+                    custom_metadata_fn_deserialized = dill.loads(self.custom_metadata_fns[custom_md_path])
+                    custom_metadata = custom_metadata_fn_deserialized(info, None)
                     info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
