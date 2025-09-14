@@ -1,3 +1,4 @@
+import dill
 import importlib
 import numpy as np
 import io
@@ -19,7 +20,7 @@ from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T, VolumeNorm
 
-AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
+AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus", "aiff", "aif")
 
 # fast_scandir implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
 
@@ -94,7 +95,7 @@ def keyword_scandir(
 def get_audio_filenames(
     paths: list,  # directories in which to search
     keywords=None,
-    exts=['.wav', '.mp3', '.flac', '.ogg', '.aif', '.opus']
+    exts=['.wav', '.mp3', '.flac', '.ogg', '.aif', '.opus', '.aif', '.aiff']
 ):
     "recursively get a list of audio filenames"
     filenames = []
@@ -178,7 +179,7 @@ class SampleDataset(torch.utils.data.Dataset):
             self.root_paths.append(config.path)
             self.filenames.extend(get_audio_filenames(config.path, keywords))
             if config.custom_metadata_fn is not None:
-                self.custom_metadata_fns[config.path] = config.custom_metadata_fn
+                self.custom_metadata_fns[config.path] = dill.dumps(config.custom_metadata_fn)
 
         print(f'Found {len(self.filenames)} files')
 
@@ -238,8 +239,8 @@ class SampleDataset(torch.utils.data.Dataset):
 
             for custom_md_path in self.custom_metadata_fns.keys():
                 if custom_md_path in audio_filename:
-                    custom_metadata_fn = self.custom_metadata_fns[custom_md_path]
-                    custom_metadata = custom_metadata_fn(info, audio)
+                    custom_metadata_fn_deserialized = dill.loads(self.custom_metadata_fns[custom_md_path])
+                    custom_metadata = custom_metadata_fn_deserialized(info, audio)
                     info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
