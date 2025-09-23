@@ -162,3 +162,7 @@ cython_debug/
 *.ckpt
 *.wav
 wandb/*
+
+# Dataset folders and outputs
+/rawfiles
+/outputs
