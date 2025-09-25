@@ -2,7 +2,7 @@
 I did all of this on a ROG Z13 ACRNM with a mobile 4070 GPU with 8 GiB of VRAM, or an Eluktronics Mech-17 GP2 with a mobile 4090 GPU with 16 GiB of VRAM. I did everything with Python 3.11.9 and CUDA 12.9 on Windows 11 Pro. Ymmv.
 
 ## Raw files for your training dataset
-* `/rawfiles` is what the example scripts and config files will use.
+* `/rawfiles` is what the example scripts and config files will use for finding raw audio files to pre-encode and use for training the model. You can change this and use another directory if you wish.
 * Everything will automatically be converted to a 44100 Hz sampling rate using `torchaudio`. You can perform your own SRC (sample rate conversion) ahead of time if you wish.
 * The SAO-small model can handle up to about 11.89 seconds of audio. If your files are longer than this, they will be implicitly truncated. If your files are shorter than this, they will be padded to fit.
 * The full SAO-1.0 model can handle up to about 47.55 seconds of audio. If your files are longer than this, they will be implicitly truncated. If your files are shorter than this, they will be padded to fit.
