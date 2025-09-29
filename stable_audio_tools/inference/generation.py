@@ -1,3 +1,6 @@
+# Copyright (c) 2023 Stability AI
+# Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+
 import numpy as np
 import torch 
 import typing as tp
@@ -236,6 +239,7 @@ def generate_diffusion_cond_inpaint(
         inpaint_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
         inpaint_mask = None,
         return_latents = False,
+        chunk_size = 128,
         **sampler_kwargs
         ) -> torch.Tensor: 
     """
@@ -399,8 +403,7 @@ def generate_diffusion_cond_inpaint(
     if model.pretransform is not None and not return_latents:
         #cast sampled latents to pretransform dtype
         sampled = sampled.to(next(model.pretransform.parameters()).dtype)
-        sampled = model.pretransform.decode(sampled)
-
+        sampled = model.pretransform.decode(sampled, chunk_size)
     # Return audio
     return sampled
 
