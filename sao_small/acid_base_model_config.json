@@ -1,0 +1,131 @@
+{
+    "model_type": "diffusion_cond",
+    "sample_size": 352800,
+    "sample_rate": 44100,
+    "audio_channels": 2,
+    "model": {
+        "pretransform": {
+            "type": "autoencoder",
+            "iterate_batch": false,
+            "model_half": true,
+            "config": {
+                "encoder": {
+                    "type": "oobleck",
+                    "requires_grad": false,
+                    "config": {
+                        "in_channels": 2,
+                        "channels": 128,
+                        "c_mults": [1, 2, 4, 8, 16],
+                        "strides": [2, 4, 4, 8, 8],
+                        "latent_dim": 128,
+                        "use_snake": true
+                    }
+                },
+                "decoder": {
+                    "type": "oobleck",
+                    "config": {
+                        "out_channels": 2,
+                        "channels": 128,
+                        "c_mults": [1, 2, 4, 8, 16],
+                        "strides": [2, 4, 4, 8, 8],
+                        "latent_dim": 64,
+                        "use_snake": true,
+                        "final_tanh": false
+                    }
+                },
+                "bottleneck": {
+                    "type": "vae"
+                },
+                "latent_dim": 64,
+                "downsampling_ratio": 2048,
+                "io_channels": 2
+            }
+        },
+        "conditioning": {
+            "configs": [
+                {
+                    "id": "prompt",
+                    "type": "t5",
+                    "config": {
+                        "t5_model_name": "t5-base",
+                        "max_length": 64
+                    }
+                },
+                {
+                    "id": "seconds_total",
+                    "type": "number",
+                    "config": {
+                        "min_val": 0,
+                        "max_val": 256
+                    }
+                }
+            ],
+            "cond_dim": 768
+        },
+        "diffusion": {
+            "cross_attention_cond_ids": ["prompt", "seconds_total"],
+            "global_cond_ids": ["seconds_total"],
+            "diffusion_objective": "rectified_flow",
+            "distribution_shift_options": {
+                "min_length": 256,
+                "max_length": 4096
+            },
+            "type": "dit",
+            "config": {
+                "io_channels": 64,
+                "embed_dim": 1024,
+                "depth": 16,
+                "num_heads": 8,
+                "cond_token_dim": 768,
+                "global_cond_dim": 768,
+                "transformer_type": "continuous_transformer",
+                "attn_kwargs": {
+                    "qk_norm": "ln"
+                }
+            }
+        },
+        "io_channels": 64
+    },
+    "training": {
+        "use_ema": true,
+        "log_loss_info": false,
+        "pre_encoded": true,
+        "timestep_sampler": "trunc_logit_normal",
+        "optimizer_configs": {
+            "diffusion": {
+                "optimizer": {
+                    "type": "AdamW8bit",
+                    "config": {
+                        "lr": 2e-4,
+                        "betas": [0.8, 0.95],
+                        "eps": 1e-8,
+                        "weight_decay": 0.01
+                    }
+                },
+                "scheduler": {
+                    "type": "InverseLR",
+                    "config": {
+                        "inv_gamma": 1000000,
+                        "power": 0.5,
+                        "warmup": 0.995
+                    }
+                }
+            }
+        },
+        "demo": {
+            "demo_every": 500,
+            "demo_steps": 100,
+            "num_demos": 7,
+            "demo_cond": [
+                {"prompt": "drum breaks 174 BPM", "seconds_total": 6},
+                {"prompt": "A short, beautiful piano riff in C minor", "seconds_total": 6},
+                {"prompt": "Tight Snare Drum", "seconds_total": 1},
+                {"prompt": "Glitchy bass design, I used Serum for this", "seconds_total": 4},
+                {"prompt": "Synth pluck arp with reverb and delay, 128 BPM", "seconds_total": 6},
+                {"prompt": "Acid A minor 120 BPM 4/4 4 bar loop", "seconds_total": 8},
+                {"prompt": "Electronic, with a synthesized, futuristic tone. It has a steady, rhythmic pattern and a slightly retro, 1980s-inspired sound. The bass is prominent, giving the track a pulsing, driving feel. The music sets a mood that is upbeat, energetic, and slightly playful. It suggests a setting that could be related to technology, gaming, or a lighthearted, futuristic scenario.", "seconds_total": 8}
+            ],
+            "demo_cfg_scales": [0.5, 1, 4, 8]
+        }
+    }
+}

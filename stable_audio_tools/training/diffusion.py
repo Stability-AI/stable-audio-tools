@@ -10,6 +10,7 @@ from ema_pytorch import EMA
 from einops import rearrange
 from safetensors.torch import save_file
 from torch import optim
+import bitsandbytes as bnb
 from torch.nn import functional as F
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
@@ -80,7 +81,9 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         self.pre_encoded = pre_encoded
 
     def configure_optimizers(self):
-        return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
+        #return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
+        #return bnb.optim.Adam(model.parameters(), lr=self.lr, betas=(0.9, 0.995), optim_bits=32, percentile_clipping=5) [*self.diffusion.parameters()]
+        return bnb.optim.AdamW8bit([*self.diffusion.parameters()], lr=self.lr)
 
     def training_step(self, batch, batch_idx):
         reals = batch[0]
@@ -119,7 +122,7 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         noised_inputs = diffusion_input * alphas + noise * sigmas
         targets = noise * alphas - diffusion_input * sigmas
 
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             v = self.diffusion(noised_inputs, t)
 
             loss_info.update({
@@ -184,7 +187,7 @@ class DiffusionUncondDemoCallback(pl.Callback):
         noise = torch.randn([self.num_demos, module.diffusion.io_channels, demo_samples]).to(module.device)
 
         try:
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0)
 
                 if module.diffusion.pretransform is not None:
@@ -365,7 +368,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             self.diffusion.pretransform.to(self.device)
 
             if not self.pre_encoded:
-                with torch.cuda.amp.autocast() and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
+                with torch.amp.autocast('cuda') and torch.set_grad_enabled(self.diffusion.pretransform.enable_grad):
                     self.diffusion.pretransform.train(self.diffusion.pretransform.enable_grad)
 
                     diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
@@ -501,7 +504,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         diffusion_input = reals
 
-        with torch.cuda.amp.autocast() and torch.no_grad():
+        with torch.amp.autocast('cuda') and torch.no_grad():
             conditioning = self.diffusion.conditioner(metadata, self.device)
 
         # TODO: decide what to do with padding masks during validation
@@ -517,7 +520,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             self.diffusion.pretransform.to(self.device)
 
             if not self.pre_encoded:
-                with torch.cuda.amp.autocast() and torch.no_grad():
+                with torch.amp.autocast('cuda') and torch.no_grad():
                     self.diffusion.pretransform.train(self.diffusion.pretransform.enable_grad)
 
                     diffusion_input = self.diffusion.pretransform.encode(diffusion_input)
@@ -556,7 +559,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             # if use_padding_mask:
             #     extra_args["mask"] = padding_masks
 
-            with torch.cuda.amp.autocast() and torch.no_grad():
+            with torch.amp.autocast('cuda') and torch.no_grad():
                 output = self.diffusion(noised_inputs, t, cond=conditioning, cfg_dropout_prob = 0, **extra_args)
 
                 val_loss = F.mse_loss(output, targets)
@@ -654,7 +657,7 @@ class DiffusionCondDemoCallback(pl.Callback):
 
         try:
             print("Getting conditioning")
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 conditioning = module.diffusion.conditioner(demo_cond, module.device)
 
             cond_inputs = module.diffusion.get_conditioning_inputs(conditioning)
@@ -698,7 +701,7 @@ class DiffusionCondDemoCallback(pl.Callback):
 
                 print(f"Generating demo for cfg scale {cfg_scale}")
 
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     model = module.diffusion_ema.ema_model if module.diffusion_ema is not None else module.diffusion.model
 
                     if module.diffusion_objective == "v":
@@ -879,7 +882,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
                 model = module.diffusion_ema.model if module.diffusion_ema is not None else module.diffusion.model
                 print(f"Generating demo for cfg scale {cfg_scale}")
 
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     if module.diffusion_objective == "v":
                         fakes = sample(model, noise, self.demo_steps, 0, **cond_inputs, cfg_scale=cfg_scale, dist_shift=module.diffusion.dist_shift, batch_cfg=True)
                     elif module.diffusion_objective == "rectified_flow":
@@ -988,7 +991,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         self.losses = MultiLoss(loss_modules)
 
     def configure_optimizers(self):
-        return optim.Adam([*self.diffae.parameters()], lr=self.lr)
+        return bnb.optim.Adam8bit([*self.diffae.parameters()], lr=self.lr)
 
     def training_step(self, batch, batch_idx):
         reals = batch[0]
@@ -1034,7 +1037,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         noised_reals = reals * alphas + noise * sigmas
         targets = noise * alphas - reals * sigmas
 
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             v = self.diffae.diffusion(noised_reals, t, input_concat_cond=latents)
 
             loss_info.update({
@@ -1114,7 +1117,7 @@ class DiffusionAutoencoderDemoCallback(pl.Callback):
 
         demo_reals = demo_reals.to(module.device)
 
-        with torch.no_grad() and torch.cuda.amp.autocast():
+        with torch.no_grad() and torch.amp.autocast('cuda'):
             latents = module.diffae_ema.ema_model.encode(encoder_input).float()
             fakes = module.diffae_ema.ema_model.decode(latents, steps=self.demo_steps)
 
@@ -1147,7 +1150,7 @@ class DiffusionAutoencoderDemoCallback(pl.Callback):
             audio_spectrogram_image(reals_fakes))
 
         if module.diffae_ema.ema_model.pretransform is not None:
-            with torch.no_grad() and torch.cuda.amp.autocast():
+            with torch.no_grad() and torch.amp.autocast('cuda'):
                 initial_latents = module.diffae_ema.ema_model.pretransform.encode(encoder_input)
                 first_stage_fakes = module.diffae_ema.ema_model.pretransform.decode(initial_latents)
                 first_stage_fakes = rearrange(first_stage_fakes, 'b d n -> d (b n)')

@@ -1,0 +1,8 @@
+{
+    "dataset_type": "pre_encoded",
+    "datasets": [{
+        "id": "audio_pre_encoded",
+        "path": "pre_encoded",
+        "custom_metadata_module": "acid_paths_md.py"
+    }]
+}
