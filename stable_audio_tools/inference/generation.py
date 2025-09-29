@@ -1,3 +1,6 @@
+# Copyright (c) 2023 Stability AI
+# Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+
 import numpy as np
 import torch 
 import typing as tp
@@ -19,6 +22,7 @@ def generate_diffusion_uncond(
         init_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
         init_noise_level: float = 1.0,
         return_latents = False,
+        chunk_size = 128,
         **sampler_kwargs
         ) -> torch.Tensor:
     
@@ -82,7 +86,7 @@ def generate_diffusion_uncond(
     # Denoising process done. 
     # If this is latent diffusion, decode latents back into audio
     if model.pretransform is not None and not return_latents:
-        sampled = model.pretransform.decode(sampled)
+        sampled = model.pretransform.decode(sampled, chunk_size)
 
     # Return audio
     return sampled
@@ -104,6 +108,7 @@ def generate_diffusion_cond(
         init_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
         init_noise_level: float = 1.0,
         return_latents = False,
+        chunk_size = 128,
         **sampler_kwargs
         ) -> torch.Tensor: 
     """
@@ -123,6 +128,7 @@ def generate_diffusion_cond(
         init_audio: A tuple of (sample_rate, audio) to use as the initial audio for generation.
         init_noise_level: The noise level to use when generating from an initial audio sample.
         return_latents: Whether to return the latents used for generation instead of the decoded audio.
+        chunk_size: The maximum length (in latent timesteps) of each segment of the audio latent to decode at once when chunked=True.
         **sampler_kwargs: Additional keyword arguments to pass to the sampler.    
     """
 
@@ -214,7 +220,7 @@ def generate_diffusion_cond(
     if model.pretransform is not None and not return_latents:
         #cast sampled latents to pretransform dtype
         sampled = sampled.to(next(model.pretransform.parameters()).dtype)
-        sampled = model.pretransform.decode(sampled)
+        sampled = model.pretransform.decode(sampled, chunk_size)
 
     # Return audio
     return sampled
@@ -236,6 +242,7 @@ def generate_diffusion_cond_inpaint(
         inpaint_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
         inpaint_mask = None,
         return_latents = False,
+        chunk_size = 128,
         **sampler_kwargs
         ) -> torch.Tensor: 
     """
@@ -254,6 +261,7 @@ def generate_diffusion_cond_inpaint(
         init_audio: A tuple of (sample_rate, audio) to use as the initial audio for generation.
         inpaint_mask: A mask to use for inpainting. Shape should be [batch_size, sample_size]
         return_latents: Whether to return the latents used for generation instead of the decoded audio.
+        chunk_size: The maximum length (in latent timesteps) of each segment of the audio latent to decode at once when chunked=True.
         **sampler_kwargs: Additional keyword arguments to pass to the sampler.    
     """
 
@@ -399,8 +407,7 @@ def generate_diffusion_cond_inpaint(
     if model.pretransform is not None and not return_latents:
         #cast sampled latents to pretransform dtype
         sampled = sampled.to(next(model.pretransform.parameters()).dtype)
-        sampled = model.pretransform.decode(sampled)
-
+        sampled = model.pretransform.decode(sampled, chunk_size)
     # Return audio
     return sampled
 

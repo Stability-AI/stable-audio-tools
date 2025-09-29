@@ -1,3 +1,6 @@
+# Copyright (c) 2023 Stability AI
+# Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+
 import torch
 from einops import rearrange
 from torch import nn
@@ -61,14 +64,14 @@ class AutoencoderPretransform(Pretransform):
 
         return encoded / self.scale
 
-    def decode(self, z, **kwargs):
+    def decode(self, z, chunk_size, **kwargs):
         z = z * self.scale
 
         if self.model_half:
             z = z.half()
             self.model.to(torch.float16)
 
-        decoded = self.model.decode_audio(z, chunked=self.chunked, iterate_batch=self.iterate_batch, **kwargs)
+        decoded = self.model.decode_audio(z, chunked=self.chunked, chunk_size=chunk_size, iterate_batch=self.iterate_batch, **kwargs)
 
         if self.model_half:
             decoded = decoded.float()
