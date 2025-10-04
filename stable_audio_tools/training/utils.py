@@ -1,5 +1,10 @@
 from pytorch_lightning.loggers import WandbLogger, CometLogger
 from ..interface.aeiou import pca_point_cloud
+from pytorch_optimizer.lr_scheduler.chebyshev import (
+    get_chebyshev_perm_steps,
+    get_chebyshev_permutation,
+    get_chebyshev_schedule
+ )
 
 import wandb
 import torch
@@ -94,6 +99,8 @@ def create_scheduler_from_config(scheduler_config, optimizer):
     """
     if scheduler_config["type"] == "InverseLR":
         scheduler_fn = InverseLR
+    elif scheduler_config["type"] == "Chebyshev":
+        scheduler_fn = get_chebyshev_schedule(optimizer=optimizer, num_epochs=scheduler_config["num_epochs"], is_warmup=scheduler_config["is_warmup"], last_epoch=scheduler_config["last_epoch"])
     else:
         scheduler_fn = getattr(torch.optim.lr_scheduler, scheduler_config["type"])
     scheduler = scheduler_fn(optimizer, **scheduler_config["config"])
