@@ -287,7 +287,7 @@ class T5Conditioner(Conditioner):
 
     T5_MODELS = ["t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b",
               "google/flan-t5-small", "google/flan-t5-base", "google/flan-t5-large",
-              "google/flan-t5-xl", "google/flan-t5-xxl", "google/t5-v1_1-xl", "google/t5-v1_1-xxl"]
+              "google/flan-t5-xl", "google/flan-t5-xxl", "google/t5-v1_1-xl", "google/t5-v1_1-xxl", "google/t5gemma-b-b-ul2"]
     
     T5_MODEL_DIMS = {
         "t5-small": 512,
@@ -304,6 +304,7 @@ class T5Conditioner(Conditioner):
         "google/flan-t5-11b": 1024,
         "google/flan-t5-xl": 2048,
         "google/flan-t5-xxl": 4096,
+        "google/t5gemma-b-b-ul2": 768
     }
 
     def __init__(
@@ -317,7 +318,7 @@ class T5Conditioner(Conditioner):
         assert t5_model_name in self.T5_MODELS, f"Unknown T5 model name: {t5_model_name}"
         super().__init__(self.T5_MODEL_DIMS[t5_model_name], output_dim, project_out=project_out)
         
-        from transformers import T5EncoderModel, AutoTokenizer
+        from transformers import T5EncoderModel, T5GemmaEncoderModel, AutoTokenizer
 
         self.max_length = max_length
         self.enable_grad = enable_grad
@@ -331,7 +332,11 @@ class T5Conditioner(Conditioner):
                 # self.tokenizer = T5Tokenizer.from_pretrained(t5_model_name, model_max_length = max_length)
                 # model = T5EncoderModel.from_pretrained(t5_model_name, max_length=max_length).train(enable_grad).requires_grad_(enable_grad)
                 self.tokenizer = AutoTokenizer.from_pretrained(t5_model_name)
-                model = T5EncoderModel.from_pretrained(t5_model_name).train(enable_grad).requires_grad_(enable_grad).to(torch.float16)
+                if 'gemma' in t5_model_name:
+                    #T5GemmaEncoderModel._keys_to_ignore_on_load_unexpected = ["decoder.*"]
+                    model = T5GemmaEncoderModel.from_pretrained(t5_model_name, is_encoder_decoder=False, torch_dtype=torch.float16).train(enable_grad).requires_grad_(enable_grad)
+                else:
+                    model = T5EncoderModel.from_pretrained(t5_model_name).train(enable_grad).requires_grad_(enable_grad).to(torch.float16)
             finally:
                 logging.disable(previous_level)
             

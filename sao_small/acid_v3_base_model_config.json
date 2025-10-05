@@ -47,8 +47,8 @@
                     "id": "prompt",
                     "type": "t5",
                     "config": {
-                        "t5_model_name": "t5-base",
-                        "max_length": 64
+                        "t5_model_name": "google/t5gemma-b-b-ul2",
+                        "max_length": 128
                     }
                 },
                 {
