@@ -79,6 +79,8 @@ Whenever you feel like stopping.
 
 Listen to the demos and decide when it sounds like the model has learned enough about your dataset, then kill the training process with Ctrl-C.
 
+**Make sure that the training process has generated a checkpoint before you stop the training process!** You can always change the `--checkpoint-every` argument to a smaller value if you want to generate a checkpoint more quickly.
+
 If you have a small number of files in the dataset, like only 100 .WAV files, then you will probably start to overfit after about 2000 steps. "Overfitting" means that the model is getting to a point where it will basically be hyper-optimized for recreating the exact audio you used for training whenever you generate new outputs during inference using the same or similer prompts that you used during training.
 
 ## WARNING: DO NOT MODIFY OR USE THESE FILES
@@ -98,7 +100,7 @@ Do not mess with these files:
   * Learning rate too high = takes far less time to train than you probably expected, and the model probably overfits within 1 Epoch.
   * Small dataset = try a larger value for Learning Rate, such as 1e-2 (0.01). Not many examples to learn from, but you learn a lot from each example.
   * Large dataset = try a smaller value for Learning Rate, such as 5e-4 (0.0005). Learn just a bit from each example, but have a lot of examples.
-* Weight decay = how much the Learning Rate decreases (decays) over time during training. You might have a Learning Rate of 0.01, and a Decay of 0.001, meaning that after each Step the Learning Rate decreases by 0.001: 0.01, 0.099, 0.098, 0.096 ... 0.003, 0.002, 0.001, done!
+* Weight decay = a regularization technique which limits how much each weight can be influenced by the training data. This helps mitigate the risk of overfitting. Much more info here: https://d2l.ai/chapter_linear-regression/weight-decay.html
 * Learning Rate Optimizers = algorithms for optimizing the Learning Rate. Usually combined with a Learning Rate Scheduler. A typical choice is `AdamW`. `AdamW8bit` is a viable option for saving VRAM. Many other options exist, like Lion and Prodigy, but you should stick with `AdamW` or another `Adam` derivative unless you want to navigate unexplored territory and perform experiments.
 * Learning Rate Schedulers = algorithms for changing the Learning Rate over time. https://machinelearningmastery.com/a-gentle-introduction-to-learning-rate-schedulers/ NOT TO BE CONFUSED WITH NOISE SCHEDULERS, AKA SAMPLERS! Stable Audio Open uses a custom `InverseLR` Scheduler. Another good option is `CosineAnnealing`.
 * Noise Schedulers, aka Samplers = algorithms for adding or removing noise: https://huggingface.co/docs/diffusers/en/api/schedulers/overview https://civitai.com/articles/7484/understanding-stable-diffusion-samplers-beyond-image-comparisons
@@ -108,8 +110,8 @@ Do not mess with these files:
   * Too many Epochs (and similarly, too many total Steps) = the model is likely to overfit. Imagine someone going to "normal" school up to the 4th grade, and then being sent to a specialized school where they only learned about how to play modern jazz trumpet: they'd probably not be very good at many "normal" tasks, while excelling at modern jazz trumpet, and they'd be likely to interpret everything they experienced after graduation in the context of modern jazz trumpet.
   * Too few Epochs (and similarly, too few total Steps) = the model is likely to underfit. Imagine someone going to "normal" school up to the 4th grade, and then being sent to a specialized school where they only learned about how to play modern jazz trumpet, but then you pull them out of school after one week: they'd probably not suffer from "forgetting" everything from "normal" school, but they'd also have learned so little about modern jazz trumpet that they might not be much better than their peers who never studied modern jazz trumpet.
 * You should use the largest Batch Size you can fit into VRAM, as a general rule.
-  * Try to not use extremely small Batch Size values, such as 1, because the model is more likely to learn well from Batch Sizes of about 8 to 32.
-  * Try to not use extremely large Batch Size values, such as 512, because the model is more likely to learn well from Batch Sizes of about 8 to 32.
+  * Try to not use extremely small Batch Size values, such as 1, because the model is more likely to learn well from larger Batch Sizes. Consider a Batch Size of 8 if you're just starting out, then increase the Batch Size until you get an OOM (out of memory) error, then decrease the Batch Size until you no longer get OOM errors.
+  * Do not use a Batch Size of 1 if at all possible! It is much better to have a minimum Batch Size of 2.
   * Try to use only Batch Size, and to not use Gradient Accumulation, whenever feasible.
 * Some Optimizer + Scheduler combinations can figure out the appropriate Learning Rate for you. Even better: some Optimizer + Scheduler combinations can figure out the appropriate Learning Rate and the best way to adjust the Learning Rate over time, so you don't have a constant Learning Rate.
 
