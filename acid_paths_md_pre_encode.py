@@ -27,7 +27,10 @@ def get_custom_metadata(info, audio):
 
     # Instrument123 => Instrument
     # Acid1 => Acid
-    prompt = re.sub(r'^(\w+)\d+', r'\1', prompt, count=1)
+    prompt = re.sub(r'^([a-zA-Z]+)\d+ ', r'\1 ', prompt, count=1)
+    # Acid6DistSplinterFat D# minor 120BPM 4/4 4bars
+    # Acid DistSplinterFat D# minor 120BPM 4/4 4bars
+    prompt = re.sub(r'^([a-zA-Z]+)\d+([a-zA-Z]+) ', r'\1 \2 ', prompt, count=1)
 
     # Acid DistSplinterFat 120BPM 4/4 4bars
     # Acid Distorted 120BPM 4/4 4bars
@@ -51,6 +54,9 @@ def get_custom_metadata(info, audio):
 
     # Remove (1), (2), etc.
     prompt = re.sub(r'\(\d+\)$', r'', prompt)
+
+    # Reduce all whitespace to a single space
+    prompt = re.sub(r'\s+', ' ', prompt)
 
     # Sanity check
     print(f'{info["relpath"]} => {prompt}')

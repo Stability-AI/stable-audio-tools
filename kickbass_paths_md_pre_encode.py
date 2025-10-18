@@ -16,7 +16,7 @@ def get_custom_metadata(info, audio):
     prompt = os.path.split(dir_name)[1]
 
     # Use the filename instead of parent directory if the filename has relevant info
-    if 'BPM' in prompt:
+    if 'BPM' in file_name_without_extension:
         prompt = file_name_without_extension
 
     # Translate X beats of Y notes per bar from XbYn to "normal" time signature notation
@@ -38,6 +38,7 @@ def get_custom_metadata(info, audio):
 
     # Acid Distorted 120BPM 4/4 4bars
     # Acid Distorted 120 BPM 4/4 4bars
+    # KickBass F#0 120BPM 4b4n 1bar => KickBass F#0 120 BPM 4b4n 1bar
     prompt = re.sub(r'(\d+)BPM', r'\1 BPM', prompt, count=1)
 
     # Am = A minor
@@ -50,7 +51,12 @@ def get_custom_metadata(info, audio):
     prompt = re.sub(r' D istorted ', r' Distorted ', prompt, count=1)
 
     # 4bars = 4 bars
-    prompt = re.sub(r'(\d+)bars', r'\1 bars', prompt)
+    if 'bars' in prompt:
+        prompt = re.sub(r'(\d+)bars', r'\1 bars', prompt)
+
+    # KickBass F#0 120 BPM 4/4 1bar => KickBass F#0 120 BPM 4/4 1 bar
+    if '1bar' in prompt:
+        prompt = re.sub(r'1bar', r'1 bar', prompt)
 
     # Remove (1), (2), etc.
     prompt = re.sub(r'\(\d+\)$', r'', prompt)
