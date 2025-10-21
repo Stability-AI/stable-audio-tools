@@ -97,7 +97,7 @@
                 "optimizer": {
                     "type": "AdamW8bit",
                     "config": {
-                        "lr": 1e-4,
+                        "lr": 1e-5,
                         "betas": [0.9, 0.999],
                         "eps": 1e-8,
                         "weight_decay": 1e-2,
@@ -106,11 +106,10 @@
                     }
                 },
                 "scheduler": {
-                    "type": "InverseLR",
+                    "type": "CosineAnnealingWarmRestarts",
                     "config": {
-                        "inv_gamma": 32,
-                        "power": 0.5,
-                        "warmup": 0.8
+                        "T_0": 10,
+                        "T_mult": 2
                     }
                 }
             }
