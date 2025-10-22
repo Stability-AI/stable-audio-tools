@@ -363,7 +363,7 @@ def create_ui(model_config_path=None, ckpt_path=None, pretrained_name=None, pret
     else:
         model_config = None
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     _, model_config = load_model(model_config, ckpt_path, pretrained_name=pretrained_name, pretransform_ckpt_path=pretransform_ckpt_path, model_half=model_half, device=device)
     
     if model_type == "diffusion_cond" or model_type == "diffusion_cond_inpaint":
