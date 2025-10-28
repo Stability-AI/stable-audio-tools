@@ -75,7 +75,7 @@ def generate_diffusion_uncond(
 
     if diff_objective == "v":    
         # k-diffusion denoising process go!
-        sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, device=device)
+        sampled = sample_k(model.model, noise, init_audio, steps, **sampler_kwargs, device=device)
     elif diff_objective in ["rectified_flow", "rf_denoiser"]:
         sampled = sample_rf(model.model, noise, init_data=init_audio, steps=steps, **sampler_kwargs, device=device)
 
