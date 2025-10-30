@@ -170,3 +170,4 @@ wandb/*
 /pre_encoded_kickbass
 /pre_encoded_kickbass_val
 /rawfiles_kickbass
+*.zip
