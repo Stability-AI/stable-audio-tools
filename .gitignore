@@ -164,10 +164,7 @@ cython_debug/
 wandb/*
 
 # Dataset folders and outputs
-/rawfiles
 /outputs
-/pre_encoded
-/pre_encoded_kickbass
-/pre_encoded_kickbass_val
-/rawfiles_kickbass
+/pre_encoded*
+/rawfiles*
 *.zip
