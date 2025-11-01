@@ -81,9 +81,7 @@ class DiffusionUncondTrainingWrapper(pl.LightningModule):
         self.pre_encoded = pre_encoded
 
     def configure_optimizers(self):
-        #return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
-        #return bnb.optim.Adam(model.parameters(), lr=self.lr, betas=(0.9, 0.995), optim_bits=32, percentile_clipping=5) [*self.diffusion.parameters()]
-        return bnb.optim.AdamW8bit([*self.diffusion.parameters()], lr=self.lr)
+        return optim.Adam([*self.diffusion.parameters()], lr=self.lr)
 
     def training_step(self, batch, batch_idx):
         reals = batch[0]
@@ -991,7 +989,7 @@ class DiffusionAutoencoderTrainingWrapper(pl.LightningModule):
         self.losses = MultiLoss(loss_modules)
 
     def configure_optimizers(self):
-        return bnb.optim.Adam8bit([*self.diffae.parameters()], lr=self.lr)
+        return optim.Adam([*self.diffae.parameters()], lr=self.lr)
 
     def training_step(self, batch, batch_idx):
         reals = batch[0]

@@ -10,7 +10,9 @@ setup(
     install_requires=[
         'alias-free-torch==0.0.6',
         'auraloss==0.4.0',
+        'bitsandbytes==0.47.0',
         'descript-audio-codec==1.0.0',
+        'dill==0.4.0',
         'einops',
         'einops-exts',
         'ema-pytorch==0.2.3',
@@ -24,6 +26,7 @@ setup(
         'pandas==2.0.2',
         'prefigure==0.0.9',
         'pytorch_lightning==2.4.0',
+        'pytorch_optimizer==3.1.2',
         'PyWavelets==1.4.1',
         'safetensors',
         'sentencepiece==0.1.99',
