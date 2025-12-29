@@ -396,7 +396,7 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
 
         if self.diffusion.dist_shift is not None:
             # Shift the distribution
-            t = self.diffusion.dist_shift.time_shift(t, reals.shape[2])
+            t = self.diffusion.dist_shift.time_shift(t, diffusion_input.shape[2])
 
         if self.p_one_shot > 0:
             # Set t to 1 with probability p_one_shot

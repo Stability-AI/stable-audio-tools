@@ -30,6 +30,7 @@ class DistributionShift:
         self.use_sine = use_sine
 
     def time_shift(self, t: torch.Tensor, seq_len: int):
+        seq_len = min(max(seq_len,self.min_length), self.max_length)
         sigma = 1.0
         mu = - (self.base_shift + (self.max_shift - self.base_shift) * (seq_len - self.min_length) / (self.max_length - self.min_length))
         t_out = 1 - math.exp(mu) / (math.exp(mu) + (1 / (1 - t) - 1) ** sigma)
