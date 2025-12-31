@@ -226,7 +226,7 @@ class CLAPAudioConditioner(Conditioner):
                  project_out: bool = False):
         super().__init__(512, output_dim, project_out=project_out)
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
         # Suppress logging from transformers
         previous_level = logging.root.manager.disable
