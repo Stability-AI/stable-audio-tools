@@ -15,6 +15,7 @@ from einops import rearrange
 
 import numpy as np
 
+
 def embeddings_table(tokens):
     from wandb import Table
     from pandas import DataFrame
@@ -32,6 +33,7 @@ def embeddings_table(tokens):
     df   = DataFrame(features, columns=cols)
     df['LABEL'] = labels
     return Table(columns=df.columns.to_list(), data=df.values)
+
 
 def project_down(tokens,     # batched high-dimensional data with dims (b,d,n)
             proj_dims=3,     # dimensions to project to
@@ -56,6 +58,7 @@ def project_down(tokens,     # batched high-dimensional data with dims (b,d,n)
     else:
         proj_data = A
     if debug: print("proj_data.shape =",proj_data.shape)
+
     return torch.reshape(proj_data, (tokens.size()[0], -1, proj_dims)) # put it in shape [batch, n, proj_dims]
 
 
@@ -148,7 +151,8 @@ def point_cloud(
     else:
         from wandb import Object3D
         return Object3D(point_cloud)
-    
+
+
 def pca_point_cloud(
     tokens,                  # embeddings / latent vectors. shape = (b, d, n)
     color_scheme='batch',    # 'batch': group by sample, otherwise color sequentially
@@ -161,6 +165,7 @@ def pca_point_cloud(
     return point_cloud(tokens, method='pca', color_scheme=color_scheme, output_type=output_type,
         mode=mode, size=size, line=line, **kwargs)
 
+
 def power_to_db(spec, *, amin = 1e-10):
     magnitude = np.asarray(spec)
 
@@ -171,17 +176,32 @@ def power_to_db(spec, *, amin = 1e-10):
 
     return log_spec
 
+
 def mel_spectrogram(waveform, power=2.0, sample_rate=48000, db=False, n_fft=1024, n_mels=128, debug=False):
     "calculates data array for mel spectrogram (in however many channels)"
     win_length = None
+    # https://docs.pytorch.org/audio/2.8.0/generated/torchaudio.transforms.MelSpectrogram.html?highlight=melspectrogram#torchaudio.transforms.MelSpectrogram
+    # n_fft (int, optional) – Size of FFT, creates n_fft // 2 + 1 bins.
+    # Ergo n_fft//2 = 513, not 512, when n_fft=1024, as seen in this error:
+    #
+    # torchaudio\functional\functional.py:585: UserWarning: At least one mel filterbank has all zero values.
+    # The value for `n_mels` (128) may be set too high. Or, the value for `n_freqs` (513) may be set too low.
     hop_length = n_fft//2 # 512
 
     mel_spectrogram_op = T.MelSpectrogram(
-        sample_rate=sample_rate, n_fft=n_fft, win_length=win_length, 
-        hop_length=hop_length, center=True, pad_mode="reflect", power=power, 
-        norm='slaney', onesided=True, n_mels=n_mels, mel_scale="htk")
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        win_length=win_length,
+        hop_length=hop_length,
+        center=True,
+        pad_mode="reflect",
+        power=power,
+        norm='slaney',
+        n_mels=n_mels,
+        mel_scale="htk")
 
     melspec = mel_spectrogram_op(waveform.float())
+
     if db: 
         amp_to_db_op = T.AmplitudeToDB()
         melspec = amp_to_db_op(melspec)
@@ -189,7 +209,9 @@ def mel_spectrogram(waveform, power=2.0, sample_rate=48000, db=False, n_fft=1024
         print_stats(melspec, print=print) 
         print(f"torch.max(melspec) = {torch.max(melspec)}")
         print(f"melspec.shape = {melspec.shape}")
+
     return melspec
+
 
 def spectrogram_image(
         spec, 
@@ -227,11 +249,13 @@ def spectrogram_image(
         #print(f"im.size = {im.size}")
     return im
 
+
 def audio_spectrogram_image(waveform, power=2.0, sample_rate=48000, print=print, db=False, db_range=[35,120], justimage=False, log=False, figsize=(5, 4)):
     "Wrapper for calling above two routines at once, does Mel scale; Modified from PyTorch tutorial https://pytorch.org/tutorials/beginner/audio_feature_extractions_tutorial.html"
     melspec = mel_spectrogram(waveform, power=power, db=db, sample_rate=sample_rate, debug=log)
     melspec = melspec[0] # TODO: only left channel for now
     return spectrogram_image(melspec, title="MelSpectrogram", ylabel='mel bins (log freq)', db_range=db_range, justimage=justimage, figsize=figsize)
+
 
 from matplotlib.ticker import AutoLocator 
 def tokens_spectrogram_image(
@@ -241,9 +265,9 @@ def tokens_spectrogram_image(
         ylabel='index',        # label for y axis of plot
         cmap='coolwarm',       # colormap to use. (default used to be 'viridis')
         symmetric=True,        # make color scale symmetric about zero, i.e. +/- same extremes
-        figsize=(8, 4),       # matplotlib size of the figure
+        figsize=(8, 4),        # matplotlib size of the figure
         dpi=100,               # dpi of figure
-        mark_batches=False,     # separate batches with dividing lines
+        mark_batches=False,    # separate batches with dividing lines
         debug=False,           # print debugging info
     ):
     "for visualizing embeddings in a spectrogram-like way"

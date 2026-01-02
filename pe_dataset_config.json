@@ -1,0 +1,11 @@
+{
+    "dataset_type": "audio_dir",
+    "datasets": [{
+        "id": "audio",
+        "path": "./rawfiles",
+        "custom_metadata_module": "./paths_md_pre_encode.py",
+        "drop_last": false
+    }],
+    "drop_last": false,
+    "random_crop": false
+}
