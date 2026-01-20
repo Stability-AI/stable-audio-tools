@@ -540,9 +540,10 @@ class PretransformConditioner(Conditioner):
         
         latents = self.pretransform.encode(audio)
 
-        latents = self.proj_out(latents)
+        # Transpose to [batch, time, channels] for linear projection
+        latents = self.proj_out(latents.transpose(1, 2))
 
-        return [latents, torch.ones(latents.shape[0], latents.shape[2]).to(latents.device)]
+        return [latents, torch.ones(latents.shape[0], latents.shape[1]).to(latents.device)]
 
 class SourceMixConditioner(Conditioner):
     """
