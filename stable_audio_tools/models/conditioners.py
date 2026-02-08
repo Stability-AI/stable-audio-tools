@@ -668,7 +668,7 @@ class MultiConditioner(nn.Module):
                         raise ValueError(f"Conditioner key {condition_key} not found in batch metadata")
 
                 #Unwrap the condition info if it's a single-element list or tuple, this is to support collation functions that wrap everything in a list
-                if isinstance(x[condition_key], list) or isinstance(x[condition_key], tuple) and len(x[condition_key]) == 1:
+                if (isinstance(x[condition_key], list) or isinstance(x[condition_key], tuple)) and len(x[condition_key]) == 1:
                     conditioner_input = x[condition_key][0]
                     
                 else:
