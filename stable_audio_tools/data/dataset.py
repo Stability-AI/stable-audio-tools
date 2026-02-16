@@ -1,3 +1,4 @@
+import dill
 import importlib
 import numpy as np
 import io
@@ -19,7 +20,10 @@ from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T, VolumeNorm
 
-AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
+from torchdata.stateful_dataloader import StatefulDataLoader
+
+
+AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus", "aiff", "aif")
 
 # fast_scandir implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
 
@@ -94,7 +98,7 @@ def keyword_scandir(
 def get_audio_filenames(
     paths: list,  # directories in which to search
     keywords=None,
-    exts=['.wav', '.mp3', '.flac', '.ogg', '.aif', '.opus']
+    exts=['.wav', '.mp3', '.flac', '.ogg', '.aif', '.opus', '.aif', '.aiff']
 ):
     "recursively get a list of audio filenames"
     filenames = []
@@ -178,7 +182,7 @@ class SampleDataset(torch.utils.data.Dataset):
             self.root_paths.append(config.path)
             self.filenames.extend(get_audio_filenames(config.path, keywords))
             if config.custom_metadata_fn is not None:
-                self.custom_metadata_fns[config.path] = config.custom_metadata_fn
+                self.custom_metadata_fns[config.path] = dill.dumps(config.custom_metadata_fn)
 
         print(f'Found {len(self.filenames)} files')
 
@@ -238,8 +242,8 @@ class SampleDataset(torch.utils.data.Dataset):
 
             for custom_md_path in self.custom_metadata_fns.keys():
                 if custom_md_path in audio_filename:
-                    custom_metadata_fn = self.custom_metadata_fns[custom_md_path]
-                    custom_metadata = custom_metadata_fn(info, audio)
+                    custom_metadata_fn_deserialized = dill.loads(self.custom_metadata_fns[custom_md_path])
+                    custom_metadata = custom_metadata_fn_deserialized(info, audio)
                     info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
@@ -282,7 +286,7 @@ class PreEncodedDataset(torch.utils.data.Dataset):
         for config in configs:
             self.filenames.extend(get_latent_filenames(config.path, [latent_extension]))
             if config.custom_metadata_fn is not None:
-                self.custom_metadata_fns[config.path] = config.custom_metadata_fn
+                self.custom_metadata_fns[config.path] = dill.dumps(config.custom_metadata_fn)
 
         self.latent_crop_length = latent_crop_length
         self.random_crop = random_crop
@@ -339,8 +343,9 @@ class PreEncodedDataset(torch.utils.data.Dataset):
 
             for custom_md_path in self.custom_metadata_fns.keys():
                 if custom_md_path in latent_filename:
-                    custom_metadata_fn = self.custom_metadata_fns[custom_md_path]
-                    custom_metadata = custom_metadata_fn(info, None)
+
+                    custom_metadata_fn_deserialized = dill.loads(self.custom_metadata_fns[custom_md_path])
+                    custom_metadata = custom_metadata_fn_deserialized(info, None)
                     info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
@@ -849,8 +854,14 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
             force_channels=force_channels
         )
 
-        return torch.utils.data.DataLoader(train_set, batch_size, shuffle=shuffle,
-                                num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=dataset_config.get("drop_last", True), collate_fn=collation_fn)
+        # https://docs.pytorch.org/docs/stable/notes/randomness.html#dataloader
+        g = torch.Generator()
+        g.manual_seed(0)
+
+        #return torch.utils.data.DataLoader(train_set, batch_size, shuffle=shuffle,
+        #                        num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=dataset_config.get("drop_last", True), collate_fn=collation_fn, generator=g)
+        return StatefulDataLoader(train_set, batch_size, shuffle=shuffle,
+                                num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=dataset_config.get("drop_last", True), collate_fn=collation_fn, generator=g)
 
     elif dataset_type == "pre_encoded":
 
@@ -899,8 +910,14 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
             latent_extension=latent_extension
         )
 
-        return torch.utils.data.DataLoader(train_set, batch_size, shuffle=shuffle,
-                                num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=dataset_config.get("drop_last", True), collate_fn=collation_fn)
+        # https://docs.pytorch.org/docs/stable/notes/randomness.html#dataloader
+        g = torch.Generator()
+        g.manual_seed(0)
+
+        #return torch.utils.data.DataLoader(train_set, batch_size, shuffle=shuffle,
+        #                        num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=dataset_config.get("drop_last", True), collate_fn=collation_fn, generator=g)
+        return StatefulDataLoader(train_set, batch_size, shuffle=shuffle,
+                                num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=dataset_config.get("drop_last", True), collate_fn=collation_fn, generator=g)
 
     elif dataset_type in ["s3", "wds"]: # Support "s3" type for backwards compatibility
         wds_configs = []
