@@ -104,6 +104,7 @@ def generate_diffusion_cond(
         init_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
         init_noise_level: float = 1.0,
         return_latents = False,
+        cpu_final_step:bool = False,
         **sampler_kwargs
         ) -> torch.Tensor: 
     """
@@ -390,6 +391,8 @@ def generate_diffusion_cond_inpaint(
 
     # v-diffusion: 
     #sampled = sample(model.model, noise, steps, 0, **conditioning_tensors, embedding_scale=cfg_scale)
+    if cpu_final_step:
+        model.to('cpu')
     del noise
     del conditioning_tensors
     del conditioning_inputs
@@ -399,6 +402,8 @@ def generate_diffusion_cond_inpaint(
     if model.pretransform is not None and not return_latents:
         #cast sampled latents to pretransform dtype
         sampled = sampled.to(next(model.pretransform.parameters()).dtype)
+        if cpu_final_step:
+            sampled = sampled.to('cpu')
         sampled = model.pretransform.decode(sampled)
 
     # Return audio
