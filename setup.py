@@ -26,7 +26,7 @@ setup(
         'pytorch_lightning==2.1.0',
         'PyWavelets==1.4.1',
         'safetensors',
-        'sentencepiece==0.1.99',
+        'sentencepiece==0.2.1',
         'torch>=2.5.1',
         'torchaudio>=2.5.1',
         'torchmetrics==0.11.4',
