@@ -426,5 +426,6 @@ def build_mask(sample_size, mask_args):
     # marination finishes the inpainting early in the denoising schedule, and lets audio get changed in the final rounds
     if marination > 0:        
         mask = mask * (1-marination) 
+    mask = 1 - mask
     #print(mask)
     return mask
