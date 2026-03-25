@@ -1,16 +1,17 @@
 import gc
 import numpy as np
 import gradio as gr
-import json 
+import json
 import re
 import subprocess
 import torch
-import torchaudio
-import threading 
+import scipy.io.wavfile as wavfile
+import threading
 import os, time, math
 
 from einops import rearrange
 from torchaudio import transforms as T
+import torchaudio
 
 from ..aeiou import audio_spectrogram_image
 from ...inference.generation import generate_diffusion_cond, generate_diffusion_cond_inpaint
@@ -253,10 +254,14 @@ def generate_cond(
 
     # Encode the audio to WAV format
     audio = rearrange(audio, "b d n -> d (b n)")
-    audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+    audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).cpu()
 
-    # save as wav file
-    torchaudio.save(output_wav, audio, sample_rate)
+    # Convert to numpy for saving and returning (float32 [-1, 1])
+    audio_np = audio.numpy().T  # [samples, channels]
+
+    # save as wav file (int16)
+    audio_int16 = (audio_np * 32767).astype(np.int16)
+    wavfile.write(output_wav, sample_rate, audio_int16)
 
     # If file_format is other than wav, convert to other file format
     cmd = ""
@@ -278,15 +283,16 @@ def generate_cond(
     if cmd:
         cmd += " -loglevel error" # make output less verbose in the cmd window
         subprocess.run(cmd, shell=True, check=True)
-    
+
     # Let's look at a nice spectrogram too
-    audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
+    audio_spectrogram = audio_spectrogram_image(audio.mul(32767).to(torch.int16), sample_rate=sample_rate)
 
     # Asynchronously delete the files after returning the output file, so as to prevent clutter in the directory
     if file_naming in ["verbose", "prompt"]:
         delete_files_async([output_wav, output_filename], 30)
 
-    return (output_filename, [audio_spectrogram, *preview_images])
+    # Return audio as tuple so Gradio handles encoding/serving internally
+    return ((sample_rate, audio_np), [audio_spectrogram, *preview_images])
 
 #  Asynchronously delete the given list of filenames after delay seconds. Sets up thread that sleeps for delay then deletes. 
 def delete_files_async(filenames, delay):
@@ -426,8 +432,7 @@ def create_sampling_ui(model_config):
             ]
 
         with gr.Column():
-            audio_output = gr.Audio(label="Output audio", interactive=False, 
-                    waveform_options=gr.WaveformOptions(show_recording_waveform=False))
+            audio_output = gr.Audio(label="Output audio", interactive=False, format="wav")
             audio_spectrogram_output = gr.Gallery(label="Output spectrogram", show_label=False)
             send_to_init_button = gr.Button("Send to init audio", scale=1)
             send_to_init_button.click(fn=lambda audio: audio, inputs=[audio_output], outputs=[init_audio_input])

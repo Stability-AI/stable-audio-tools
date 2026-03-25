@@ -1,11 +1,12 @@
 import gc
 import numpy as np
 import gradio as gr
-import json 
+import json
 import re
 import subprocess
 import torch
 import torchaudio
+import scipy.io.wavfile as wavfile
 
 from einops import rearrange
 from safetensors.torch import load_file
@@ -159,11 +160,12 @@ def generate_uncond(
 
     audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
-    torchaudio.save("output.wav", audio, sample_rate)
+    audio_np = audio.numpy().T
+    wavfile.write("output.wav", sample_rate, audio_np)
 
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
-    return ("output.wav", [audio_spectrogram, *preview_images])
+    return ((sample_rate, audio_np), [audio_spectrogram, *preview_images])
 
 def generate_lm(
         temperature=1.0,
@@ -193,11 +195,12 @@ def generate_lm(
 
     audio = audio.to(torch.float32).div(torch.max(torch.abs(audio))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
-    torchaudio.save("output.wav", audio, sample_rate)
+    audio_np = audio.numpy().T
+    wavfile.write("output.wav", sample_rate, audio_np)
 
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
-    return ("output.wav", [audio_spectrogram])
+    return ((sample_rate, audio_np), [audio_spectrogram])
 
 
 def create_uncond_sampling_ui(model_config):   
@@ -305,7 +308,7 @@ def autoencoder_process(audio, latent_noise, n_quantizers):
 
     audio = audio.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
-    torchaudio.save("output.wav", audio, sample_rate)
+    wavfile.write("output.wav", sample_rate, audio.numpy().T)
 
     return "output.wav"
 
