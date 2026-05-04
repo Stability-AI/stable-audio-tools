@@ -37,6 +37,7 @@ dependencies = [
 [project.optional-dependencies]
 train = [
     "auraloss==0.4.0",
+    "boto3>=1.26,<2",
     "descript-audio-codec==1.0.0",
     "encodec==0.1.1",
     "inf-cl",

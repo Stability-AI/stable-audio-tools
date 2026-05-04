@@ -171,6 +171,21 @@ The following properties are defined in the top level of the model configuration
 ## Dataset config
 `stable-audio-tools` currently supports two kinds of data sources: local directories of audio files, and WebDataset datasets stored in Amazon S3. More information can be found in [the dataset config documentation](docs/datasets.md)
 
+## S3-compatible storage
+The S3 dataset loader uses `boto3`, which ships in the `train` extra. If you installed without that extra, add it with `pip install boto3` (or `pip install "stable-audio-tools[train]"`).
+
+The loader honors the `AWS_ENDPOINT_URL` environment variable, so you can point it at S3-compatible storage providers (for example Backblaze B2, MinIO, Cloudflare R2, or other compatible endpoints) without changing the dataset config.
+
+Example:
+```bash
+export AWS_ENDPOINT_URL=<s3-compatible-endpoint>
+export AWS_DEFAULT_REGION=<endpoint-region>
+export AWS_ACCESS_KEY_ID=<access-key-id>
+export AWS_SECRET_ACCESS_KEY=<secret-access-key>
+```
+
+When `AWS_ENDPOINT_URL` is unset, the loader uses default AWS S3, so existing setups are unaffected.
+
 # Todo
 - [ ] Add troubleshooting section
 - [ ] Add contribution guidelines 
