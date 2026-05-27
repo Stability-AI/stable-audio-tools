@@ -5,9 +5,10 @@ import typing as tp
 from einops import rearrange
 from torch import nn
 
+from .autoencoders import AudioAutoencoder
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .factory import create_pretransform_from_config
-from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone, ContinuousTransformerAudioLMBackbone
+from .lm_backbone import AudioLMBackbone, ContinuousTransformerAudioLMBackbone
 from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform, AudiocraftCompressionPretransform
 from .utils import multinomial, sample_top_k, sample_top_p
 
@@ -501,7 +502,7 @@ def create_audio_lm_from_config(config):
 
     conditioner = None
     if conditioning_config is not None:
-        conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config)
+        conditioner = create_multi_conditioner_from_conditioning_config(conditioning_config, pretransform=pretransform)
 
     cross_attn_cond_ids = lm_config.get('cross_attention_cond_ids', [])
     prepend_cond_ids = lm_config.get('prepend_cond_ids', [])
@@ -513,9 +514,7 @@ def create_audio_lm_from_config(config):
     assert lm_type is not None, "Must specify lm type in lm config"
     assert lm_model_config is not None, "Must specify lm model config in lm config"
 
-    if lm_type == "x-transformers":
-        backbone = XTransformersAudioLMBackbone(**lm_model_config)
-    elif lm_type == "continuous_transformer":
+    if lm_type == "continuous_transformer":
         backbone = ContinuousTransformerAudioLMBackbone(**lm_model_config)
     else:
         raise NotImplementedError(f"Unrecognized lm type {lm_type}")

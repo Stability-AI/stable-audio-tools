@@ -1,17 +1,54 @@
 # Copied and modified from https://github.com/csteinmetz1/auraloss/blob/main/auraloss/freq.py under Apache License 2.0
 # You can find the license at LICENSES/LICENSE_AURALOSS.txt
-
+import math
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from typing import List, Any
 import scipy.signal
+from .utils import mmd
+from stable_audio_tools.models.transforms import tight_one_sided_complex_stft
 
-def apply_reduction(losses, reduction="none"):
+def normalized_complex_distance_loss(x, y, eps=1e-5):
+    numerator = (x-y).abs() ** 2
+    return torch.log(numerator / numerator.std(dim = [-1,-2], keepdim=True).detach().clamp(min = eps) + 1).mean()
+
+
+def if_gd_loss(Xp, Xr, eps=1e-3, w_floor=1e-3):
+    # Xp, Xr: complex [..., F, T], float32
+    # ---- time increments (IF) ----
+    Rt_p = Xp[..., :, 1:] * torch.conj(Xp[..., :, :-1])
+    Rt_r = Xr[..., :, 1:] * torch.conj(Xr[..., :, :-1])
+    denom_t_p = (Xp[..., :, 1:].abs() * Xp[..., :, :-1].abs()).clamp_min(eps)
+    denom_t_r = (Xr[..., :, 1:].abs() * Xr[..., :, :-1].abs()).clamp_min(eps)
+    Ut_p = Rt_p / denom_t_p
+    Ut_r = Rt_r / denom_t_r
+    wt = torch.sqrt(denom_t_p * denom_t_r).clamp_min(w_floor).detach()
+    wt = wt / wt.mean().clamp_min(1e-7)
+    Lt = (1.0 - (Ut_p * torch.conj(Ut_r)).real) * wt
+
+    # ---- frequency increments (GD) ----
+    Rf_p = Xp[..., 1:, :] * torch.conj(Xp[..., :-1, :])
+    Rf_r = Xr[..., 1:, :] * torch.conj(Xr[..., :-1, :])
+    denom_f_p = (Xp[..., 1:, :].abs() * Xp[..., :-1, :].abs()).clamp_min(eps)
+    denom_f_r = (Xr[..., 1:, :].abs() * Xr[..., :-1, :].abs()).clamp_min(eps)
+    Uf_p = Rf_p / denom_f_p
+    Uf_r = Rf_r / denom_f_r
+    wf = torch.sqrt(denom_f_p * denom_f_r).clamp_min(w_floor).detach()
+    wf = wf / wf.mean().clamp_min(1e-7)
+    Lf = (1.0 - (Uf_p * torch.conj(Uf_r)).real) * wf
+
+    return Lt.mean() + Lf.mean()
+
+
+def apply_reduction(losses, reduction="none", retain_batch_dim=False):
+    dim = [-1, -2] if retain_batch_dim and len(losses.shape) == 3 else None
     """Apply reduction to collection of losses."""
     if reduction == "mean":
-        losses = losses.mean()
+        losses = losses.mean(dim = dim)
     elif reduction == "sum":
-        losses = losses.sum()
+        losses = losses.sum(dim = dim)
     return losses
 
 def get_window(win_type: str, win_length: int):
@@ -67,112 +104,150 @@ class SumAndDifference(torch.nn.Module):
         return x[:, 0, :] - x[:, 1, :]
 
 
-class FIRFilter(torch.nn.Module):
-    """FIR pre-emphasis filtering module.
-
-    Args:
-        filter_type (str): Shape of the desired FIR filter ("hp", "fd", "aw"). Default: "hp"
-        coef (float): Coefficient value for the filter tap (only applicable for "hp" and "fd"). Default: 0.85
-        ntaps (int): Number of FIR filter taps for constructing A-weighting filters. Default: 101
-        plot (bool): Plot the magnitude respond of the filter. Default: False
-
-    Based upon the perceptual loss pre-empahsis filters proposed by
-    [Wright & Välimäki, 2019](https://arxiv.org/abs/1911.08922).
-
-    A-weighting filter - "aw"
-    First-order highpass - "hp"
-    Folded differentiator - "fd"
-
-    Note that the default coefficeint value of 0.85 is optimized for
-    a sampling rate of 44.1 kHz, considering adjusting this value at differnt sampling rates.
+class FIRFilter(nn.Module):
+    """
+    Psychoacoustic prefilter (hp/fd/A-weight/K-weight) as a fixed FIR, stable for AMP/DDP.
+    - Fixes K-shelf gain (→ k, not k^2).
+    - Uses firwin2 on a dense grid.
+    - Reflect-padding to reduce edge transients.
+    - Proper padding derived from kernel length.
+    - Kernel registered as a buffer and cast to input dtype/device at runtime.
     """
 
-    def __init__(self, filter_type="hp", coef=0.85, fs=44100, ntaps=101, plot=False):
-        """Initilize FIR pre-emphasis filtering module."""
-        super(FIRFilter, self).__init__()
-        self.filter_type = filter_type
-        self.coef = coef
-        self.fs = fs
-        self.ntaps = ntaps
-        self.plot = plot
-
-        import scipy.signal
-
+    def __init__(self, filter_type="kw", coef=0.85, fs=44100, ntaps=257,
+                 pad_mode: str = "reflect", ref_hz: float = 1000.0):
+        super().__init__()
         if ntaps % 2 == 0:
             raise ValueError(f"ntaps must be odd (ntaps={ntaps}).")
+        self.filter_type = filter_type
+        self.coef = float(coef)
+        self.fs = float(fs)
+        self.ntaps = int(ntaps)
+        self.pad_mode = pad_mode
+        self.ref_hz = float(ref_hz)
 
+        # design FIR taps
         if filter_type == "hp":
-            self.fir = torch.nn.Conv1d(1, 1, kernel_size=3, bias=False, padding=1)
-            self.fir.weight.requires_grad = False
-            self.fir.weight.data = torch.tensor([1, -coef, 0]).view(1, 1, -1)
+            taps = np.zeros(2, dtype=np.float64)  # length-2 pre-emphasis [1, -a]
+            taps[0] = 1.0
+            taps[1] = -self.coef
         elif filter_type == "fd":
-            self.fir = torch.nn.Conv1d(1, 1, kernel_size=3, bias=False, padding=1)
-            self.fir.weight.requires_grad = False
-            self.fir.weight.data = torch.tensor([1, 0, -coef]).view(1, 1, -1)
-        elif filter_type == "aw":
-            # Definition of analog A-weighting filter according to IEC/CD 1672.
-            f1 = 20.598997
-            f2 = 107.65265
-            f3 = 737.86223
-            f4 = 12194.217
-            A1000 = 1.9997
+            # simple 2-sample difference y[n] = x[n] - a x[n-2]
+            taps = np.zeros(3, dtype=np.float64)
+            taps[0] = 1.0
+            taps[2] = -self.coef
+        elif filter_type in {"aw", "kw"}:
+            taps = self._design_weighting_fir(filter_type)
+        else:
+            raise ValueError(f"Unsupported filter type: {filter_type}")
 
-            NUMs = [(2 * np.pi * f4) ** 2 * (10 ** (A1000 / 20)), 0, 0, 0, 0]
-            DENs = np.polymul(
-                [1, 4 * np.pi * f4, (2 * np.pi * f4) ** 2],
-                [1, 4 * np.pi * f1, (2 * np.pi * f1) ** 2],
-            )
-            DENs = np.polymul(
-                np.polymul(DENs, [1, 2 * np.pi * f3]), [1, 2 * np.pi * f2]
-            )
+        # normalise to unity gain at ref_hz (for hp/fd it's fine to skip if you prefer raw pre-emphasis)
+        if filter_type in {"aw", "kw"}:
+            w = 2 * np.pi * self.ref_hz / self.fs
+            n = np.arange(len(taps))
+            H_ref = np.abs(np.sum(taps * np.exp(-1j * w * n)))
+            if H_ref > 0:
+                taps = taps / H_ref
 
-            # convert analog filter to digital filter
-            b, a = scipy.signal.bilinear(NUMs, DENs, fs=fs)
+        # register as buffer, not parameter
+        k = torch.from_numpy(taps.astype(np.float32))[None, None, :]
+        self.register_buffer("kernel", k, persistent=False)
 
-            # compute the digital filter frequency response
-            w_iir, h_iir = scipy.signal.freqz(b, a, worN=512, fs=fs)
+    # ---- design helpers ----
 
-            # then we fit to 101 tap FIR filter with least squares
-            taps = scipy.signal.firls(ntaps, w_iir, abs(h_iir), fs=fs)
+    def _design_weighting_fir(self, which: str) -> np.ndarray:
+        fs = self.fs
+        ntaps = self.ntaps
 
-            # now implement this digital FIR filter as a Conv1d layer
-            self.fir = torch.nn.Conv1d(
-                1, 1, kernel_size=ntaps, bias=False, padding=ntaps // 2
-            )
-            self.fir.weight.requires_grad = False
-            self.fir.weight.data = torch.tensor(taps.astype("float32")).view(1, 1, -1)
+        if which == "aw":
+            # Analog A-weight (IEC) as in many references
+            f1, f2, f3, f4 = 20.598997, 107.65265, 737.86223, 12194.217
+            A1000 = 1.9997  # dB
+            NUMs = [(2*np.pi*f4)**2 * 10**(A1000/20), 0, 0, 0, 0]
+            DENs = np.polymul([1, 4*np.pi*f4, (2*np.pi*f4)**2],
+                              [1, 4*np.pi*f1, (2*np.pi*f1)**2])
+            DENs = np.polymul(np.polymul(DENs, [1, 2*np.pi*f3]),
+                              [1, 2*np.pi*f2])
+        elif which == "kw":
+            # Stage 1: 2nd-order HP (critical damping)
+            f_hp, Q_hp = 38.135, 0.5
+            w_hp = 2*np.pi*f_hp
+            NUM_hp = [1, 0, 0]                  # s^2
+            DEN_hp = [1, w_hp/Q_hp, w_hp**2]    # s^2 + (w/Q)s + w^2
 
-            if plot:
-                from .plotting import compare_filters
-                compare_filters(b, a, taps, fs=fs)
+            # Stage 2: high-shelf (→ gain k at HF, 1 at LF)  **FIXED: k, not k^2**
+            f_shelf, Q_shelf, G_shelf = 1681.974, 1.69, 4.0
+            k = 10**(G_shelf/20.0)
+            w_s = 2*np.pi*f_shelf
+            NUM_shelf = [k, (k*w_s)/Q_shelf, w_s**2]
+            DEN_shelf = [1,    w_s /Q_shelf, w_s**2]
 
-    def forward(self, input, target):
-        """Calculate forward propagation.
-        Args:
-            input (Tensor): Predicted signal (B, #channels, #samples).
-            target (Tensor): Groundtruth signal (B, #channels, #samples).
-        Returns:
-            Tensor: Filtered signal.
+            NUMs = np.polymul(NUM_hp, NUM_shelf)
+            DENs = np.polymul(DEN_hp, DEN_shelf)
+        else:
+            raise RuntimeError
+
+        # Bilinear to digital IIR
+        b, a = scipy.signal.bilinear(NUMs, DENs, fs=fs)
+
+        # --- Endpoint-safe grid for firwin2 ---
+        freq = np.linspace(0.0, fs/2.0, num=8193, endpoint=True)  # Hz, exact 0 and fs/2
+        _, H = scipy.signal.freqz(b, a, worN=freq, fs=fs)
+        Hmag = np.abs(H)
+
+        # FIR fit
+        taps = scipy.signal.firwin2(ntaps, freq, Hmag, fs=fs)
+
+        return taps
+
+    # ---- forward ----
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         """
-        input = torch.nn.functional.conv1d(
-            input, self.fir.weight.data, padding=self.ntaps // 2
-        )
-        target = torch.nn.functional.conv1d(
-            target, self.fir.weight.data, padding=self.ntaps // 2
-        )
-        return input, target
+        input: (B, C, T) -> output: (B, C, T)
+        """
+        B, C, T = input.shape
+        x = input.reshape(B*C, 1, T)
 
-class SpectralConvergenceLoss(torch.nn.Module):
-    """Spectral convergence loss module.
+        # ensure kernel is on the right device/dtype (important for AMP)
+        k = self.kernel.to(dtype=x.dtype, device=x.device)
+        pad = (k.shape[-1] - 1) // 2
 
-    See [Arik et al., 2018](https://arxiv.org/abs/1808.06719).
+        if self.pad_mode in {"reflect", "replicate", "constant"}:
+            mode = self.pad_mode if self.pad_mode != "constant" else "constant"
+            x = F.pad(x, (pad, pad), mode=mode)
+            y = F.conv1d(x, k, padding=0)
+        else:
+            y = F.conv1d(x, k, padding=pad)
+
+        return y.reshape(B, C, -1)
+
+    
+class SpectralContrastLoss(torch.nn.Module):
+    """Spectral contrast loss: symmetric, scale-invariant spectral distance.
+
+    Computes the ratio ||x - y||_F / ||x + y||_F over the input magnitudes,
+    where the numerator is the Frobenius norm of the difference and the
+    denominator is the Frobenius norm of the sum.
+
+    Args:
+        eps (float, optional): Floor on the denominator norm to prevent NaN
+            in near-silent regions. Default: 1e-4
     """
 
-    def __init__(self):
-        super(SpectralConvergenceLoss, self).__init__()
+    def __init__(self, eps=1e-4):
+        super().__init__()
+        self.eps = eps
 
     def forward(self, x_mag, y_mag):
-        return (torch.norm(y_mag - x_mag, p="fro", dim=[-1, -2]) / torch.norm(y_mag, p="fro", dim=[-1, -2])).mean()
+        x_mag = x_mag.float()
+        y_mag = y_mag.float()
+        numerator = torch.norm(y_mag - x_mag, p="fro", dim=[-1, -2])
+        denominator = torch.norm(x_mag + y_mag, p="fro", dim=[-1, -2]).clamp_min(self.eps)
+        return (numerator / denominator).unsqueeze(-1).unsqueeze(-1)
+
+# Backward-compatible alias
+SpectralConvergenceLoss = SpectralContrastLoss
 
 class STFTMagnitudeLoss(torch.nn.Module):
     """STFT magnitude loss module.
@@ -211,10 +286,35 @@ class STFTMagnitudeLoss(torch.nn.Module):
             raise ValueError(f"Invalid distance: '{distance}'.")
 
     def forward(self, x_mag, y_mag):
+        log_eps = x_mag.std(dim =[-1,-2], keepdim=True).detach().clamp(min=1e-4)**2 + y_mag.std(dim =[-1,-2], keepdim=True).detach().clamp(min=1e-4)**2
+        log_eps = torch.sqrt(log_eps)
         if self.log:
-            x_mag = torch.log(self.log_fac * x_mag + self.log_eps)
-            y_mag = torch.log(self.log_fac * y_mag + self.log_eps)
-        return self.distance(x_mag, y_mag)
+            x_mag = torch.log(x_mag / log_eps + 1)
+            y_mag = torch.log(y_mag / log_eps + 1)
+        #if self.log:
+        #    x_mag = torch.log(x_mag * self.log_fac + self.log_eps)
+        #    y_mag = torch.log(y_mag * self.log_fac + self.log_eps)
+        return self.distance(x_mag, y_mag)# + mmd(x_mag, y_mag, bandwidths = [0.001,0.01,0.1,1], dim = -1) #+ mmd(x_mag, y_mag, bandwidths = [0.001,0.01,0.1,1], dim = -2) 
+
+class CepstralLoss(torch.nn.Module):
+    def __init__(self, log_eps=0.0, log_fac=1.0, reduction="mean"):
+        super(CepstralLoss, self).__init__()
+
+        self.log_eps = log_eps
+        self.log_fac = log_fac
+
+        self.distance = torch.nn.L1Loss(reduction=reduction)
+
+    def forward(self, x, y):
+        x = torch.log(self.log_fac * x.abs() + self.log_eps)# * x / (1e-9 + x.abs())
+        x_cep = torch.fft.irfft(x, dim = -2)#[:,:x_mag.size(-2),:]
+        if y.std().item() >= 1e-6:
+            y = torch.log(self.log_fac * y.abs() + self.log_eps)# * y / (1e-9 + y.abs())
+            y_cep = torch.fft.irfft(y, dim = -2)#[:, :x_mag.size(-2), :]
+        else:
+            y_cep = torch.zeros_like(x_cep)
+        dist = self.distance(x_cep, y_cep)# + mmd(x_cep, y_cep, bandwidths = [0.001,0.01,0.1,1], dim = -1)# + mmd(x_cep, y_cep, bandwidths = [0.001,0.01,0.1,1], dim = -2)  #/ 0.5* (x_cep.abs().mean(dim = -2).unsqueeze(1) + y_cep.abs().mean(dim = -2).unsqueeze(1))
+        return dist 
 
 
 class STFTLoss(torch.nn.Module):
@@ -281,6 +381,9 @@ class STFTLoss(torch.nn.Module):
         reduction: str = "mean",
         mag_distance: str = "L1",
         device: Any = None,
+        retain_batch_dim: bool = False,
+        w_cep: float = 0.0,
+        residual_loss: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -292,6 +395,7 @@ class STFTLoss(torch.nn.Module):
         self.w_log_mag = w_log_mag
         self.w_lin_mag = w_lin_mag
         self.w_phs = w_phs
+        self.w_cep = w_cep
         self.sample_rate = sample_rate
         self.scale = scale
         self.n_bins = n_bins
@@ -302,21 +406,28 @@ class STFTLoss(torch.nn.Module):
         self.reduction = reduction
         self.mag_distance = mag_distance
         self.device = device
+        self.retain_batch_dim = retain_batch_dim
+        self.residual_loss = residual_loss
 
         self.phs_used = bool(self.w_phs)
 
         self.spectralconv = SpectralConvergenceLoss()
         self.logstft = STFTMagnitudeLoss(
             log=True,
-            reduction=reduction,
+            reduction=reduction if not self.retain_batch_dim else "none",
             distance=mag_distance,
             **kwargs
         )
         self.linstft = STFTMagnitudeLoss(
             log=False,
-            reduction=reduction,
+            reduction=reduction if not self.retain_batch_dim else "none",
             distance=mag_distance,
             **kwargs
+        )
+        self.ceptstft = CepstralLoss(
+            log_eps=1e-6,
+            log_fac=1.0,
+            reduction=reduction if not self.retain_batch_dim else "none"
         )
 
         # setup mel filterbank
@@ -345,7 +456,7 @@ class STFTLoss(torch.nn.Module):
                     f"Invalid scale: {self.scale}. Must be 'mel' or 'chroma'."
                 )
 
-            self.register_buffer("fb", fb)
+            self.register_buffer("fb", fb, persistent = False)
 
         if scale is not None and device is not None:
             self.fb = self.fb.to(self.device)  # move filterbank to device
@@ -355,7 +466,7 @@ class STFTLoss(torch.nn.Module):
                 raise ValueError(
                     f"`sample_rate` must be supplied when `perceptual_weighting = True`."
                 )
-            self.prefilter = FIRFilter(filter_type="aw", fs=sample_rate)
+            self.prefilter = FIRFilter(filter_type="kw", fs=sample_rate)
 
     def stft(self, x):
         """Perform STFT.
@@ -366,28 +477,29 @@ class STFTLoss(torch.nn.Module):
             Tensor: x_mag, x_phs
                 Magnitude and phase spectra (B, fft_size // 2 + 1, frames).
         """
-        x_stft = torch.stft(
-            x,
-            self.fft_size,
-            self.hop_size,
-            self.win_length,
-            self.window,
-            return_complex=True,
-        )
-        x_mag = torch.sqrt(
-            torch.clamp((x_stft.real**2) + (x_stft.imag**2), min=self.eps)
-        )
+        #x_stft = torch.stft(
+        #    x,
+        #    self.fft_size,
+        #    self.hop_size,
+        #    self.win_length,
+        #    self.window,
+        #    return_complex=True,
+        #)
+        #
+        #x_mag = torch.sqrt(
+        #    torch.clamp((x_stft.real**2) + (x_stft.imag**2), min=self.eps)
+        #)
+        ### re-add sqrt(mag) + x_stft / sqrt(mag)
 
-        # torch.angle is expensive, so it is only evaluated if the values are used in the loss
-        if self.phs_used:
-            x_phs = torch.angle(x_stft)
-        else:
-            x_phs = None
+        x_stft = tight_one_sided_complex_stft(x, self.fft_size, hop = self.hop_size, center = False)
+        x_mag = torch.clamp(x_stft.abs(), min = self.eps)
 
-        return x_mag, x_phs
+        return x_mag, x_stft
 
+    @torch.amp.autocast("cuda", enabled=False)
     def forward(self, input: torch.Tensor, target: torch.Tensor):
         bs, chs, seq_len = input.size()
+        input, target = input.float(), target.float() ## Ensure float32 for stability + BF16 training compatibility
 
         if self.perceptual_weighting:  # apply optional A-weighting via FIR filter
             # since FIRFilter only support mono audio we will move channels to batch dim
@@ -396,7 +508,8 @@ class STFTLoss(torch.nn.Module):
 
             # now apply the filter to both
             self.prefilter.to(input.device)
-            input, target = self.prefilter(input, target)
+            input = self.prefilter(input)
+            target = self.prefilter(target)
 
             # now move the channels back
             input = input.view(bs, chs, -1)
@@ -405,9 +518,15 @@ class STFTLoss(torch.nn.Module):
         # compute the magnitude and phase spectra of input and target
         self.window = self.window.to(input.device)
 
-        x_mag, x_phs = self.stft(input.view(-1, input.size(-1)))
-        y_mag, y_phs = self.stft(target.view(-1, target.size(-1)))
-
+        if self.residual_loss:
+            input = target - input
+            x_mag, x_phs = self.stft(input.view(-1, input.size(-1)))
+            y_mag = torch.zeros_like(x_mag)
+            y_phs = torch.zeros_like(x_phs)
+        else:
+            x_mag, x_phs = self.stft(input.view(-1, input.size(-1)))
+            y_mag, y_phs = self.stft(target.view(-1, target.size(-1)))
+        
         # apply relevant transforms
         if self.scale is not None:
             self.fb = self.fb.to(input.device)
@@ -423,7 +542,8 @@ class STFTLoss(torch.nn.Module):
         sc_mag_loss = self.spectralconv(x_mag, y_mag) if self.w_sc else 0.0
         log_mag_loss = self.logstft(x_mag, y_mag) if self.w_log_mag else 0.0
         lin_mag_loss = self.linstft(x_mag, y_mag) if self.w_lin_mag else 0.0
-        phs_loss = torch.nn.functional.mse_loss(x_phs, y_phs) if self.phs_used else 0.0
+        phs_loss = (normalized_complex_distance_loss(x_phs,y_phs) + if_gd_loss(x_phs, y_phs)) if self.w_phs else 0.0
+        cep_loss = self.ceptstft(x_phs, y_phs) if self.w_cep else 0.0
 
         # combine loss terms
         loss = (
@@ -431,10 +551,11 @@ class STFTLoss(torch.nn.Module):
             + (self.w_log_mag * log_mag_loss)
             + (self.w_lin_mag * lin_mag_loss)
             + (self.w_phs * phs_loss)
+            + (self.w_cep * cep_loss)
         )
+        loss = apply_reduction(loss, reduction=self.reduction, retain_batch_dim=self.retain_batch_dim)
 
-        loss = apply_reduction(loss, reduction=self.reduction)
-
+        
         if self.output == "loss":
             return loss
         elif self.output == "full":
@@ -476,9 +597,10 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
         w_phs: float = 0.0,
         sample_rate: float = None,
         scale: str = None,
-        n_bins: int = None,
+        n_bins: List[int] = None,
         perceptual_weighting: bool = False,
         scale_invariance: bool = False,
+        w_cep: float = 0.0, 
         **kwargs,
     ):
         super().__init__()
@@ -488,7 +610,7 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
         self.win_lengths = win_lengths
 
         self.stft_losses = torch.nn.ModuleList()
-        for fs, ss, wl in zip(fft_sizes, hop_sizes, win_lengths):
+        for i, (fs, ss, wl) in enumerate(zip(fft_sizes, hop_sizes, win_lengths)):
             self.stft_losses += [
                 STFTLoss(
                     fs,
@@ -501,9 +623,10 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
                     w_phs,
                     sample_rate,
                     scale,
-                    n_bins,
+                    n_bins[i] if scale == "mel" and n_bins is not None else None,
                     perceptual_weighting,
                     scale_invariance,
+                    w_cep = w_cep,
                     **kwargs,
                 )
             ]
@@ -605,3 +728,121 @@ class SumAndDifferenceSTFTLoss(torch.nn.Module):
             return loss
         elif self.output == "full":
             return loss, sum_loss, diff_loss
+
+
+class SISDRLoss(torch.nn.Module):
+    """Scale-invariant signal-to-distortion ratio loss module.
+
+    Note that this returns the negative of the SI-SDR loss.
+
+    See [Le Roux et al., 2018](https://arxiv.org/abs/1811.02508)
+
+    Args:
+        zero_mean (bool, optional) Remove any DC offset in the inputs. Default: ``True``
+        eps (float, optional): Small epsilon value for stablity. Default: 1e-8
+        reduction (string, optional): Specifies the reduction to apply to the output:
+            'none': no reduction will be applied,
+            'mean': the sum of the output will be divided by the number of elements in the output,
+            'sum': the output will be summed. Default: 'mean'
+    Shape:
+        - input : :math:`(batch, nchs, ...)`.
+        - target: :math:`(batch, nchs, ...)`.
+    """
+
+    def __init__(self, zero_mean=True, eps=1e-8, reduction="mean"):
+        super(SISDRLoss, self).__init__()
+        self.zero_mean = zero_mean
+        self.eps = eps
+        self.reduction = reduction
+
+    def forward(self, input, target):
+        if self.zero_mean:
+            input_mean = torch.mean(input, dim=-1, keepdim=True)
+            target_mean = torch.mean(target, dim=-1, keepdim=True)
+            input = input - input_mean
+            target = target - target_mean
+
+        alpha = (input * target).sum(-1) / (((target ** 2).sum(-1)) + self.eps)
+        target = target * alpha.unsqueeze(-1)
+        res = input - target
+
+        losses = 10 * torch.log10(
+            (target ** 2).sum(-1) / ((res ** 2).sum(-1) + self.eps) + self.eps
+        )
+        losses = apply_reduction(losses, self.reduction)
+        return -losses
+
+
+class SDSDRLoss(torch.nn.Module):
+    """Scale-dependent signal-to-distortion ratio loss module.
+
+    Note that this returns the negative of the SD-SDR loss.
+
+    See [Le Roux et al., 2018](https://arxiv.org/abs/1811.02508)
+
+    Args:
+        zero_mean (bool, optional) Remove any DC offset in the inputs. Default: ``True``
+        eps (float, optional): Small epsilon value for stablity. Default: 1e-8
+        reduction (string, optional): Specifies the reduction to apply to the output:
+            'none': no reduction will be applied,
+            'mean': the sum of the output will be divided by the number of elements in the output,
+            'sum': the output will be summed. Default: 'mean'
+    Shape:
+        - input : :math:`(batch, nchs, ...)`.
+        - target: :math:`(batch, nchs, ...)`.
+    """
+
+    def __init__(self, zero_mean=True, eps=1e-8, reduction="mean"):
+        super(SDSDRLoss, self).__init__()
+        self.zero_mean = zero_mean
+        self.eps = eps
+        self.reduction = reduction
+
+    def forward(self, input, target):
+        if self.zero_mean:
+            input_mean = torch.mean(input, dim=-1, keepdim=True)
+            target_mean = torch.mean(target, dim=-1, keepdim=True)
+            input = input - input_mean
+            target = target - target_mean
+
+        alpha = (input * target).sum(-1) / (((target ** 2).sum(-1)) + self.eps)
+        scaled_target = target * alpha.unsqueeze(-1)
+        res = input - target
+
+        losses = 10 * torch.log10(
+            (scaled_target ** 2).sum(-1) / ((res ** 2).sum(-1) + self.eps) + self.eps
+        )
+        losses = apply_reduction(losses, self.reduction)
+        return -losses
+
+class MelSTFTLoss(STFTLoss):
+    """Mel-scale STFT loss module."""
+
+    def __init__(
+        self,
+        sample_rate,
+        fft_size=1024,
+        hop_size=256,
+        win_length=1024,
+        window="hann_window",
+        w_sc=1.0,
+        w_log_mag=1.0,
+        w_lin_mag=0.0,
+        w_phs=0.0,
+        n_mels=128,
+        **kwargs,
+    ):
+        super(MelSTFTLoss, self).__init__(
+            fft_size,
+            hop_size,
+            win_length,
+            window,
+            w_sc,
+            w_log_mag,
+            w_lin_mag,
+            w_phs,
+            sample_rate,
+            "mel",
+            n_mels,
+            **kwargs,
+        )

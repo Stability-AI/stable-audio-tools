@@ -1,3 +1,72 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "stable-audio-tools"
+version = "0.0.20"
+description = "Training and inference tools for generative audio models from Stability AI"
+requires-python = ">=3.10,<3.11"
+authors = [
+    {name = "Stability AI"},
+]
+
+dependencies = [
+    "alias-free-torch==0.0.6",
+    "dill",
+    "einops",
+    "einops-exts",
+    "huggingface_hub",
+    "importlib-resources==5.12.0",
+    "torchsde",
+    "nnAudio",
+    "PyWavelets==1.4.1",
+    "safetensors",
+    "scipy",
+    "sentencepiece==0.1.99",
+    "soxr",
+    "torch==2.7.1",
+    "torchaudio==2.7.1",
+    "tqdm",
+    "transformers",
+    "v-diffusion-pytorch==0.0.2",
+    "vector-quantize-pytorch==1.14.41",
+    "setuptools<81",
+]
+
+[project.optional-dependencies]
+train = [
+    "auraloss==0.4.0",
+    "descript-audio-codec==1.0.0",
+    "encodec==0.1.1",
+    "inf-cl",
+    "laion-clap==1.1.4",
+    "pandas==2.0.2",
+    "prefigure==0.0.9",
+    "pytorch_lightning==2.5.5",
+    "torchmetrics==0.11.4",
+    "wandb==0.15.4",
+    "webdataset==0.2.100",
+]
+ui = [
+    "gradio==6.3.0",
+]
+all = [
+    "stable-audio-tools[train,ui]",
+]
+
+[tool.setuptools.packages.find]
+include = ["stable_audio_tools*"]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
+]
+torchaudio = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
+]

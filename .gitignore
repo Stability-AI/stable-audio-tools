@@ -162,3 +162,5 @@ cython_debug/
 *.ckpt
 *.wav
 wandb/*
+*.out
+test_*

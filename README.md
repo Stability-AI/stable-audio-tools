@@ -3,20 +3,39 @@ Training and inference code for audio generation models
 
 # Install
 
-The library can be installed from PyPI with:
+Requires PyTorch 2.5 or later for Flash Attention and Flex Attention support. Development for the repo is done in Python 3.10.
+
+We use [uv](https://docs.astral.sh/uv/) for fast, reproducible dependency management. Install it with `pip install uv` or see the [uv docs](https://docs.astral.sh/uv/getting-started/installation/).
+
+Clone the repo and install dependencies:
 ```bash
-$ pip install stable-audio-tools
+$ git clone https://github.com/Stability-AI/stable-audio-tools.git
+$ cd stable-audio-tools
+
+# Inference only
+$ uv sync
+
+# Training
+$ uv sync --extra train
+
+# Everything (training + Gradio UI)
+$ uv sync --extra train --extra ui
 ```
 
-To run the training scripts or inference code, you'll want to clone this repository, navigate to the root, and run:
+### Flash Attention
+
+[Flash Attention](https://github.com/Dao-AILab/flash-attention) is recommended for performance. Follow the installation instructions in the Flash Attention repository to install it after running `uv sync`.
+
+Run scripts with `uv run`:
 ```bash
-$ pip install .
+$ uv run python train.py --dataset-config /path/to/config ...
+$ uv run python run_gradio.py --pretrained-name stabilityai/stable-audio-open-1.0
 ```
 
-# Requirements
-Requires PyTorch 2.0 or later for Flash Attention support
-
-Development for the repo is done in Python 3.8.10
+Alternatively, you can use pip directly:
+```bash
+$ pip install "stable-audio-tools[train]"
+```
 
 # Interface
 

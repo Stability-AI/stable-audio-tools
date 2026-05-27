@@ -4,11 +4,62 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.nn.utils import weight_norm
+
+from alias_free_torch import Activation1d
 
 from torch.backends.cuda import sdp_kernel
 from packaging import version
+from typing import List, Literal, Dict, Any, Callable
 
-from dac.nn.layers import Snake1d
+from .utils import compile
+
+def get_activation(activation: Literal["elu", "snake", "none"], antialias=False, channels=None) -> nn.Module:
+    if activation == "elu":
+        act = nn.ELU()
+    elif activation == "snake":
+        act = SnakeBeta(channels)
+    elif activation == "none":
+        act = nn.Identity()
+    else:
+        raise ValueError(f"Unknown activation {activation}")
+    
+    if antialias:
+        act = Activation1d(act)
+    
+    return act
+
+def WNConv1d(*args, **kwargs):
+    return weight_norm(nn.Conv1d(*args, **kwargs))
+
+def WNConvTranspose1d(*args, **kwargs):
+    return weight_norm(nn.ConvTranspose1d(*args, **kwargs))
+
+def checkpoint(function, *args, **kwargs):
+    kwargs.setdefault("use_reentrant", False)
+    return torch.utils.checkpoint.checkpoint(function, *args, **kwargs)
+
+class ResidualUnit(nn.Module):
+    def __init__(self, in_channels, out_channels, dilation, use_snake=False, antialias_activation=False, depthwise = False, bias = True):
+        super().__init__()
+        
+        self.dilation = dilation
+
+        padding = (dilation * (7-1)) // 2
+
+        self.layers = nn.Sequential(
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels),
+            WNConv1d(in_channels=in_channels, out_channels=out_channels,
+                      kernel_size=7, dilation=dilation, padding=padding, groups=1 if not depthwise else out_channels, bias = bias),
+            get_activation("snake" if use_snake else "elu", antialias=antialias_activation, channels=out_channels),
+            WNConv1d(in_channels=out_channels, out_channels=out_channels,
+                      kernel_size=1, bias = bias)
+        )
+
+    def forward(self, x):
+        res = x
+        x = self.layers(x)
+        return x + res
 
 class ResidualBlock(nn.Module):
     def __init__(self, main, skip=None):
@@ -20,15 +71,15 @@ class ResidualBlock(nn.Module):
         return self.main(input) + self.skip(input)
 
 class ResConvBlock(ResidualBlock):
-    def __init__(self, c_in, c_mid, c_out, is_last=False, kernel_size=5, conv_bias=True, use_snake=False):
+    def __init__(self, c_in, c_mid, c_out, is_last=False, kernel_size=5, conv_bias=True):
         skip = None if c_in == c_out else nn.Conv1d(c_in, c_out, 1, bias=False)
         super().__init__([
             nn.Conv1d(c_in, c_mid, kernel_size, padding=kernel_size//2, bias=conv_bias),
             nn.GroupNorm(1, c_mid),
-            Snake1d(c_mid) if use_snake else nn.GELU(),
+            nn.GELU(),
             nn.Conv1d(c_mid, c_out, kernel_size, padding=kernel_size//2, bias=conv_bias),
             nn.GroupNorm(1, c_out) if not is_last else nn.Identity(),
-            (Snake1d(c_out) if use_snake else nn.GELU()) if not is_last else nn.Identity(),
+            nn.GELU() if not is_last else nn.Identity(),
         ], skip)
 
 class SelfAttention1d(nn.Module):
@@ -82,15 +133,49 @@ class SkipBlock(nn.Module):
         return torch.cat([self.main(input), input], dim=1)
 
 class FourierFeatures(nn.Module):
-    def __init__(self, in_features, out_features, std=1.):
+    def __init__(self, in_features, out_features, std=16.):
         super().__init__()
         assert out_features % 2 == 0
-        self.weight = nn.Parameter(torch.randn(
-            [out_features // 2, in_features]) * std)
+        self.register_buffer('weight', torch.randn([out_features // 2, in_features]) * std)
 
     def forward(self, input):
         f = 2 * math.pi * input @ self.weight.T
         return torch.cat([f.cos(), f.sin()], dim=-1)
+
+class ExpoFourierFeatures(nn.Module):
+    def __init__(self, dim, min_freq=0.5, max_freq=10000.0):
+        super().__init__()
+        self.dim = dim
+        self.min_freq = min_freq
+        self.max_freq = max_freq
+
+    @torch.amp.autocast("cuda",enabled=False)
+    def forward(self, t):
+        """
+        t: [B] tensor.
+        """
+        in_dtype = t.dtype 
+        t = t.float()
+        
+        if t.dim() == 1:
+            t = t.unsqueeze(-1)
+            
+        half_dim = self.dim // 2
+        
+        # Calculate frequencies (safely in FP32)
+        ramp = torch.linspace(0, 1, half_dim, device=t.device, dtype=torch.float32)
+        log_min = math.log(self.min_freq)
+        log_max = math.log(self.max_freq)
+        
+        freqs = torch.exp(ramp * (log_max - log_min) + log_min)
+        
+        # Calculate arguments (safely in FP32)
+        args = t * freqs * 2 * math.pi
+        
+        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        
+        return embedding.to(in_dtype) 
+
 
 def expand_to_planes(input, shape):
     return input[..., None].repeat([1, 1, shape[2]])
@@ -206,7 +291,7 @@ def rms_norm(x, scale, eps):
     scale = scale.to(dtype) * torch.rsqrt(mean_sq + eps)
     return x * scale.to(x.dtype)
 
-#rms_norm = torch.compile(rms_norm)
+rms_norm = compile(rms_norm)
 
 class AdaRMSNorm(nn.Module):
     def __init__(self, features, cond_features, eps=1e-6):
@@ -243,17 +328,6 @@ class ForcedWNConv1d(nn.Module):
         return F.conv1d(x, w, padding='same')
         
 # Kernels
-
-use_compile = True
-
-def compile(function, *args, **kwargs):
-    if not use_compile:
-        return function
-    try:
-        return torch.compile(function, *args, **kwargs)
-    except RuntimeError:
-        return function
-
 
 @compile
 def linear_geglu(x, weight, bias=None):
@@ -299,7 +373,7 @@ class RMSNorm(nn.Module):
         return rms_norm(x, self.scale, self.eps)    
 
 def snake_beta(x, alpha, beta):
-    return x + (1.0 / (beta + 0.000000001)) * pow(torch.sin(x * alpha), 2)
+    return x + (1.0 / (beta + 0.000000001)) * (torch.sin(x * alpha) ** 2)
 
 # try:
 #     snake_beta = torch.compile(snake_beta)

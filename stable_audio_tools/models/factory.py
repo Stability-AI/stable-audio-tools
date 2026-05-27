@@ -11,7 +11,7 @@ def create_model_from_config(model_config):
     elif model_type == 'diffusion_uncond':
         from .diffusion import create_diffusion_uncond_from_config
         return create_diffusion_uncond_from_config(model_config)
-    elif model_type == 'diffusion_cond' or model_type == 'diffusion_cond_inpaint' or model_type == "diffusion_prior":
+    elif model_type == 'diffusion_cond' or model_type == 'diffusion_cond_inpaint':
         from .diffusion import create_diffusion_cond_from_config
         return create_diffusion_cond_from_config(model_config)
     elif model_type == 'diffusion_autoencoder':
@@ -20,6 +20,9 @@ def create_model_from_config(model_config):
     elif model_type == 'lm':
         from .lm import create_audio_lm_from_config
         return create_audio_lm_from_config(model_config)
+    elif model_type == 'clap':
+        from .clap import create_clap_from_config
+        return create_clap_from_config(model_config)
     else:
         raise NotImplementedError(f'Unknown model type: {model_type}')
 
@@ -71,6 +74,11 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
 
         audiocraft_config = pretransform_config["config"]
         pretransform = AudiocraftCompressionPretransform(**audiocraft_config)
+    elif pretransform_type == "patched":
+        from .pretransforms import PatchedPretransform
+
+        patched_config = pretransform_config["config"]
+        pretransform = PatchedPretransform(**patched_config)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     
@@ -88,7 +96,7 @@ def create_bottleneck_from_config(bottleneck_config):
 
     if bottleneck_type == 'tanh':
         from .bottleneck import TanhBottleneck
-        bottleneck = TanhBottleneck()
+        bottleneck = TanhBottleneck(**bottleneck_config.get('config', {}))
     elif bottleneck_type == 'vae':
         from .bottleneck import VAEBottleneck
         bottleneck = VAEBottleneck()
@@ -142,6 +150,12 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == "fsq":
         from .bottleneck import FSQBottleneck
         bottleneck = FSQBottleneck(**bottleneck_config["config"])
+    elif bottleneck_type == "dithered_fsq":
+        from .bottleneck import DitheredFSQBottleneck
+        bottleneck = DitheredFSQBottleneck(**bottleneck_config["config"])
+    elif bottleneck_type == "softnorm":
+        from .bottleneck import SoftNormBottleneck
+        bottleneck = SoftNormBottleneck(**bottleneck_config["config"])
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')
     
