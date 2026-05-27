@@ -630,7 +630,7 @@ def sample_v(model, x, sigmas, eta=0, callback=None, cfg_pp=False, disable_tqdm=
 def get_bmask(i, steps, mask):
     strength = (i+1)/(steps)
     # convert to binary mask
-    bmask = torch.where(mask<=strength,1,0)
+    bmask = torch.where(mask<strength,0,1)
     return bmask
 
 def make_cond_model_fn(model, cond_fn):
