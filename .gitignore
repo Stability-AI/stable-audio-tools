@@ -164,3 +164,6 @@ cython_debug/
 wandb/*
 *.out
 test_*
+!tests/test_*.py
+# macOS
+.DS_Store
