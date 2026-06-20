@@ -23,7 +23,7 @@ dependencies = [
     "PyWavelets==1.4.1",
     "safetensors",
     "scipy",
-    "sentencepiece==0.1.99",
+    "sentencepiece==0.2.1",
     "soxr",
     "torch==2.7.1",
     "torchaudio==2.7.1",
