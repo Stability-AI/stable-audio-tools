@@ -524,7 +524,7 @@ class T5Conditioner(Conditioner):
 
         self.model.eval()
 
-        with torch.amp.autocast('cuda', dtype=torch.float16) and torch.set_grad_enabled(self.enable_grad):
+        with torch.amp.autocast('cuda', dtype=torch.float16), torch.set_grad_enabled(self.enable_grad):
             embeddings = self.model(
                 input_ids=input_ids, attention_mask=attention_mask
             )["last_hidden_state"]
