@@ -49,7 +49,7 @@ train = [
     "webdataset==0.2.100",
 ]
 ui = [
-    "gradio==6.3.0",
+    "gradio==6.15.0",
 ]
 all = [
     "stable-audio-tools[train,ui]",
