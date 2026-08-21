@@ -255,10 +255,18 @@ def build_schedule(
     """
     n_points = steps + 1 if include_endpoint else steps
 
+    # Build the schedule on a normalized [1, 0] ramp, apply the distribution shift
+    # (which is defined over the full [0, 1] domain), and only then rescale to
+    # [0, sigma_max]. Shifting the [sigma_max, 0] ramp directly warps the interior
+    # points as if they spanned [0, 1], pushing them above sigma_max for
+    # noise-shifting parameters and producing a non-monotonic schedule for init audio
+    # (sigma_max = init_noise_level < 1). Normalize-then-rescale keeps the whole
+    # schedule anchored to sigma_max and monotonic, since every shift preserves
+    # endpoints (shift(1) == 1) and is monotonic.
     if include_endpoint:
-        t = torch.linspace(sigma_max, 0, n_points, device=device)
+        t = torch.linspace(1, 0, n_points, device=device)
     else:
-        t = torch.linspace(sigma_max, 0, n_points + 1, device=device)[:-1]
+        t = torch.linspace(1, 0, n_points + 1, device=device)[:-1]
 
     if dist_shift is not None:
         seq_len = effective_seq_len if effective_seq_len is not None else fallback_seq_len
@@ -270,16 +278,10 @@ def build_schedule(
             seq_len = max(int(seq_len), 1)
         t = dist_shift.shift(t, seq_len)
 
-        # Ensure the first timestep remains aligned with sigma_max after shifting.
-        # This keeps the schedule consistent with the initialization in sample_diffusion(),
-        # which mixes init_data using sigma_max.
-        if isinstance(t, torch.Tensor):
-            sigma_max_tensor = t.new_tensor(sigma_max)
-            if t.ndim == 1:
-                t[0] = sigma_max_tensor
-            else:
-                # For batched/per-element schedules, enforce sigma_max at the first time index.
-                t[..., 0] = sigma_max_tensor
+    # Rescale the normalized schedule to [0, sigma_max]. This anchors the entire
+    # schedule (not just the first step) to sigma_max, keeping it consistent with the
+    # init_data mixing in sample_diffusion(), which also uses sigma_max.
+    t = t * sigma_max
 
     return t
 
