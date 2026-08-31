@@ -315,7 +315,9 @@ def generate_cond(
 
     # Cut the extra silence off the end, if the user requested a smaller seconds_total
     if cut_to_seconds_total:
-        audio = audio[:,:,:seconds_total*sample_rate]
+        # seconds_total arrives as a Python float (e.g. from a Gradio Slider);
+        # slice indices must be integers. int() truncates toward zero.
+        audio = audio[:,:,:int(seconds_total*sample_rate)]
 
     # Encode the audio to WAV format
     audio = rearrange(audio, "b d n -> d (b n)")

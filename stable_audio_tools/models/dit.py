@@ -319,11 +319,14 @@ class DiffusionTransformer(nn.Module):
                           If provided, only valid positions contribute to the projection.
         """
         dtype = v0.dtype
-        v0, v1 = v0.double(), v1.double()
+        # Some accelerators (e.g. MPS) do not support float64 at all, so the
+        # projection math runs in the highest precision the device supports.
+        precise_dtype = torch.float32 if v0.device.type == "mps" else torch.float64
+        v0, v1 = v0.to(precise_dtype), v1.to(precise_dtype)
 
         if padding_mask is not None:
             # Expand mask to match tensor shape: (B, T) -> (B, 1, T)
-            mask = padding_mask.unsqueeze(1).double()
+            mask = padding_mask.unsqueeze(1).to(precise_dtype)
             # Zero out padding positions for projection computation
             v0_masked = v0 * mask
             v1_masked = v1 * mask
